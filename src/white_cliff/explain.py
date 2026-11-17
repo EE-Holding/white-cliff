@@ -8,7 +8,7 @@ from datetime import date
 from white_cliff.facts import Fact, FactStore
 from white_cliff.formulas import FormulaError, comparable_yoy, margin, net_debt, yoy_change
 from white_cliff.redact import Redaction
-from white_cliff.quotes import review_quotes
+from white_cliff.quotes import QuoteError, review_quotes
 from white_cliff.review import review_text
 
 _REVENUE = (
@@ -281,7 +281,6 @@ def build_blocks(
     omissions: list[tuple[int, int, str]],
     filing_text: str,
     filing_url: str,
-    model_text: str | None = None,
 ) -> list[Block]:
     facts = store.facts()
     blocks: list[Block] = [
@@ -296,14 +295,6 @@ def build_blocks(
         blocks.append(
             Block(text="This filing was not retrieved from EDGAR [section:Document].")
         )
-    if model_text is not None:
-        reason = review_text(model_text, store, filing_text, filing_url)
-        if reason:
-            blocks.append(_omission("Income statement", reason))
-        else:
-            blocks.append(
-                Block(text=model_text, quotes=tuple(review_quotes(model_text, filing_text, filing_url)))
-            )
 
     chosen: dict[str, Fact] = {}
     table_kinds = {
@@ -420,6 +411,13 @@ def build_blocks(
         reason = review_text(block.text, store, filing_text, filing_url)
         if reason:
             checked.append(_omission("Document", reason))
-        else:
-            checked.append(block)
+            continue
+        try:
+            quotes = tuple(review_quotes(block.text, filing_text, filing_url))
+        except QuoteError as exc:
+            checked.append(_omission("Document", str(exc)))
+            continue
+        checked.append(
+            Block(text=block.text, redaction=block.redaction, quotes=quotes, reason=block.reason)
+        )
     return checked

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from white_cliff.pipeline import explain_filing, load_directory
+from white_cliff.redact import contains_personal
 from tests.support import write_filing
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,10 +42,9 @@ def test_more_personal_shapes_are_chips_and_a_street_in_words_is_refused(tmp_pat
     url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/personal.htm"
     directory = write_filing(tmp_path / "personal", "filing.html", html, url, form="8-K")
     filing = load_directory(directory)
-    explained = explain_filing(
-        filing,
-        model_text="The officer lives at Elm Street in Springfield [section:Notes].",
-    )
+    sentence = "The officer lives at Elm Street in Springfield [section:Notes]."
+    assert contains_personal(sentence)
+    explained = explain_filing(filing)
     rendered = explained.markdown + "\n" + explained.html
     for secret in (
         "123456789",

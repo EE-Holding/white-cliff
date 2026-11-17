@@ -39,10 +39,10 @@ def _small_capital(char: str) -> str:
 
 def skeleton(text: str) -> str:
     """Map confusable characters onto a comparable prototype string."""
-    folded = unicodedata.normalize("NFKC", text).lower()
+    folded = unicodedata.normalize("NFKC", text).casefold()
     table = _table()
     mapped: list[str] = []
-    for char in unicodedata.normalize("NFD", folded):
+    for char in folded:
         if unicodedata.category(char) in {"Mn", "Cf"}:
             continue
         mapped.append(table.get(char, char))
@@ -53,3 +53,24 @@ def skeleton(text: str) -> str:
             continue
         kept.append(_small_capital(char))
     return "".join(kept)
+
+
+def fold_confusable(text: str) -> str:
+    """NFKC, drop marks and format characters, map non-ASCII confusables, casefold."""
+    table = _table()
+    folded = unicodedata.normalize("NFKC", text)
+    mapped: list[str] = []
+    for char in folded:
+        if unicodedata.category(char) in {"Mn", "Cf"}:
+            continue
+        if ord(char) > 127:
+            mapped.append(table.get(char, char))
+        else:
+            mapped.append(char)
+    flattened = unicodedata.normalize("NFD", "".join(mapped))
+    kept = []
+    for char in flattened:
+        if unicodedata.category(char) in {"Mn", "Cf"}:
+            continue
+        kept.append(char)
+    return "".join(kept).casefold()

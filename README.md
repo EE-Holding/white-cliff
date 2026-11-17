@@ -4,7 +4,7 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 white-cliff explains a public company filing in plain language. It reads a US EDGAR annual report, quarterly report, or earnings exhibit and shows revenue, margins, cash flow, debt, and share count. Every figure points back to the filing. The tool does not recommend buying, selling, or holding any security.
 
-Figures come from EDGAR. The tool does not use prices, estimates, news, or any other source. It does not compute price multiples. A person can run it with no model key. Extraction-only mode is the default.
+Figures come from EDGAR. The tool does not use prices, estimates, news, or any other source. It does not compute price multiples. Explanations use fixed sentences.
 
 ## Install
 
@@ -38,8 +38,6 @@ white-cliff site --output docs
 ```
 
 Requests to EDGAR send the User-Agent you configured. The client stays at or under ten requests per second, backs off on HTTP 403 and 429, and refuses any host other than the EDGAR hosts. It fetches only the filing you asked for.
-
-An optional local model command may be set with `WHITE_CLIFF_MODEL_CMD`. The model receives concepts and identifiers, not values, and may write only the placeholders `{fact:id}` and `{calc:id}`. A digit in the model text drops that section. The repository does not ship a key, and the default path does not call a model.
 
 ## What the output guarantees
 

@@ -194,3 +194,138 @@ def test_same_period_requires_span_and_end_when_dates_are_absent():
     right = make_fact("4", concept="OperatingIncomeLoss", role="operating_income", start=None, end=None)
     with __import__("pytest").raises(FormulaError):
         margin(right, left, name="operating_margin")
+
+
+def _shares(html: str):
+    return [fact for fact in _facts(html) if fact.role == "shares"]
+
+
+def test_share_rows_follow_the_caption_exception():
+    millions = """
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Shares outstanding</td><td>7,427</td></tr>
+    </table>
+    """
+    found = _shares(millions)
+    assert found and found[0].unit == "shares millions"
+    assert found[0].value == Decimal("7427")
+    plain = """
+    <table>
+    <caption>(In millions, except per share amounts)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Shares outstanding</td><td>7,427</td></tr>
+    </table>
+    """
+    found = _shares(plain)
+    assert found and found[0].unit == "shares"
+    assert found[0].value == Decimal("7427")
+    thousands = """
+    <table>
+    <caption>(In thousands, except share data)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Shares outstanding</td><td>7,427,000</td></tr>
+    </table>
+    """
+    found = _shares(thousands)
+    assert found and found[0].unit == "shares"
+    assert found[0].value == Decimal("7427000")
+    revenue = _revenue(thousands)
+    assert revenue == []
+    sales = """
+    <table>
+    <caption>(In thousands, except share data)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1,000</td></tr>
+    </table>
+    """
+    found = _revenue(sales)
+    assert found and found[0].unit == "USD thousands"
+    apple = """
+    <table>
+    <caption>(In millions, except number of shares, which are reflected in thousands, and per-share amounts)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Shares outstanding</td><td>7,427</td></tr>
+    </table>
+    """
+    found = _shares(apple)
+    assert found
+    assert found[0].unit == "shares"
+    explicit = """
+    <table>
+    <caption>(Shares in thousands)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Shares outstanding</td><td>7,427</td></tr>
+    </table>
+    """
+    found = _shares(explicit)
+    assert found and found[0].unit == "shares thousands"
+
+
+def test_current_cell_does_not_match_inside_the_prior_year():
+    html = """
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2025</th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1,100</td><td>100</td></tr>
+    </table>
+    """
+    found = _revenue(html)
+    assert found and found[0].value == Decimal("100")
+    start, end = found[0].source.char_start, found[0].source.char_end
+    assert html[start:end] == "100"
+    assert html[start - 1] not in "0123456789,"
+
+
+def test_year_only_header_does_not_invent_december_31(tmp_path: Path):
+    html = """
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1,000</td></tr>
+    </table>
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Operating income</td><td>3,000</td></tr>
+    </table>
+    """
+    facts = _facts(html)
+    revenue = [fact for fact in facts if fact.role == "revenue"]
+    income = [fact for fact in facts if fact.role == "operating_income"]
+    assert revenue and revenue[0].period.end == ""
+    assert income and income[0].period.end == ""
+    assert revenue[0].period.end != "2026-12-31"
+    with __import__("pytest").raises(FormulaError):
+        margin(income[0], revenue[0], name="operating_margin")
+    directory = write_filing(tmp_path / "year", "table.htm", html, URL, form="10-K")
+    from white_cliff.pipeline import load_directory
+
+    explained = explain_filing(load_directory(directory))
+    assert "operating margin" not in explained.markdown
+
+
+def test_filer_apostrophe_survives_html_escape(tmp_path: Path):
+    html = """
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1,000</td></tr>
+    </table>
+    """
+    directory = write_filing(
+        tmp_path / "lowes",
+        "table.htm",
+        html,
+        URL,
+        form="10-K",
+        filer="Lowe's Companies",
+    )
+    from white_cliff.pipeline import load_directory
+
+    explained = explain_filing(load_directory(directory))
+    assert "Lowe's" in explained.markdown
+    assert "Lowe's" in explained.html
+    assert "&#x27;" not in explained.html
+    assert "Lowe&#" not in explained.html

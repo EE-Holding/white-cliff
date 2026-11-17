@@ -1,4 +1,4 @@
-"""Check model and template text before any number is filled in."""
+"""Check template text before any number is filled in."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def unresolved_placeholders(text: str, store: FactStore) -> bool:
 
 
 def forbidden_markup(text: str) -> bool:
-    """Model text may cite a section. It may not build a link or a tag."""
+    """A sentence may cite a section. It may not build a link or a tag."""
     cleaned = re.sub(r"\[section:[^\]]+\]", "", text)
     cleaned = re.sub(r"\[\*+(?:\s*\*)*\]", "", cleaned)
     cleaned = re.sub(r"\[(?i:redacted|omitted)\]", "", cleaned)

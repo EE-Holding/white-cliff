@@ -79,23 +79,38 @@ _SPAN_RANK = {"": 3, "fiscal year": 2, "year to date": 1, "quarter": 0}
 class _Cell:
     text: str
     colspan: int
+    start: int = 0
+    end: int = 0
 
 
 class _Tables(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, raw: str) -> None:
         super().__init__(convert_charrefs=True)
-        self.tables: list[tuple[str, list[list[_Cell]]]] = []
+        self.tables: list[tuple[str, str, list[list[_Cell]]]] = []
+        self._raw = raw
+        self._line_starts = [0]
+        for index, char in enumerate(raw):
+            if char == "\n":
+                self._line_starts.append(index + 1)
         self._depth = 0
         self._rows: list[list[_Cell]] = []
         self._row: list[_Cell] = []
         self._cell: list[str] = []
         self._colspan = 1
+        self._cell_start = 0
         self._capture = False
         self._in_caption = False
         self._caption: list[str] = []
         self._outside: list[str] = []
         self._lead_scale = ""
         self._table_lead = ""
+
+    def _abs(self) -> int:
+        line, offset = self.getpos()
+        if line <= 0:
+            return 0
+        base = self._line_starts[min(line - 1, len(self._line_starts) - 1)]
+        return min(base + offset, len(self._raw))
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
@@ -115,6 +130,7 @@ class _Tables(HTMLParser):
         elif tag in {"td", "th"} and self._depth:
             self._cell = []
             self._capture = True
+            self._cell_start = self._abs()
             try:
                 self._colspan = max(int(values.get("colspan") or "1"), 1)
             except ValueError:
@@ -126,7 +142,7 @@ class _Tables(HTMLParser):
             self._in_caption = False
         elif tag in {"td", "th"} and self._capture:
             text = re.sub(r"\s+", " ", "".join(self._cell)).strip()
-            self._row.append(_Cell(text, self._colspan))
+            self._row.append(_Cell(text, self._colspan, self._cell_start, self._abs()))
             self._capture = False
         elif tag == "tr" and self._depth:
             if any(cell.text.strip() for cell in self._row):
@@ -202,6 +218,8 @@ def _merge_parens(cells: list[_Cell]) -> list[_Cell]:
     while index < len(cells):
         text = cells[index].text.strip()
         span = cells[index].colspan
+        start = cells[index].start
+        end = cells[index].end
         if (
             text.startswith("(")
             and not text.endswith(")")
@@ -210,31 +228,37 @@ def _merge_parens(cells: list[_Cell]) -> list[_Cell]:
         ):
             text = text + ")"
             span += cells[index + 1].colspan
+            end = cells[index + 1].end
             index += 2
         else:
             index += 1
-        merged.append(_Cell(text, max(span, 1)))
+        merged.append(_Cell(text, max(span, 1), start, end))
     return merged
 
 
-def _place(cells: list[_Cell]) -> list[tuple[int, str, int]]:
-    placed: list[tuple[int, str, int]] = []
+def _place(cells: list[_Cell]) -> list[tuple[int, str, int, int, int]]:
+    placed: list[tuple[int, str, int, int, int]] = []
     pos = 0
     for cell in _merge_parens(cells):
-        placed.append((pos, cell.text, cell.colspan))
+        placed.append((pos, cell.text, cell.colspan, cell.start, cell.end))
         pos += cell.colspan
     return placed
 
 
-def _end_date(text: str) -> str | None:
+def _full_end(text: str) -> str:
     match = _DATE.search(text)
-    if match:
-        month = _MONTHS[match.group(1).lower()]
-        return f"{int(match.group(3)):04d}-{month:02d}-{int(match.group(2)):02d}"
+    if not match:
+        return ""
+    month = _MONTHS[match.group(1).lower()]
+    return f"{int(match.group(3)):04d}-{month:02d}-{int(match.group(2)):02d}"
+
+
+def _year_key(text: str) -> str:
+    full = _full_end(text)
+    if full:
+        return full[:4]
     years = _YEAR.findall(text)
-    if years:
-        return f"{years[-1]}-12-31"
-    return None
+    return years[-1] if years else ""
 
 
 def _span_name(text: str) -> str:
@@ -255,42 +279,47 @@ def _span_name(text: str) -> str:
 
 def _header_columns(rows: list[list[_Cell]]) -> list[dict[str, object]]:
     span_ranges: list[tuple[int, int, str]] = []
-    dates: list[tuple[int, int, str]] = []
+    dates: list[tuple[int, int, str, str]] = []
     for row in rows:
         placed = _place(row)
-        texts = [text for _, text, _ in placed]
+        texts = [text for _pos, text, _span, _start, _end in placed]
         if any(_role_for(_norm_label(text)) for text in texts):
             continue
-        for pos, text, colspan in placed:
+        for pos, text, colspan, _start, _end in placed:
             named = _span_name(text)
             if named:
                 span_ranges.append((pos, pos + colspan, named))
-            end = _end_date(text)
-            if end:
-                dates.append((pos, colspan, end))
+            end = _full_end(text)
+            year = _year_key(text)
+            if end or year:
+                dates.append((pos, colspan, end, year))
     columns: list[dict[str, object]] = []
-    for pos, colspan, end in dates:
+    for pos, colspan, end, year in dates:
         named = ""
         for start, stop, span in span_ranges:
             if start <= pos < stop:
                 named = span
-        columns.append({"pos": pos, "width": colspan, "end": end, "span": named})
+        columns.append({"pos": pos, "width": colspan, "end": end, "year": year, "span": named})
     return columns
+
+
+def _column_order(column: dict[str, object]) -> tuple[str, str]:
+    return (str(column.get("year") or ""), str(column.get("end") or ""))
 
 
 def _current_column(columns: list[dict[str, object]]) -> dict[str, object] | None:
     if not columns:
         return None
-    latest = max(str(column["end"]) for column in columns)
-    current = [column for column in columns if column["end"] == latest]
+    latest = max(_column_order(column) for column in columns)
+    current = [column for column in columns if _column_order(column) == latest]
     current.sort(key=lambda column: (_SPAN_RANK.get(str(column["span"]), 3), int(column["pos"])))
     return current[0]
 
 
-def _chunks_in(placed: list[tuple[int, str, int]], start: int, width: int) -> list[str]:
+def _chunks_in(placed: list[tuple[int, str, int, int, int]], start: int, width: int) -> list[str]:
     stop = start + width
     found: list[str] = []
-    for pos, text, colspan in placed:
+    for pos, text, colspan, _start, _end in placed:
         if pos >= stop or pos + colspan <= start:
             continue
         if text.strip():
@@ -298,7 +327,7 @@ def _chunks_in(placed: list[tuple[int, str, int]], start: int, width: int) -> li
     return found
 
 
-def _value_in_column(placed: list[tuple[int, str, int]], column: dict[str, object]) -> Decimal | None:
+def _value_in_column(placed: list[tuple[int, str, int, int, int]], column: dict[str, object]) -> Decimal | None:
     chunks = _chunks_in(placed, int(column["pos"]), int(column["width"]))
     joined: list[str] = []
     index = 0
@@ -328,16 +357,30 @@ def _has_scale(text: str) -> bool:
     return "in millions" in lowered or "in thousands" in lowered
 
 
+_EXPLICIT_SHARE_THOUSANDS = re.compile(
+    r"shares?\s+in\s+thousands|share\s+amounts?\s+in\s+thousands",
+    re.I,
+)
+_SHARE_EXCEPTION = re.compile(
+    r"except\s+(?:(?:the\s+)?(?:number\s+of\s+)?(?:per\s+)?shares?(?:\s+data|\s+amounts?)?)",
+    re.I,
+)
+
+
 def _unit_for(role: str, scale_text: str) -> str | None:
     lowered = scale_text.lower()
     millions = "in millions" in lowered
     thousands = "in thousands" in lowered
+    explicit_share_thousands = _EXPLICIT_SHARE_THOUSANDS.search(lowered) is not None
+    share_exception = _SHARE_EXCEPTION.search(lowered) is not None
     shares_clause = "share" in lowered and "in thousands" in lowered
     if role == "shares":
-        if shares_clause or thousands:
+        if explicit_share_thousands:
             return "shares thousands"
-        if millions:
+        if share_exception:
             return "shares"
+        if millions and not thousands:
+            return "shares millions"
         return None
     if millions and thousands and not shares_clause:
         return None
@@ -370,26 +413,48 @@ def _comma_form(value: Decimal) -> str:
     return sign + grouped
 
 
-def _locate(raw: str, label: str, value: Decimal, offset: int) -> tuple[int, int] | None:
+def _column_bounds(
+    placed: list[tuple[int, str, int, int, int]],
+    column: dict[str, object],
+) -> tuple[int, int] | None:
+    start = int(column["pos"])
+    stop = start + int(column["width"])
+    found_start: int | None = None
+    found_end: int | None = None
+    for pos, text, colspan, cell_start, cell_end in placed:
+        if pos >= stop or pos + colspan <= start:
+            continue
+        if _plain_number(text) is None:
+            continue
+        if cell_end <= cell_start:
+            continue
+        found_start = cell_start if found_start is None else min(found_start, cell_start)
+        found_end = cell_end if found_end is None else max(found_end, cell_end)
+    if found_start is None or found_end is None:
+        return None
+    return found_start, found_end
+
+
+def _locate_in(raw: str, start: int, end: int, value: Decimal) -> tuple[int, int] | None:
+    window = raw[start:end]
     plain = format(abs(value), "f")
     if "." in plain:
         plain = plain.rstrip("0").rstrip(".")
     comma = _comma_form(abs(value))
-    anchor = raw.find(label, offset) if label else -1
-    start_at = anchor if anchor >= 0 else offset
-    for token in (comma, plain):
-        found = raw.find(token, start_at)
-        if found >= 0:
-            return found, found + len(token)
+    for token in sorted({comma, plain}, key=len, reverse=True):
+        if not token:
+            continue
+        match = re.search(rf"(?<![\d,]){re.escape(token)}(?!\d)", window)
+        if match:
+            return start + match.start(), start + match.end()
     return None
 
 
 def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[Fact], bool]:
-    parser = _Tables()
+    parser = _Tables(text)
     parser.feed(text)
     facts: list[Fact] = []
     price_metric = False
-    offset = 0
     for caption, lead, rows in parser.tables:
         kind = _table_kind(rows)
         columns = _header_columns(rows)
@@ -401,7 +466,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
         for row in rows:
             placed = _place(row)
             label = ""
-            for _pos, cell, _span in placed:
+            for _pos, cell, _span, _start, _end in placed:
                 if cell.strip() and _role_for(_norm_label(cell)):
                     label = cell.strip()
                     break
@@ -416,14 +481,14 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                 continue
             if chosen is None:
                 numbers = []
-                for pos, cell, colspan in placed:
+                for pos, cell, colspan, _start, _end in placed:
                     parsed = _plain_number(cell)
                     if parsed is not None:
                         numbers.append((pos, parsed, colspan))
                 if len(numbers) != 1:
                     continue
                 pos, value, colspan = numbers[0]
-                chosen_here = {"pos": pos, "width": colspan, "end": "", "span": ""}
+                chosen_here = {"pos": pos, "width": colspan, "end": "", "year": "", "span": ""}
                 value = _value_in_column(placed, chosen_here)
             else:
                 value = _value_in_column(placed, chosen)
@@ -432,11 +497,14 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
             unit = _unit_for(role, scale_text)
             if unit is None:
                 continue
-            located = _locate(text, label, value, offset)
+            column = chosen if chosen is not None else chosen_here
+            bounds = _column_bounds(placed, column)
+            if bounds is None:
+                continue
+            located = _locate_in(text, bounds[0], bounds[1], value)
             if located is None:
                 continue
             start, end = located
-            offset = end
             column = chosen if chosen is not None else chosen_here
             end_date = str(column["end"])
             span = str(column["span"])

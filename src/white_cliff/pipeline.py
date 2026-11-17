@@ -136,7 +136,7 @@ def load_file(path: Path) -> Filing:
     )
 
 
-def explain_filing(filing: Filing, model_text: str | None = None) -> Explained:
+def explain_filing(filing: Filing) -> Explained:
     blocks = build_blocks(
         store=filing.store,
         filer=filing.filer,
@@ -148,7 +148,6 @@ def explain_filing(filing: Filing, model_text: str | None = None) -> Explained:
         omissions=filing.omissions,
         filing_text=filing.text,
         filing_url=filing.url,
-        model_text=model_text,
     )
     markdown = render_markdown(blocks, filing.store)
     html_text = render_html(blocks, filing.store)

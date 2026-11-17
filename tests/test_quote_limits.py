@@ -1,7 +1,8 @@
 import pytest
 
-from white_cliff.pipeline import explain_filing, load_directory
+from white_cliff.pipeline import load_directory
 from white_cliff.quotes import QuoteError, review_quotes
+from white_cliff.render import render_quote_page
 from tests.support import write_filing
 
 FILING = (
@@ -50,13 +51,15 @@ def test_quote_limits(tmp_path):
     html = f"<p>{body}</p>"
     directory = write_filing(tmp_path / "limits", "filing.htm", html, URL, form="8-K")
     filing = load_directory(directory)
-    linked = explain_filing(
-        filing,
-        model_text='"The company expects demand to remain steady in the next year." [section:Notes].',
+    linked, linked_html = render_quote_page(
+        '"The company expects demand to remain steady in the next year." [section:Notes].',
+        filing.text,
+        URL,
     )
-    assert "#quote=" in linked.markdown
-    assert "https://www.sec.gov/" in linked.markdown
-    assert linked.markdown.count("#quote=") == 1
+    assert "#quote=" in linked
+    assert "https://www.sec.gov/" in linked
+    assert linked.count("#quote=") == 1
+    assert "#quote=" in linked_html
     long_dir = write_filing(
         tmp_path / "long",
         "filing.htm",
@@ -64,37 +67,39 @@ def test_quote_limits(tmp_path):
         URL,
         form="8-K",
     )
-    refused_long = explain_filing(
-        load_directory(long_dir),
-        model_text=f'"{long_quote}" [section:Notes].',
+    refused_long, refused_html = render_quote_page(
+        f'"{long_quote}" [section:Notes].',
+        load_directory(long_dir).text,
+        URL,
     )
-    assert long_quote not in refused_long.markdown
-    assert long_quote not in refused_long.html
-    assert "quote" in refused_long.markdown
-    two = explain_filing(
-        filing,
-        model_text=(
+    assert long_quote not in refused_long
+    assert long_quote not in refused_html
+    assert "quote" in refused_long
+    two, _two_html = render_quote_page(
+        (
             '[section:Notes] "The company expects demand to remain steady in the next year. '
             'Operations continued without interruption during the reported period." [section:Notes].'
         ),
+        filing.text,
+        URL,
     )
-    assert "quote" in two.markdown
-    assert "Operations continued without interruption during the reported period." not in two.markdown
+    assert "quote" in two
+    assert "Operations continued without interruption during the reported period." not in two
     cited = " [section:Notes]. "
-    accepted = explain_filing(
-        filing,
-        model_text=cited.join(
+    accepted, _accepted_html = render_quote_page(
+        cited.join(
             (
                 '"The company expects demand to remain steady in the next year."',
                 '"Operations continued without interruption during the reported period."',
                 '"Customers renewed agreements throughout the reported period." [section:Notes].',
             )
         ),
+        filing.text,
+        URL,
     )
-    assert accepted.markdown.count("#quote=") == 3
-    overflow = explain_filing(
-        filing,
-        model_text=cited.join(
+    assert accepted.count("#quote=") == 3
+    overflow, _overflow_html = render_quote_page(
+        cited.join(
             (
                 '"The company expects demand to remain steady in the next year."',
                 '"Operations continued without interruption during the reported period."',
@@ -102,10 +107,12 @@ def test_quote_limits(tmp_path):
                 '"Suppliers delivered components throughout the reported period." [section:Notes].',
             )
         ),
+        filing.text,
+        URL,
     )
-    assert "quote" in overflow.markdown
-    assert "Suppliers delivered components throughout the reported period." not in overflow.markdown
-    assert overflow.markdown.count("#quote=") == 0
+    assert "quote" in overflow
+    assert "Suppliers delivered components throughout the reported period." not in overflow
+    assert overflow.count("#quote=") == 0
 
 
 def test_other_quote_marks_and_abbreviations():
@@ -124,21 +131,58 @@ def test_unquoted_overlap_is_a_quote_and_rendered_output_links_it(tmp_path):
     html = f"<p>{sentence} A second sentence stays in the filing.</p>"
     directory = write_filing(tmp_path / "q", "filing.htm", html, URL, form="8-K")
     filing = load_directory(directory)
-    copied = "The company expects demand to remain steady in the annual report."
-    # Eight or more words copied from the filing, without quote marks.
     overlap = "The company expects demand to remain steady in [section:Notes]."
-    explained = explain_filing(filing, model_text=overlap)
-    assert "#quote=" in explained.markdown
-    assert "https://www.sec.gov/" in explained.markdown
-    assert explained.markdown.count("#quote=") >= 1
-    linked = explain_filing(filing, model_text=f'"{sentence}" [section:Notes].')
-    assert f"#quote=" in linked.markdown
-    assert sentence in linked.markdown
+    explained, _html = render_quote_page(overlap, filing.text, URL)
+    assert "#quote=" in explained
+    assert "https://www.sec.gov/" in explained
+    assert explained.count("#quote=") >= 1
+    linked, _linked_html = render_quote_page(f'"{sentence}" [section:Notes].', filing.text, URL)
+    assert "#quote=" in linked
+    assert sentence in linked
     long_copy = (
         '"The company expects demand to remain steady in the next year [section:Notes]. '
         'Another line stays in the filing [section:Notes]."'
     )
-    refused = explain_filing(filing, model_text=long_copy)
-    assert "quote" in refused.markdown
-    assert "A second sentence stays in the filing." not in refused.markdown
-    del copied
+    refused, _refused_html = render_quote_page(long_copy, filing.text, URL)
+    assert "quote" in refused
+    assert "A second sentence stays in the filing." not in refused
+
+
+def test_rendered_quotes_fold_before_match_and_keep_the_link():
+    sentence = "The company expects demand to remain steady in the next year."
+    amped = "The company expects demand to remain steady in R&D programs."
+    filing = f"{sentence} {amped}"
+    _markdown, html = render_quote_page(f'"{amped}"', filing, URL)
+    assert 'href="https://www.sec.gov/' in html
+    assert "#quote=" in html
+    assert "R&amp;D" in html
+    cased, _cased_html = render_quote_page(f'"{sentence.upper()}"', filing, URL)
+    assert "#quote=" in cased
+    assert "https://www.sec.gov/" in cased
+    punct = sentence.replace("steady in", "steady, in")
+    _punct_md, punct_html = render_quote_page(f'"{punct}"', filing, URL)
+    assert "#quote=" in punct_html
+    assert "https://www.sec.gov/" in punct_html
+    zwsp = sentence.replace("company", "com\u200bpany")
+    _zwsp_md, zwsp_html = render_quote_page(f'"{zwsp}"', filing, URL)
+    assert "#quote=" in zwsp_html
+    words = ["alpha"] * 59
+    words[10] = "al\u200bpha"
+    long = " ".join(words) + "."
+    plain = long.replace("\u200b", "")
+    with pytest.raises(QuoteError):
+        review_quotes(f'"{long}"', plain, URL)
+    refused, refused_html = render_quote_page(f'"{long}"', plain, URL)
+    assert "#quote=" not in refused
+    assert "#quote=" not in refused_html
+    assert "quote" in refused
+    one = "'The company expects demand to remain steady in the next year.'"
+    four, four_html = render_quote_page(" ".join([one] * 4), filing, URL)
+    assert four.count("#quote=") == 0
+    assert four_html.count("#quote=") == 0
+    with pytest.raises(QuoteError):
+        review_quotes(
+            '"The company expects [***] demand to remain steady in the next year."',
+            FILING,
+            URL,
+        )

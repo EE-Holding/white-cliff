@@ -29,12 +29,38 @@ PRICE_PHRASES = (
     "PE multiple",
     "The stock price is high",
     "share price closed higher",
+    "share-price",
+    "stock-price",
+    "market-cap",
+    "marketcap",
+    "dividend-yield",
+    "m\u0430rket cap",
+    "market value of the equity",
+    "price of the shares",
+    "earnings multiple",
+    "multiple of earnings",
+    "valuation multiple",
+    "P E ratio",
+    "The PEG is elevated",
+    "priced at a premium",
+    "valued at a premium",
+    "trade for a premium",
+    "price to free cash flow",
+    "EV/EBIT",
+    "EV to revenue",
+    "The KGV is high",
+    "Marktkapitalisierung",
+    "PER",
+    "capitalización bursátil",
+    "市盈率",
 )
 
 
 def test_price_metrics_in_words_are_refused():
     for phrase in PRICE_PHRASES:
         assert is_price_text(phrase), phrase
+    assert is_price_text("Earnings per share were described in the filing.") is False
+    assert is_price_text("EARNINGS PER SHARE") is False
 
 
 def test_formula_library_refuses_price_metrics():

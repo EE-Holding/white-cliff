@@ -9,7 +9,6 @@ from pathlib import Path
 from white_cliff.config import MissingUserAgent, load_user_agent
 from white_cliff.disclaimer import DISCLAIMER, OutputRefused
 from white_cliff.fetch import ACCESSION_RE, EdgarClient, FetchError, host_allowed
-from white_cliff.model import model_text_from_env
 from white_cliff.pipeline import explain_filing, load_directory, load_file
 from white_cliff.sitebuild import build_site
 
@@ -35,11 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--copy",
         action="store_true",
         help="Print the copyable export",
-    )
-    explain.add_argument(
-        "--model-text",
-        default=None,
-        help=argparse.SUPPRESS,
     )
 
     site = sub.add_parser(
@@ -88,11 +82,8 @@ def _explain(args, user_agent: str) -> int:
     else:
         print("Filing not found.", file=sys.stderr)
         return 2
-    model_text = args.model_text
-    if model_text is None:
-        model_text = model_text_from_env(filing)
     try:
-        explained = explain_filing(filing, model_text=model_text)
+        explained = explain_filing(filing)
     except (OutputRefused, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

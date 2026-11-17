@@ -156,6 +156,21 @@ def test_every_shown_fact_has_a_hand_checked_expected_entry():
             assert matched, (entry["accession"], fact.concept, fact.label, fact.value, fact.unit)
 
 
+def test_pinned_raw_files_match_provenance_hashes():
+    import hashlib
+
+    manifest = json.loads((PINNED / "manifest.json").read_text(encoding="utf-8"))
+    checked = 0
+    for entry in manifest["filings"]:
+        provenance_path = PINNED / "filings" / entry["accession"] / "provenance.json"
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        for item in provenance["files"]:
+            raw = (provenance_path.parent / item["name"]).read_bytes()
+            assert hashlib.sha256(raw).hexdigest() == item["sha256"]
+            checked += 1
+    assert checked >= len(manifest["filings"])
+
+
 def test_bare_digit_fails_review():
     from white_cliff.facts import FactStore
 

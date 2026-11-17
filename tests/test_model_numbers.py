@@ -1,9 +1,19 @@
-import sys
+"""Digits, number words, and the absence of a free-text path."""
 
-from white_cliff.model import model_prompt, model_text_from_env
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+from white_cliff import cli
+from white_cliff.disclaimer import DISCLAIMER
+from white_cliff.numbers import number_words
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.review import bare_digits, review_text
 from tests.support import MINI_XML, write_filing
+
+ROOT = Path(__file__).resolve().parents[1]
 
 FIGURES = [
     "424242",
@@ -21,21 +31,6 @@ FIGURES = [
     "{fact:abc1}",
 ]
 
-
-def test_every_model_figure_is_caught(tmp_path):
-    url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
-    directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
-    filing = load_directory(directory)
-    for figure in FIGURES:
-        text = f"The figure is {figure} [section:Income statement]."
-        assert bare_digits(text) or review_text(text, filing.store), figure
-        explained = explain_filing(filing, model_text=text)
-        assert "bare digit" in explained.markdown or "placeholder" in explained.markdown
-        if figure.isascii() and any(char.isdigit() for char in figure):
-            assert figure not in explained.markdown
-            assert figure not in explained.html
-
-
 NUMBER_WORDS = (
     "Revenue was twelve million dollars [section:Income statement].",
     "Demand roughly doubled [section:Income statement].",
@@ -46,36 +41,120 @@ NUMBER_WORDS = (
     "The scale is ten to the sixth [section:Income statement].",
     "[twelve billion USD](https://www.sec.gov/) [section:Income statement].",
     '<img src="x" onerror="alert(1)"> [section:Notes].',
+    "The gain was twofold [section:Income statement].",
+    "The gain was tenfold [section:Income statement].",
+    "The gain was hundredfold [section:Income statement].",
+    "The gain was several-fold [section:Income statement].",
+    "The figure is tens of billions [section:Income statement].",
+    "The figure is in the billions [section:Income statement].",
+    "The figure is millions [section:Income statement].",
+    "The figure was halved [section:Income statement].",
+    "This is the eleventh time [section:Income statement].",
+    "This is the twentieth time [section:Income statement].",
+    "This is the thousandth time [section:Income statement].",
+    "This is the millionth time [section:Income statement].",
+    "There were a couple of items [section:Income statement].",
+    "There were a score of items [section:Income statement].",
+    "Revenue grew by a quarter [section:Income statement].",
+    "The balance was nil [section:Income statement].",
+    "Der Betrag ist zwölf Millionen [section:Income statement].",
+    "Der Betrag ist zwölf Milliarden [section:Income statement].",
+    "Le montant est douze millions [section:Income statement].",
+    "El importe es dos mil millones [section:Income statement].",
+)
+
+_OPENINGS = (
+    "This explanation covers ",
+    "This filing was not retrieved from EDGAR",
+    "Revenue for the ",
+    "Gross profit for the ",
+    "Operating income for the ",
+    "Net income for the ",
+    "Operating cash flow for the ",
+    "The basic average share count ",
+    "The share count at the period end was",
+    "Debt at the period end was",
+    "Cash at the period end was",
+    "The gross margin ",
+    "The operating margin ",
+    "The net margin ",
+    "The year over year change in revenue was",
+    "Net debt at the period end was",
+    "A price metric quoted in the filing was omitted",
+    "A confidential omission is shown as filed:",
+    "A personal data span was omitted from the explanation",
+    "This section was omitted because it failed the ",
 )
 
 
-def test_number_words_forged_chips_and_raw_html_are_refused(tmp_path):
+def test_every_injected_figure_is_caught(tmp_path):
     url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
     directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
     filing = load_directory(directory)
+    explained = explain_filing(filing)
+    for figure in FIGURES:
+        text = f"The figure is {figure} [section:Income statement]."
+        assert bare_digits(text) or review_text(text, filing.store), figure
+        assert figure not in explained.markdown
+        assert figure not in explained.html
+
+
+def test_number_words_are_refused_and_absent_from_output(tmp_path):
+    url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
+    directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
+    filing = load_directory(directory)
+    explained = explain_filing(filing)
+    rendered = explained.markdown + explained.html
     for text in NUMBER_WORDS:
-        explained = explain_filing(filing, model_text=text)
-        rendered = explained.markdown + explained.html
-        assert "twelve" not in rendered.lower()
+        assert number_words(text) or review_text(text, filing.store), text
         assert "onerror" not in rendered.lower()
         assert "<img" not in rendered
         assert "](https://www.sec.gov/)" not in rendered
-        assert explained.reasons
+    assert number_words("Revenue for the quarter was {fact:abcdefghijklmnop}.") is False
+    assert "twelve" not in rendered.lower()
 
 
-def test_model_command_gets_no_values_and_digits_are_dropped(tmp_path, monkeypatch):
+def test_model_option_and_env_cannot_inject_text(tmp_path, monkeypatch, capsys):
+    with pytest.raises(SystemExit) as rejected:
+        cli.main(["explain", str(tmp_path), "--model-text", "buy the stock"])
+    assert rejected.value.code == 2
+    script = tmp_path / "stub.py"
+    script.write_text('print("SHOULD_NOT_APPEAR")\n', encoding="utf-8")
     url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
     directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
-    filing = load_directory(directory)
-    prompt = model_prompt(filing)
-    for value in ("5000", "4000", "800", "300", "100", "50"):
-        assert value not in prompt
-    script = tmp_path / "model.py"
-    script.write_text(
-        'print("Revenue was 424242 [section:Income statement].")\n',
-        encoding="utf-8",
-    )
     monkeypatch.setenv("WHITE_CLIFF_MODEL_CMD", f"{sys.executable} {script}")
-    text = model_text_from_env(filing)
-    explained = explain_filing(filing, model_text=text)
-    assert "424242" not in explained.markdown
+    filing = load_directory(directory)
+    explained = explain_filing(filing)
+    monkeypatch.delenv("WHITE_CLIFF_MODEL_CMD", raising=False)
+    assert explained.markdown == explain_filing(filing).markdown
+    assert "SHOULD_NOT_APPEAR" not in explained.markdown
+    with pytest.raises(SystemExit) as helped:
+        cli.main(["--help"])
+    assert helped.value.code == 0
+    assert "model" not in capsys.readouterr().out.lower()
+
+
+def test_package_does_not_launch_a_command():
+    root = ROOT / "src" / "white_cliff"
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "subprocess" not in text, path
+        assert "os.system" not in text, path
+        assert "os.exec" not in text, path
+        assert "Popen" not in text, path
+    assert not (root / "model.py").exists()
+
+
+def test_every_rendered_sentence_is_a_template(tmp_path):
+    url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
+    directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
+    explained = explain_filing(load_directory(directory))
+    body = explained.markdown.replace(DISCLAIMER, " ")
+    body = re.sub(r"\[[^\]]*\]\([^)]*\)", " ", body)
+    body = re.sub(r"Section: [A-Za-z ]+", " ", body)
+    body = re.sub(r"Report an error:.*", " ", body, flags=re.S)
+    for sentence in re.split(r"(?<=[.])\s+", body):
+        sentence = " ".join(sentence.split())
+        if not sentence:
+            continue
+        assert any(sentence.startswith(opening) for opening in _OPENINGS), sentence

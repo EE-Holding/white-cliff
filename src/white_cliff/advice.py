@@ -34,6 +34,18 @@ _ADVICE_WORDS = {
     "verkaufen",
     "halten",
     "acquire",
+    "underpriced",
+    "overpriced",
+    "mispriced",
+    "steal",
+    "inexpensive",
+    "barata",
+    "kopen",
+    "koop",
+    "günstig",
+    "überbewertet",
+    "gunstig",
+    "uberbewertet",
 }
 
 _SQUASHED = {
@@ -73,6 +85,50 @@ _PHRASES = (
     "应该买入",
     "应该持有",
     "建议持有",
+    "a good investment",
+    "a compelling investment",
+    "a must-own name",
+    "must own",
+    "own the stock",
+    "dump the stock",
+    "exit the position",
+    "load up",
+    "snap up",
+    "pick up shares",
+    "we upgrade",
+    "we downgrade",
+    "top pick",
+    "recommendation is positive",
+    "positive rating",
+    "add to their positions",
+    "add exposure",
+    "add to your position",
+    "stay away",
+    "intrinsic value",
+    "looks rich",
+    "die aktie ist",
+    "koop het aandeel",
+    "покупайте акции",
+    "acquistate le azioni",
+    "株を買うべき",
+    "买入该股票",
+    "kupuj akcje",
+    "satın al",
+    "satin al",
+    "projected to grow",
+    "set to grow",
+    "set to rise",
+    "poised to rise",
+    "poised to jump",
+    "going to grow",
+    "on track to expand",
+    "predicted to increase",
+    "bound to rise",
+    "may increase",
+    "revenue grows",
+    "guided to grow",
+    "projected to climb",
+    "predict higher",
 )
 
 _PREFIXES = (
@@ -188,7 +244,7 @@ def normalize(text: str) -> str:
     """Fold homoglyphs, spacing tricks, and accents into comparable text."""
     folded = skeleton(text)
     folded = _strip_marks(folded)
-    folded = folded.replace("-", " ").replace("_", " ")
+    folded = folded.replace("-", " ").replace("_", " ").replace("/", " ")
     folded = re.sub(r"[^\w\s/']+", " ", folded, flags=re.UNICODE)
     folded = re.sub(r"\b(over|under)\s+valued\b", r"\1valued", folded)
     folded = re.sub(r"\s+", " ", folded).strip()
