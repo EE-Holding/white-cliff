@@ -90,6 +90,7 @@ _PREFIXES = (
     "trim",
     "avoid",
     "opportun",
+    "purchas",
     "kauf",
     "verkauf",
     "achet",

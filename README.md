@@ -57,6 +57,8 @@ If a number, source, or omission looks wrong, open a filing error report:
 
 https://github.com/EE-Holding/white-cliff/issues/new?template=filing_error.md
 
+A confirmed misstatement is corrected or the output pulled within 2 business days, with a dated correction note. The log is [CORRECTIONS.md](CORRECTIONS.md).
+
 ## Pinned filings
 
 The `pinned` directory holds real EDGAR filings, the SHA-256 of each raw file, and hand-checked expected facts. The manifest is a list, so the set can grow to 30 filings. The current set covers technology, retail, consumer staples, energy, and health care, including an annual report, a quarterly report, and an earnings exhibit.

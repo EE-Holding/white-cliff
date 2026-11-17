@@ -86,11 +86,24 @@ def test_exports_and_the_public_page_lead_with_the_disclaimer(tmp_path):
         assert text.find(DISCLAIMER) < next(i for i, ch in enumerate(text) if ch.isdigit())
     site = build_site(tmp_path / "site", ROOT / "pinned")
     index = (site / "index.html").read_text(encoding="utf-8")
+    assert index.find(DISCLAIMER) != -1
     assert index.find(DISCLAIMER) < next(i for i, ch in enumerate(index) if ch.isdigit())
     assert "Report an error" in index
     page = next(site.glob("*.html"))
     page_text = page.read_text(encoding="utf-8")
     assert DISCLAIMER in page_text
+
+
+def test_committed_docs_carry_the_disclaimer_before_any_digit():
+    listed = subprocess.check_output(["git", "ls-files", "docs"], cwd=ROOT, text=True)
+    pages = [ROOT / name for name in listed.splitlines() if name.endswith(".html")]
+    assert pages
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        found = text.find(DISCLAIMER)
+        assert found != -1, page.name
+        digit = next(i for i, ch in enumerate(text) if ch.isdigit())
+        assert found < digit, page.name
 
 
 def test_refused_output_is_a_plain_message(tmp_path, monkeypatch, capsys):
