@@ -1,0 +1,14 @@
+{
+  "accession": "0000320193-26-000026",
+  "cik": "0000320193",
+  "filer": "Apple Inc.",
+  "form": "10-K",
+  "files": [
+    {
+      "name": "aapl-20260926_htm.xml",
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000026/aapl-20260926_htm.xml",
+      "sha256": "3d931657ceef0a307119d576e020723181dc166b5321b7abd6125ad09ca790ea",
+      "retrieved_at": "2026-11-17T17:40:00Z"
+    }
+  ]
+}

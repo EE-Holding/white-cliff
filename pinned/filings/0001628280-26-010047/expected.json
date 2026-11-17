@@ -1,0 +1,68 @@
+{
+  "facts": [
+    {
+      "concept": "Revenues",
+      "value": "47941000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "GrossProfit",
+      "value": "29544000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "OperatingIncomeLoss",
+      "value": "13762000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "NetIncomeLoss",
+      "value": "13107000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "NetCashProvidedByUsedInOperatingActivities",
+      "value": "7408000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "LongTermDebtAndCapitalLeaseObligations",
+      "value": "42119000000",
+      "unit": "USD",
+      "kind": "instant",
+      "start": null,
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "CashAndCashEquivalentsAtCarryingValue",
+      "value": "10270000000",
+      "unit": "USD",
+      "kind": "instant",
+      "start": null,
+      "end": "2025-12-31"
+    },
+    {
+      "concept": "WeightedAverageNumberOfSharesOutstandingBasic",
+      "value": "4303000000",
+      "unit": "shares",
+      "kind": "duration",
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    }
+  ]
+}

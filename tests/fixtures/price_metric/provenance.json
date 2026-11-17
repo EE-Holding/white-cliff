@@ -1,0 +1,12 @@
+{
+  "filer": "Example Co",
+  "form": "8-K",
+  "files": [
+    {
+      "name": "filing.html",
+      "url": "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/price.htm",
+      "sha256": "525d89712507dae711b8d79525df3abe797e6f2f3fe938055d134a2a29744e10",
+      "retrieved_at": "2026-11-17T17:40:00Z"
+    }
+  ]
+}

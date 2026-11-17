@@ -1,0 +1,14 @@
+{
+  "accession": "0000320193-26-000024",
+  "cik": "0000320193",
+  "filer": "Apple Inc.",
+  "form": "8-K",
+  "files": [
+    {
+      "name": "a8-kex991q4202609262026.htm",
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000024/a8-kex991q4202609262026.htm",
+      "sha256": "67d3939dd0fcb57af1496efbd800f7fd8d389608f941ae489ab58cf9d8aad6e7",
+      "retrieved_at": "2026-11-17T17:40:00Z"
+    }
+  ]
+}

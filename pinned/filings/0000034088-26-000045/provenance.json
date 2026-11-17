@@ -1,0 +1,14 @@
+{
+  "accession": "0000034088-26-000045",
+  "cik": "0000034088",
+  "filer": "Exxon Mobil Corporation",
+  "form": "10-K",
+  "files": [
+    {
+      "name": "xom-20251231_htm.xml",
+      "url": "https://www.sec.gov/Archives/edgar/data/34088/000003408826000045/xom-20251231_htm.xml",
+      "sha256": "981cecb1c56fcdbc6fa97434b4797e10d3f9455b68a8981260bac0aaa5d5b90a",
+      "retrieved_at": "2026-11-17T17:40:00Z"
+    }
+  ]
+}

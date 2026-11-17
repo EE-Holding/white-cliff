@@ -1,0 +1,68 @@
+{
+  "facts": [
+    {
+      "concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "value": "109417000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2026-03-29",
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "GrossProfit",
+      "value": "54770000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2026-03-29",
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "OperatingIncomeLoss",
+      "value": "35695000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2026-03-29",
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "NetIncomeLoss",
+      "value": "29789000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2026-03-29",
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "NetCashProvidedByUsedInOperatingActivities",
+      "value": "116996000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-09-28",
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "LongTermDebt",
+      "value": "82300000000",
+      "unit": "USD",
+      "kind": "instant",
+      "start": null,
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "CashAndCashEquivalentsAtCarryingValue",
+      "value": "39544000000",
+      "unit": "USD",
+      "kind": "instant",
+      "start": null,
+      "end": "2026-06-27"
+    },
+    {
+      "concept": "CommonStockSharesOutstanding",
+      "value": "14608963000",
+      "unit": "shares",
+      "kind": "instant",
+      "start": null,
+      "end": "2026-06-27"
+    }
+  ]
+}

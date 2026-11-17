@@ -1,0 +1,22 @@
+{
+  "facts": [
+    {
+      "match": "table",
+      "row": "Total net sales",
+      "value": "114477",
+      "unit": "USD millions"
+    },
+    {
+      "match": "table",
+      "row": "Operating income",
+      "value": "35631",
+      "unit": "USD millions"
+    },
+    {
+      "match": "table",
+      "row": "Cash and cash equivalents",
+      "value": "36305",
+      "unit": "USD millions"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "target_count": 30,
+  "filings": [
+    {
+      "accession": "0000320193-26-000026",
+      "cik": "0000320193",
+      "filer": "Apple Inc.",
+      "form": "10-K",
+      "sector": "technology",
+      "period_of_report": "2026-09-26"
+    },
+    {
+      "accession": "0000104169-26-000055",
+      "cik": "0000104169",
+      "filer": "Walmart Inc.",
+      "form": "10-K",
+      "sector": "retail",
+      "period_of_report": "2026-01-31"
+    },
+    {
+      "accession": "0001628280-26-010047",
+      "cik": "0000021344",
+      "filer": "COCA COLA CO",
+      "form": "10-K",
+      "sector": "consumer staples",
+      "period_of_report": "2025-12-31"
+    },
+    {
+      "accession": "0000034088-26-000045",
+      "cik": "0000034088",
+      "filer": "Exxon Mobil Corporation",
+      "form": "10-K",
+      "sector": "energy",
+      "period_of_report": "2025-12-31"
+    },
+    {
+      "accession": "0000200406-26-000016",
+      "cik": "0000200406",
+      "filer": "Johnson & Johnson",
+      "form": "10-K",
+      "sector": "health care",
+      "period_of_report": "2025-12-28"
+    },
+    {
+      "accession": "0000320193-26-000020",
+      "cik": "0000320193",
+      "filer": "Apple Inc.",
+      "form": "10-Q",
+      "sector": "technology",
+      "period_of_report": "2026-06-27"
+    },
+    {
+      "accession": "0000320193-26-000024",
+      "cik": "0000320193",
+      "filer": "Apple Inc.",
+      "form": "8-K",
+      "sector": "technology",
+      "period_of_report": "2026-09-26"
+    }
+  ]
+}

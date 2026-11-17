@@ -1,0 +1,14 @@
+{
+  "accession": "0000104169-26-000055",
+  "cik": "0000104169",
+  "filer": "Walmart Inc.",
+  "form": "10-K",
+  "files": [
+    {
+      "name": "wmt-20260131_htm.xml",
+      "url": "https://www.sec.gov/Archives/edgar/data/104169/000010416926000055/wmt-20260131_htm.xml",
+      "sha256": "07c72faa90cf8515eb1ff1ca264361ca8741c2663202d2f5a25ff9c694f4ef67",
+      "retrieved_at": "2026-11-17T17:40:00Z"
+    }
+  ]
+}

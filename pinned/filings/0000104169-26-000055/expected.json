@@ -1,0 +1,60 @@
+{
+  "facts": [
+    {
+      "concept": "Revenues",
+      "value": "713163000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-02-01",
+      "end": "2026-01-31"
+    },
+    {
+      "concept": "OperatingIncomeLoss",
+      "value": "29825000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-02-01",
+      "end": "2026-01-31"
+    },
+    {
+      "concept": "NetIncomeLoss",
+      "value": "21893000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-02-01",
+      "end": "2026-01-31"
+    },
+    {
+      "concept": "NetCashProvidedByUsedInOperatingActivities",
+      "value": "41565000000",
+      "unit": "USD",
+      "kind": "duration",
+      "start": "2025-02-01",
+      "end": "2026-01-31"
+    },
+    {
+      "concept": "LongTermDebt",
+      "value": "38166000000",
+      "unit": "USD",
+      "kind": "instant",
+      "start": null,
+      "end": "2026-01-31"
+    },
+    {
+      "concept": "CashAndCashEquivalentsAtCarryingValue",
+      "value": "10727000000",
+      "unit": "USD",
+      "kind": "instant",
+      "start": null,
+      "end": "2026-01-31"
+    },
+    {
+      "concept": "WeightedAverageNumberOfSharesOutstandingBasic",
+      "value": "7983000000",
+      "unit": "shares",
+      "kind": "duration",
+      "start": "2025-02-01",
+      "end": "2026-01-31"
+    }
+  ]
+}
