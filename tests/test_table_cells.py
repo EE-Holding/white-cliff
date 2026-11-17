@@ -69,6 +69,54 @@ def test_prior_column_first_still_reads_the_current_year():
     assert [fact.value for fact in found] == [Decimal("120")]
 
 
+def test_scale_ignores_parentheticals_outside_the_table():
+    own_caption = """
+    <p>A note mentions amounts (in millions) for another schedule.</p>
+    <table>
+    <caption>(In thousands)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1000000</td></tr>
+    </table>
+    """
+    found = _revenue(own_caption)
+    assert found
+    assert found[0].value == Decimal("1000000")
+    assert found[0].unit == "USD thousands"
+
+    mentioned = """
+    <p>See the schedule (in millions) discussed above.</p>
+    <table>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>100</td></tr>
+    </table>
+    """
+    assert _revenue(mentioned) == []
+
+    header = """
+    <p>Elsewhere the notes say (in millions).</p>
+    <table>
+    <tr><td colspan="2">(In thousands)</td></tr>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1000000</td></tr>
+    </table>
+    """
+    found = _revenue(header)
+    assert found
+    assert found[0].unit == "USD thousands"
+
+    introducing = """
+    <div>(In thousands)</div>
+    <table>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1000000</td></tr>
+    </table>
+    """
+    found = _revenue(introducing)
+    assert found
+    assert found[0].value == Decimal("1000000")
+    assert found[0].unit == "USD thousands"
+
+
 def test_scale_comes_from_the_table_caption_only():
     html = """
     <p>Amounts are presented in millions elsewhere in this document.</p>

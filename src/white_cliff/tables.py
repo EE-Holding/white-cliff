@@ -93,15 +93,19 @@ class _Tables(HTMLParser):
         self._capture = False
         self._in_caption = False
         self._caption: list[str] = []
-        self._between: list[str] = []
+        self._outside: list[str] = []
+        self._lead_scale = ""
+        self._table_lead = ""
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
         values = {key.lower(): value for key, value in attrs}
         if tag == "table":
             if self._depth == 0:
+                self._finish_outside()
                 self._rows = []
                 self._caption = []
+                self._table_lead = self._lead_scale
             self._depth += 1
         elif tag == "caption" and self._depth:
             self._in_caption = True
@@ -130,18 +134,28 @@ class _Tables(HTMLParser):
         elif tag == "table" and self._depth:
             self._depth -= 1
             if self._depth == 0:
-                between = re.sub(r"\s+", " ", "".join(self._between))
                 caption = re.sub(r"\s+", " ", "".join(self._caption)).strip()
-                prior = " ".join(_SCALE_CAPTION.findall(between))
-                self.tables.append((f"{prior} {caption}".strip(), self._rows))
-                self._between = []
+                self.tables.append((caption, self._table_lead, self._rows))
+                self._table_lead = ""
+        elif self._depth == 0:
+            self._finish_outside()
+
+    def _finish_outside(self) -> None:
+        text = re.sub(r"\s+", " ", "".join(self._outside)).strip()
+        self._outside = []
+        if not text:
+            return
+        if _SCALE_CAPTION.fullmatch(text):
+            self._lead_scale = text
+        else:
+            self._lead_scale = ""
 
     def handle_data(self, data: str) -> None:
         if self._capture or self._in_caption:
             target = self._cell if self._capture else self._caption
             target.append(data)
         elif self._depth == 0:
-            self._between.append(data)
+            self._outside.append(data)
 
 
 def _norm_label(label: str) -> str:
@@ -309,6 +323,11 @@ def _value_in_column(placed: list[tuple[int, str, int]], column: dict[str, objec
     return number
 
 
+def _has_scale(text: str) -> bool:
+    lowered = text.lower()
+    return "in millions" in lowered or "in thousands" in lowered
+
+
 def _unit_for(role: str, scale_text: str) -> str | None:
     lowered = scale_text.lower()
     millions = "in millions" in lowered
@@ -371,12 +390,14 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
     facts: list[Fact] = []
     price_metric = False
     offset = 0
-    for caption, rows in parser.tables:
+    for caption, lead, rows in parser.tables:
         kind = _table_kind(rows)
         columns = _header_columns(rows)
         chosen = _current_column(columns)
         header_text = " ".join(cell.text for row in rows[:4] for cell in row)
         scale_text = f"{caption} {header_text}"
+        if not _has_scale(scale_text) and _SCALE_CAPTION.fullmatch(lead.strip()):
+            scale_text = f"{lead} {scale_text}"
         for row in rows:
             placed = _place(row)
             label = ""
