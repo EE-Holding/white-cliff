@@ -143,6 +143,47 @@ def test_provenance_records_hash_url_and_time(tmp_path):
     assert hashlib.sha256(body).hexdigest() == records[0]["sha256"]
 
 
+def test_default_transport_does_not_follow_a_redirect():
+    """urlopen must not send the User-Agent to the Location host."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+
+    from white_cliff.fetch import _default_transport
+
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            if self.path == "/start":
+                self.send_response(302)
+                port = self.server.server_address[1]
+                self.send_header("Location", f"http://127.0.0.1:{port}/evil")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"stolen")
+
+        def log_message(self, fmt, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        status, body, _headers = _default_transport(
+            f"http://127.0.0.1:{port}/start",
+            UA,
+        )
+    finally:
+        server.shutdown()
+    assert status == 302
+    assert body == b""
+    assert hits == ["/start"]
+
+
 def test_redirects_to_another_host_are_refused():
     calls: list[str] = []
 
