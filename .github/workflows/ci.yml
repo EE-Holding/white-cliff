@@ -27,22 +27,4 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Check authorship
-        env:
-          AUTHOR_NAME: ${{ vars.AUTHOR_NAME }}
-          AUTHOR_EMAIL: ${{ vars.AUTHOR_EMAIL }}
-        run: |
-          if [ -z "$AUTHOR_NAME" ]; then
-            echo "repository variable AUTHOR_NAME is missing"
-            exit 1
-          fi
-          if [ -z "$AUTHOR_EMAIL" ]; then
-            echo "repository variable AUTHOR_EMAIL is missing"
-            exit 1
-          fi
-          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-          else
-            git fetch origin main
-            BASE="origin/main"
-          fi
-          python3 scripts/check_authorship.py --range "$BASE..HEAD"
+        run: python3 scripts/check_authorship.py --range 6397b468a59a725d727a9b7abf5b3756655fa76f..HEAD

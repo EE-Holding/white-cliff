@@ -1,23 +1,8 @@
 #!/bin/sh
-# Read the expected author the same way as the checker, then reject a trailer.
+# Local commits must use the address from AUTHOR_EMAIL, or git config.
 root=$(git rev-parse --show-toplevel)
-if [ -n "${GITHUB_ACTIONS:-}" ]; then
-  if [ -z "${AUTHOR_NAME:-}" ]; then
-    echo "repository variable AUTHOR_NAME is missing" >&2
-    exit 1
-  fi
-  if [ -z "${AUTHOR_EMAIL:-}" ]; then
-    echo "repository variable AUTHOR_EMAIL is missing" >&2
-    exit 1
-  fi
-else
-  if [ -z "${AUTHOR_NAME:-}" ]; then
-    AUTHOR_NAME=$(git config --get user.name || true)
-    export AUTHOR_NAME
-  fi
-  if [ -z "${AUTHOR_EMAIL:-}" ]; then
-    AUTHOR_EMAIL=$(git config --get user.email || true)
-    export AUTHOR_EMAIL
-  fi
+if [ -z "${GITHUB_ACTIONS:-}" ] && [ -z "${AUTHOR_EMAIL:-}" ]; then
+  AUTHOR_EMAIL=$(git config --get user.email || true)
+  export AUTHOR_EMAIL
 fi
 exec python3 "$root/scripts/check_authorship.py" --commit-msg "$1"

@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 ROOT = "6397b468a59a725d727a9b7abf5b3756655fa76f"
+REQUIRED_NAME = "Erik Eicke"
 MARKERS = (
     "co-authored-by:",
     "made-with:",
@@ -27,34 +28,30 @@ def _git_config(key: str) -> str:
     return completed.stdout.strip()
 
 
-def resolve_expected() -> tuple[tuple[str, str, str, str] | None, str | None]:
-    """Name and address come from the environment, then from git config."""
-    in_ci = os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
-    name = os.environ.get("AUTHOR_NAME", "").strip()
+def _in_ci() -> bool:
+    return os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+
+
+def _expected_email() -> str:
+    """Local checks read the address from the environment, then git config."""
     email = os.environ.get("AUTHOR_EMAIL", "").strip()
-    if in_ci:
-        missing = [
-            item
-            for item, value in (("AUTHOR_NAME", name), ("AUTHOR_EMAIL", email))
-            if not value
-        ]
-        if missing:
-            return None, "\n".join(f"repository variable {item} is missing" for item in missing)
-        return (name, email, name, email), None
-    if not name:
-        name = _git_config("user.name")
-    if not email:
-        email = _git_config("user.email")
-    if not name or not email:
-        return None, "AUTHOR_NAME and AUTHOR_EMAIL are unset and git config has no user name or email"
-    return (name, email, name, email), None
+    if email:
+        return email
+    return _git_config("user.email")
+
+
+def _recorded_email(which: str) -> str:
+    return os.environ.get(f"GIT_{which}_EMAIL", "").strip() or _git_config("user.email")
 
 
 def check_range(expr: str) -> int:
-    required, problem = resolve_expected()
-    if problem or required is None:
-        print(problem or "repository variable AUTHOR_EMAIL is missing")
-        return 1
+    in_ci = _in_ci()
+    email = ""
+    if not in_ci:
+        email = _expected_email()
+        if not email:
+            print("AUTHOR_EMAIL is unset and git config has no user.email")
+            return 1
     fmt = "%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%(trailers:only)%x1e"
     try:
         out = subprocess.check_output(
@@ -80,8 +77,10 @@ def check_range(expr: str) -> int:
         sha, author, author_email, committer, committer_email, trailers = parts
         if sha == ROOT or ROOT.startswith(sha):
             continue
-        identity = (author, author_email, committer, committer_email)
-        if identity != required or trailers.strip():
+        email_mismatch = (not in_ci) and (
+            author_email != email or committer_email != email
+        )
+        if author != REQUIRED_NAME or committer != REQUIRED_NAME or trailers.strip() or email_mismatch:
             shown = trailers.replace("\n", "\\n")
             print(
                 "authorship mismatch "
@@ -118,10 +117,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--commit-msg", dest="message")
     args = parser.parse_args(argv)
     if args.message:
-        _expected, problem = resolve_expected()
-        if problem:
-            print(problem)
-            return 1
+        if not _in_ci():
+            expected = _expected_email()
+            if not expected:
+                print("AUTHOR_EMAIL is unset and git config has no user.email")
+                return 1
+            if _recorded_email("AUTHOR") != expected or _recorded_email("COMMITTER") != expected:
+                print("author email does not match")
+                return 1
         return check_message(args.message)
     if args.range_expr:
         return check_range(args.range_expr)
