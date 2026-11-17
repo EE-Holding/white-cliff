@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 
-REQUIRED = ("Erik Eicke", "eickeerik@gmail.com", "Erik Eicke", "eickeerik@gmail.com")
 ROOT = "6397b468a59a725d727a9b7abf5b3756655fa76f"
 MARKERS = (
     "co-authored-by:",
@@ -17,7 +17,44 @@ MARKERS = (
 )
 
 
+def _git_config(key: str) -> str:
+    completed = subprocess.run(
+        ["git", "config", "--get", key],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed.stdout.strip()
+
+
+def resolve_expected() -> tuple[tuple[str, str, str, str] | None, str | None]:
+    """Name and address come from the environment, then from git config."""
+    in_ci = os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+    name = os.environ.get("AUTHOR_NAME", "").strip()
+    email = os.environ.get("AUTHOR_EMAIL", "").strip()
+    if in_ci:
+        missing = [
+            item
+            for item, value in (("AUTHOR_NAME", name), ("AUTHOR_EMAIL", email))
+            if not value
+        ]
+        if missing:
+            return None, "\n".join(f"repository variable {item} is missing" for item in missing)
+        return (name, email, name, email), None
+    if not name:
+        name = _git_config("user.name")
+    if not email:
+        email = _git_config("user.email")
+    if not name or not email:
+        return None, "AUTHOR_NAME and AUTHOR_EMAIL are unset and git config has no user name or email"
+    return (name, email, name, email), None
+
+
 def check_range(expr: str) -> int:
+    required, problem = resolve_expected()
+    if problem or required is None:
+        print(problem or "repository variable AUTHOR_EMAIL is missing")
+        return 1
     fmt = "%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%(trailers:only)%x1e"
     try:
         out = subprocess.check_output(
@@ -44,7 +81,7 @@ def check_range(expr: str) -> int:
         if sha == ROOT or ROOT.startswith(sha):
             continue
         identity = (author, author_email, committer, committer_email)
-        if identity != REQUIRED or trailers.strip():
+        if identity != required or trailers.strip():
             shown = trailers.replace("\n", "\\n")
             print(
                 "authorship mismatch "
@@ -81,6 +118,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--commit-msg", dest="message")
     args = parser.parse_args(argv)
     if args.message:
+        _expected, problem = resolve_expected()
+        if problem:
+            print(problem)
+            return 1
         return check_message(args.message)
     if args.range_expr:
         return check_range(args.range_expr)
