@@ -22,6 +22,22 @@ def _env(home: Path) -> dict[str, str]:
     return env
 
 
+def test_correction_note_is_stated_and_logged():
+    sentence = (
+        "A confirmed misstatement is corrected or the output pulled within "
+        "2 business days, with a dated correction note."
+    )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "filing_error.md").read_text(encoding="utf-8")
+    corrections = (ROOT / "CORRECTIONS.md").read_text(encoding="utf-8")
+    assert sentence in readme
+    assert sentence in template
+    assert "[CORRECTIONS.md](CORRECTIONS.md)" in readme
+    assert corrections.startswith("# Corrections\n")
+    assert "| Date | Filing | What was wrong | What changed |" in corrections
+    assert "| --- | --- | --- | --- |" in corrections
+
+
 def test_readme_opens_with_the_disclaimer_and_the_warranty():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     first = readme.split("\n\n", 1)[0].strip()
