@@ -138,6 +138,54 @@ def test_local_identity_falls_back_to_git_config(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+def _install_hook(repo: Path) -> Path:
+    destination = repo / "scripts"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("check_authorship.py", "pre-push"):
+        target = destination / name
+        target.write_bytes((ROOT / "scripts" / name).read_bytes())
+    hook = destination / "pre-push"
+    hook.chmod(0o755)
+    return hook
+
+
+def test_pre_push_hook_requires_the_configured_email(tmp_path):
+    assert (ROOT / "scripts" / "pre-push").is_file()
+    env = _local(_env("Erik Eicke", "ada@example.com"))
+    env["AUTHOR_EMAIL"] = "ada@example.com"
+    subprocess.check_call(["git", "init"], cwd=tmp_path, env=env)
+    hook = _install_hook(tmp_path)
+    _commit(tmp_path, env, "Add a note")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp_path, text=True).strip()
+    completed = subprocess.run(
+        ["sh", str(hook), "origin", "https://example.com/white-cliff.git"],
+        cwd=tmp_path,
+        env=env,
+        input=f"refs/heads/skeleton {head} refs/heads/skeleton {'0' * 40}\n",
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    bad = _local(_env("Erik Eicke", "other@example.org"))
+    bad["AUTHOR_EMAIL"] = "ada@example.com"
+    other = tmp_path / "other"
+    other.mkdir()
+    subprocess.check_call(["git", "init"], cwd=other, env=bad)
+    other_hook = _install_hook(other)
+    _commit(other, bad, "Add a note")
+    bad_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=other, text=True).strip()
+    completed = subprocess.run(
+        ["sh", str(other_hook), "origin", "https://example.com/white-cliff.git"],
+        cwd=other,
+        env=bad,
+        input=f"refs/heads/skeleton {bad_head} refs/heads/skeleton {'0' * 40}\n",
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode != 0
+
+
 def test_authorship_script_accepts_the_required_identity(tmp_path):
     env = _local(_env("Erik Eicke", "ada@example.com"))
     env["AUTHOR_EMAIL"] = "ada@example.com"
