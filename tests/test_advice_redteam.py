@@ -6,6 +6,8 @@ from pathlib import Path
 from white_cliff.advice import advice_reason, classifier_reason, rule_list_reason
 from white_cliff.pipeline import explain_filing, load_directory
 from tests.support import MINI_XML, write_filing
+from tests.test_model_numbers import NUMBER_WORDS
+from tests.test_no_price_metrics import PRICE_PHRASES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,29 +90,41 @@ def test_benign_filing_language_is_not_advice():
         assert advice_reason(text) is None, text
 
 
-def test_model_command_cannot_place_advice_in_the_output(tmp_path):
+def _run_stub(tmp_path, text: str) -> subprocess.CompletedProcess[str]:
     script = tmp_path / "stub_model.py"
     script.write_text(
         "import os, sys\nsys.stdout.write(os.environ['STUB_TEXT'])\n",
         encoding="utf-8",
     )
-    filing = ROOT / "tests" / "fixtures" / "omissions"
+    env = os.environ.copy()
+    env["WHITE_CLIFF_USER_AGENT"] = "Example Name name@example.com"
+    env["WHITE_CLIFF_CONFIG"] = str(tmp_path / "missing.toml")
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["WHITE_CLIFF_MODEL_CMD"] = f"{sys.executable} {script}"
+    env["STUB_TEXT"] = text
+    return subprocess.run(
+        [sys.executable, "-m", "white_cliff", "explain", str(ROOT / "tests" / "fixtures" / "omissions")],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_model_command_cannot_place_advice_in_the_output(tmp_path):
     for text in ADVERSARIAL:
-        env = os.environ.copy()
-        env["WHITE_CLIFF_USER_AGENT"] = "Example Name name@example.com"
-        env["WHITE_CLIFF_CONFIG"] = str(tmp_path / "missing.toml")
-        env["PYTHONPATH"] = str(ROOT / "src")
-        env["WHITE_CLIFF_MODEL_CMD"] = f"{sys.executable} {script}"
-        env["STUB_TEXT"] = text
-        completed = subprocess.run(
-            [sys.executable, "-m", "white_cliff", "explain", str(filing)],
-            cwd=ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-        )
+        completed = _run_stub(tmp_path, text)
         combined = completed.stdout + completed.stderr
         assert text not in combined, text
+
+
+def test_model_path_refuses_number_words_advice_and_prices(tmp_path):
+    """The explain command, the model command, and review all drop adversarial text."""
+    for text in (*NUMBER_WORDS, *ADVERSARIAL, *PRICE_PHRASES):
+        completed = _run_stub(tmp_path, text)
+        combined = completed.stdout + completed.stderr
+        assert text not in combined, text
+        assert "Traceback" not in combined
 
 
 def test_blocked_section_is_omitted_and_not_softened(tmp_path):
