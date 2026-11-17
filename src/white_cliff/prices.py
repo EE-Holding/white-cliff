@@ -7,7 +7,15 @@ import unicodedata
 
 _PATTERNS = (
     re.compile(r"\bp\s*/\s*e\b", re.I),
+    re.compile(r"\bpe\s+multiple\b", re.I),
     re.compile(r"\bpe ratio\b", re.I),
+    re.compile(r"\bprice[\s-]*(?:to|/)?[\s-]*(?:earnings|book|sales)\b", re.I),
+    re.compile(r"\btimes\s+(?:earnings|sales|book|ebitda)\b", re.I),
+    re.compile(r"\bcapitali[sz]ation\b", re.I),
+    re.compile(r"\bearnings\s+yield\b", re.I),
+    re.compile(r"\bev\s+(?:to|/)\s*ebitda\b", re.I),
+    re.compile(r"\b(?:share|stock)\s+price\b", re.I),
+    re.compile(r"\btrades?\s+at\b", re.I),
     re.compile(r"\bprice\s*/\s*earnings\b", re.I),
     re.compile(r"\bprice\s*-?\s*to\s*-?\s*earnings\b", re.I),
     re.compile(r"\bev\s*/\s*ebitda\b", re.I),

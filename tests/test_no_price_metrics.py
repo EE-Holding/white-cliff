@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from white_cliff.formulas import PriceInputError, compute
+from white_cliff.prices import is_price_text
 from white_cliff.pipeline import explain_filing, load_directory
 from tests.support import make_fact
 
@@ -16,6 +17,24 @@ def test_fixture_filing_quotes_pe_and_market_cap_and_neither_is_explained():
     assert "2,500,000" not in rendered
     assert "price metric" in explained.markdown
     assert "5000" in explained.markdown
+
+
+PRICE_PHRASES = (
+    "twenty times earnings",
+    "price-earnings ratio",
+    "price earnings multiple",
+    "Market capitalisation",
+    "earnings yield",
+    "EV to EBITDA",
+    "PE multiple",
+    "The stock price is high",
+    "share price closed higher",
+)
+
+
+def test_price_metrics_in_words_are_refused():
+    for phrase in PRICE_PHRASES:
+        assert is_price_text(phrase), phrase
 
 
 def test_formula_library_refuses_price_metrics():

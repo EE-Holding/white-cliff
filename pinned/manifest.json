@@ -56,6 +56,14 @@
       "form": "8-K",
       "sector": "technology",
       "period_of_report": "2026-09-26"
+    },
+    {
+      "accession": "0001193125-26-436133",
+      "cik": "0000789019",
+      "filer": "MICROSOFT CORPORATION",
+      "form": "10-Q",
+      "sector": "technology",
+      "period_of_report": "2026-09-30"
     }
   ]
 }

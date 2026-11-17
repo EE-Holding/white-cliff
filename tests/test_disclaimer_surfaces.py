@@ -93,6 +93,47 @@ def test_exports_and_the_public_page_lead_with_the_disclaimer(tmp_path):
     assert DISCLAIMER in page_text
 
 
+def test_refused_output_is_a_plain_message(tmp_path, monkeypatch, capsys):
+    from white_cliff import cli
+    from white_cliff.disclaimer import OutputRefused
+
+    target = tmp_path / "filing.html"
+    target.write_text("<p>Total net sales 5</p>", encoding="utf-8")
+
+    def explode(*_args, **_kwargs):
+        raise OutputRefused("number before disclaimer")
+
+    monkeypatch.setattr(cli, "explain_filing", explode)
+    monkeypatch.setattr(cli, "load_file", lambda _path: object())
+    code = cli.main(["explain", str(target)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "number before disclaimer" in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+def test_local_file_without_provenance_invents_no_sec_url(tmp_path, capsys):
+    from white_cliff import cli
+    from white_cliff.pipeline import load_file
+
+    target = tmp_path / "filing.html"
+    target.write_text(
+        "<table><caption>(In millions)</caption><tr><th>2026</th></tr>"
+        "<tr><td>Total net sales</td><td>5</td></tr></table>",
+        encoding="utf-8",
+    )
+    try:
+        filing = load_file(target)
+    except Exception as exc:
+        assert "sec.gov" not in str(exc)
+        return
+    explained = explain_filing(filing)
+    rendered = explained.markdown + explained.html
+    assert "https://www.sec.gov/" not in rendered
+    assert "not retrieved from EDGAR" in rendered
+
+
 def test_output_without_the_disclaimer_is_refused():
     with pytest.raises(OutputRefused):
         ensure_safe_output("Revenue was 10.")

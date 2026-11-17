@@ -16,6 +16,19 @@ def test_confidential_omission_is_shown_as_filed():
     assert "royalty rate is 10" not in explained.markdown
 
 
+def test_other_omission_markers_are_shown_as_filed(tmp_path):
+    from tests.support import write_filing
+
+    html = "<p>Rates are [*], ***, [* * *], [Redacted] and [omitted].</p>"
+    url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/omit.htm"
+    directory = write_filing(tmp_path / "omit", "filing.html", html, url, form="8-K")
+    filing = load_directory(directory)
+    explained = explain_filing(filing)
+    for marker in ("[*]", "***", "[* * *]", "[Redacted]", "[omitted]"):
+        assert marker in explained.markdown
+        assert marker in explained.html
+
+
 def test_model_does_not_fill_an_omission(tmp_path):
     from tests.support import MINI_XML, write_filing
 

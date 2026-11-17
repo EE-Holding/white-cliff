@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from white_cliff.config import MissingUserAgent, load_user_agent
-from white_cliff.disclaimer import DISCLAIMER
+from white_cliff.disclaimer import DISCLAIMER, OutputRefused
 from white_cliff.fetch import ACCESSION_RE, EdgarClient, FetchError, host_allowed
 from white_cliff.model import model_text_from_env
 from white_cliff.pipeline import explain_filing, load_directory, load_file
@@ -91,7 +91,11 @@ def _explain(args, user_agent: str) -> int:
     model_text = args.model_text
     if model_text is None:
         model_text = model_text_from_env(filing)
-    explained = explain_filing(filing, model_text=model_text)
+    try:
+        explained = explain_filing(filing, model_text=model_text)
+    except (OutputRefused, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     rendered = explained.html if args.format == "html" else explained.markdown
     if args.copy:
         rendered = explained.copy

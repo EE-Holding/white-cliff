@@ -31,12 +31,21 @@ def _markdown_chip(label: str, url: str, title: str) -> str:
     return f'[{label}]({url} "{title}")'
 
 
+def _shown(value, unit: str) -> str:
+    if unit == "percent":
+        return f"{value:.1f}"
+    return format_decimal(value)
+
+
 def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
     pieces: list[str] = []
     offset = 0
     for match in _TOKEN.finditer(text):
         raw = text[offset : match.start()]
-        pieces.append(html.escape(raw) if mode == "html" else raw)
+        if mode == "html":
+            pieces.append(html.escape(raw))
+        else:
+            pieces.append(raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
         if match.group(0) == "{redaction}":
             if block.redaction is None:
                 raise OutputRefused("missing redaction")
@@ -59,7 +68,7 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
             kind, identifier = match.group(1), match.group(2)
             if kind == "fact":
                 fact = store.get(identifier)
-                label = f"{format_decimal(fact.value)} {fact.unit}"
+                label = f"{_shown(fact.value, fact.unit)} {fact.unit}"
                 href = _with_fragment(
                     fact.source.url,
                     _fragment(fact.id, fact.source.char_start, fact.source.char_end),
@@ -67,8 +76,7 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
                 title = fact.source.section
                 if mode == "html":
                     pieces.append(
-                        f'<data data-kind="fact" data-id="{fact.id}">{html.escape(format_decimal(fact.value))}</data> '
-                        f'{html.escape(fact.unit)} '
+                        f'<data data-kind="fact" data-id="{fact.id}">{html.escape(label)}</data> '
                         f'<a class="source-chip" data-id="{fact.id}" '
                         f'href="{html.escape(href, quote=True)}">{html.escape(title)}</a>'
                     )
@@ -77,7 +85,7 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
             else:
                 calc = store.get_calc(identifier)
                 source_fact = store.get(calc.input_ids[0])
-                label = f"{format_decimal(calc.value)} {calc.unit}"
+                label = f"{_shown(calc.value, calc.unit)} {calc.unit}"
                 href = _with_fragment(
                     source_fact.source.url,
                     _fragment(calc.id, source_fact.source.char_start, source_fact.source.char_end),
@@ -85,8 +93,7 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
                 title = source_fact.source.section
                 if mode == "html":
                     pieces.append(
-                        f'<data data-kind="calc" data-id="{calc.id}">{html.escape(format_decimal(calc.value))}</data> '
-                        f'{html.escape(calc.unit)} '
+                        f'<data data-kind="calc" data-id="{calc.id}">{html.escape(label)}</data> '
                         f'<a class="source-chip" data-id="{calc.id}" '
                         f'href="{html.escape(href, quote=True)}">{html.escape(title)}</a>'
                     )
@@ -94,8 +101,19 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
                     pieces.append(_markdown_chip(label, href, title))
         offset = match.end()
     tail = text[offset:]
-    pieces.append(html.escape(tail) if mode == "html" else tail)
-    return "".join(pieces)
+    if mode == "html":
+        pieces.append(html.escape(tail))
+    else:
+        pieces.append(tail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    filled = "".join(pieces)
+    for quote in getattr(block, "quotes", ()) or ():
+        visible = html.escape(quote.text) if mode == "html" else quote.text
+        if mode == "html":
+            link = f'<a href="{html.escape(quote.url, quote=True)}">{html.escape(quote.text)}</a>'
+        else:
+            link = f'[{quote.text}]({quote.url} "filing")'
+        filled = filled.replace(visible, link, 1)
+    return filled
 
 
 def render_markdown(blocks: list[Block], store: FactStore) -> str:

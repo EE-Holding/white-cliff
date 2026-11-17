@@ -1,0 +1,14 @@
+{
+  "accession": "0001193125-26-436133",
+  "cik": "0000789019",
+  "filer": "MICROSOFT CORPORATION",
+  "form": "10-Q",
+  "files": [
+    {
+      "name": "msft-20260930.htm",
+      "url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526436133/msft-20260930.htm",
+      "sha256": "014841af03b1c3e923a5a4652297c2913b5c5a24c12d0474c371eb2106913389",
+      "retrieved_at": "2026-11-17T18:40:00Z"
+    }
+  ]
+}

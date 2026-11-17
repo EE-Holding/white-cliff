@@ -36,6 +36,33 @@ def test_every_model_figure_is_caught(tmp_path):
             assert figure not in explained.html
 
 
+NUMBER_WORDS = (
+    "Revenue was twelve million dollars [section:Income statement].",
+    "Demand roughly doubled [section:Income statement].",
+    "That is a dozen times net income [section:Income statement].",
+    "The figure is XII billion [section:Income statement].",
+    "The change is one hundred per cent [section:Income statement].",
+    "The result is half of the prior year [section:Income statement].",
+    "The scale is ten to the sixth [section:Income statement].",
+    "[twelve billion USD](https://www.sec.gov/) [section:Income statement].",
+    '<img src="x" onerror="alert(1)"> [section:Notes].',
+)
+
+
+def test_number_words_forged_chips_and_raw_html_are_refused(tmp_path):
+    url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
+    directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
+    filing = load_directory(directory)
+    for text in NUMBER_WORDS:
+        explained = explain_filing(filing, model_text=text)
+        rendered = explained.markdown + explained.html
+        assert "twelve" not in rendered.lower()
+        assert "onerror" not in rendered.lower()
+        assert "<img" not in rendered
+        assert "](https://www.sec.gov/)" not in rendered
+        assert explained.reasons
+
+
 def test_model_command_gets_no_values_and_digits_are_dropped(tmp_path, monkeypatch):
     url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/mini.xml"
     directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)

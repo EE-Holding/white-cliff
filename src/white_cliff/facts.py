@@ -13,6 +13,7 @@ class Period:
     start: str | None = None
     end: str | None = None
     key: str = ""
+    span: str = ""
 
 
 @dataclass(frozen=True)

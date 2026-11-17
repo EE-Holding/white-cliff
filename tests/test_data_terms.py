@@ -143,6 +143,66 @@ def test_provenance_records_hash_url_and_time(tmp_path):
     assert hashlib.sha256(body).hexdigest() == records[0]["sha256"]
 
 
+def test_redirects_to_another_host_are_refused():
+    calls: list[str] = []
+
+    def transport(url, user_agent):
+        calls.append(url)
+        return 302, b"", {"Location": "https://example.com/stolen"}
+
+    client = EdgarClient(UA, transport=transport, sleep=lambda _seconds: None, clock=lambda: 0.0)
+    with pytest.raises(DisallowedHost):
+        client.get("https://www.sec.gov/Archives/edgar/data/1/index.json")
+    assert calls == ["https://www.sec.gov/Archives/edgar/data/1/index.json"]
+
+
+def test_retry_after_is_honoured_and_capped():
+    clock = _Clock()
+    replies = [429, 200]
+
+    def transport(url, user_agent, replies=replies):
+        if replies[0] == 429:
+            replies.pop(0)
+            return 429, b"", {"Retry-After": "3"}
+        replies.pop(0)
+        return 200, b"ok", {}
+
+    client = EdgarClient(UA, transport=transport, sleep=clock.sleep, clock=clock.clock)
+    assert client.get("https://www.sec.gov/Archives/edgar/data/1/index.json") == b"ok"
+    assert 3.0 in clock.sleeps
+
+    clock = _Clock()
+    replies = [429, 200]
+
+    def slow(url, user_agent, replies=replies):
+        if replies[0] == 429:
+            replies.pop(0)
+            return 429, b"", {"Retry-After": "100000"}
+        replies.pop(0)
+        return 200, b"ok", {}
+
+    client = EdgarClient(UA, transport=slow, sleep=clock.sleep, clock=clock.clock)
+    assert client.get("https://data.sec.gov/submissions/CIK.json") == b"ok"
+    assert clock.sleeps
+    assert max(clock.sleeps) <= 30
+
+
+def test_index_file_names_cannot_escape_the_directory(tmp_path):
+    from white_cliff.fetch import FetchError
+
+    index = json.dumps(
+        {"directory": {"item": [{"name": "../evil.xml"}, {"name": "/tmp/evil.xml"}]}}
+    ).encode()
+
+    def transport(url, user_agent):
+        return 200, index, {}
+
+    client = EdgarClient(UA, transport=transport, sleep=lambda _seconds: None, clock=lambda: 0.0)
+    with pytest.raises(FetchError):
+        client.fetch_accession("0000320193-26-000026", tmp_path / "out", "320193")
+    assert not (tmp_path / "evil.xml").exists()
+
+
 def test_accession_lookup_uses_only_the_requested_filing():
     payload = {
         "hits": {

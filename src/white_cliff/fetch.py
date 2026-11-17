@@ -22,6 +22,9 @@ from white_cliff.config import MissingUserAgent
 ALLOWED_HOSTS = frozenset({"www.sec.gov", "data.sec.gov", "efts.sec.gov"})
 ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 MAX_FILES = 8
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+_MAX_WAIT = 30.0
 
 
 class DisallowedHost(Exception):
@@ -39,6 +42,13 @@ def host_allowed(url: str) -> bool:
     return (parsed.hostname or "") in ALLOWED_HOSTS
 
 
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """Leave 3xx responses in place so the caller can check Location."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _default_transport(url: str, user_agent: str) -> tuple[int, bytes, dict[str, str]]:
     request = urllib.request.Request(
         url,
@@ -47,12 +57,20 @@ def _default_transport(url: str, user_agent: str) -> tuple[int, bytes, dict[str,
             "Accept": "application/json,text/html,application/xml,*/*",
         },
     )
+    opener = urllib.request.build_opener(_RefuseRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with opener.open(request, timeout=60) as response:
             return response.status, response.read(), dict(response.headers.items())
     except urllib.error.HTTPError as exc:
         body = exc.read()
         return exc.code, body, dict(exc.headers.items()) if exc.headers else {}
+
+
+def _header(headers: dict[str, str], name: str) -> str:
+    for key, value in headers.items():
+        if key.lower() == name.lower():
+            return value
+    return ""
 
 
 class EdgarClient:
@@ -86,17 +104,33 @@ class EdgarClient:
             current = self.clock()
         self._next = current + self.interval
 
-    def get(self, url: str) -> bytes:
+    def get(self, url: str, hops: int = 0) -> bytes:
         if not host_allowed(url):
             raise DisallowedHost(url)
         delay = 1.0
+        waited = 0.0
         last_status = None
         for _ in range(6):
             self._acquire()
-            status, body, _headers = self.transport(url, self.user_agent)
+            status, body, headers = self.transport(url, self.user_agent)
+            if status in _REDIRECTS:
+                location = _header(headers, "Location")
+                target = urllib.parse.urljoin(url, location) if location else ""
+                if hops >= 2 or not target or not host_allowed(target):
+                    raise DisallowedHost(target or url)
+                return self.get(target, hops + 1)
             if status in (403, 429):
                 last_status = status
-                self.sleep(delay)
+                pause = delay
+                retry_after = _header(headers, "Retry-After")
+                if retry_after:
+                    try:
+                        pause = float(retry_after)
+                    except ValueError:
+                        pause = delay
+                pause = max(0.0, min(pause, _MAX_WAIT - waited))
+                self.sleep(pause)
+                waited += pause
                 delay *= 2
                 continue
             if status != 200:
@@ -127,7 +161,7 @@ class EdgarClient:
         base = f"https://www.sec.gov/Archives/edgar/data/{cik_path}/{nodash}"
         index_body = self.get(f"{base}/index.json")
         payload = json.loads(index_body.decode("utf-8"))
-        names = [item["name"] for item in payload["directory"]["item"]]
+        names = [_safe_file_name(item["name"]) for item in payload["directory"]["item"]]
         chosen = _choose_files(names)
         dest.mkdir(parents=True, exist_ok=True)
         records: list[dict[str, str]] = []
@@ -149,6 +183,19 @@ class EdgarClient:
             json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
         )
         return records
+
+
+def _safe_file_name(name: str) -> str:
+    if (
+        not isinstance(name, str)
+        or not _SAFE_NAME.fullmatch(name)
+        or name in {".", ".."}
+        or ".." in name
+        or "/" in name
+        or "\\" in name
+    ):
+        raise FetchError("unsafe file name")
+    return name
 
 
 def _choose_files(names: list[str]) -> list[str]:

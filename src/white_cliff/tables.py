@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from decimal import Decimal
 from html.parser import HTMLParser
 
@@ -46,46 +47,101 @@ _TABLE_NAME = {
     "other": "Statements",
 }
 
+_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+_SCALE_CAPTION = re.compile(
+    r"\([^)]{0,200}?in\s+(?:millions|thousands)\b[^)]{0,200}\)",
+    re.I,
+)
+_DATE = re.compile(
+    r"(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)\s+(\d{1,2}),?\s*(\d{4})",
+    re.I,
+)
+_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+_SPAN_RANK = {"": 3, "fiscal year": 2, "year to date": 1, "quarter": 0}
+
+
+@dataclass
+class _Cell:
+    text: str
+    colspan: int
+
 
 class _Tables(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.tables: list[list[list[str]]] = []
+        self.tables: list[tuple[str, list[list[_Cell]]]] = []
         self._depth = 0
-        self._rows: list[list[str]] = []
-        self._row: list[str] = []
+        self._rows: list[list[_Cell]] = []
+        self._row: list[_Cell] = []
         self._cell: list[str] = []
+        self._colspan = 1
         self._capture = False
+        self._in_caption = False
+        self._caption: list[str] = []
+        self._between: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
+        values = {key.lower(): value for key, value in attrs}
         if tag == "table":
             if self._depth == 0:
                 self._rows = []
+                self._caption = []
             self._depth += 1
+        elif tag == "caption" and self._depth:
+            self._in_caption = True
+            self._caption = []
         elif tag == "tr" and self._depth:
             self._row = []
         elif tag in {"td", "th"} and self._depth:
             self._cell = []
             self._capture = True
+            try:
+                self._colspan = max(int(values.get("colspan") or "1"), 1)
+            except ValueError:
+                self._colspan = 1
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        if tag in {"td", "th"} and self._capture:
+        if tag == "caption":
+            self._in_caption = False
+        elif tag in {"td", "th"} and self._capture:
             text = re.sub(r"\s+", " ", "".join(self._cell)).strip()
-            self._row.append(text)
+            self._row.append(_Cell(text, self._colspan))
             self._capture = False
         elif tag == "tr" and self._depth:
-            if any(cell.strip() for cell in self._row):
+            if any(cell.text.strip() for cell in self._row):
                 self._rows.append(self._row)
         elif tag == "table" and self._depth:
             self._depth -= 1
             if self._depth == 0:
-                self.tables.append(self._rows)
+                between = re.sub(r"\s+", " ", "".join(self._between))
+                caption = re.sub(r"\s+", " ", "".join(self._caption)).strip()
+                prior = " ".join(_SCALE_CAPTION.findall(between))
+                self.tables.append((f"{prior} {caption}".strip(), self._rows))
+                self._between = []
 
     def handle_data(self, data: str) -> None:
-        if self._capture:
-            self._cell.append(data)
+        if self._capture or self._in_caption:
+            target = self._cell if self._capture else self._caption
+            target.append(data)
+        elif self._depth == 0:
+            self._between.append(data)
 
 
 def _norm_label(label: str) -> str:
@@ -104,14 +160,186 @@ def _role_for(label: str) -> str:
     return ""
 
 
-def _parse_number(text: str) -> Decimal | None:
+def _plain_number(text: str) -> Decimal | None:
+    """A value cell. Percents, footnotes, and omissions are not values."""
     cleaned = text.replace("\xa0", "").replace(",", "").replace("$", "").strip()
+    if not cleaned or cleaned in {"—", "-", "–", "$"}:
+        return None
+    lowered = cleaned.lower()
+    if "[" in cleaned or "*" in cleaned or "redacted" in lowered or "omitted" in lowered:
+        return None
+    if cleaned.endswith("%"):
+        return None
+    if re.fullmatch(r"\(\d\)", cleaned):
+        return None
     if cleaned.startswith("(") and cleaned.endswith(")"):
-        cleaned = "-" + cleaned[1:-1]
-    cleaned = cleaned.rstrip("%").strip()
+        inner = cleaned[1:-1].strip()
+        if re.fullmatch(r"\d+(?:\.\d+)?", inner):
+            return Decimal("-" + inner)
+        return None
     if re.fullmatch(r"-?\d+(?:\.\d+)?", cleaned):
         return Decimal(cleaned)
     return None
+
+
+def _merge_parens(cells: list[_Cell]) -> list[_Cell]:
+    merged: list[_Cell] = []
+    index = 0
+    while index < len(cells):
+        text = cells[index].text.strip()
+        span = cells[index].colspan
+        if (
+            text.startswith("(")
+            and not text.endswith(")")
+            and index + 1 < len(cells)
+            and cells[index + 1].text.strip() in {")", " )"}
+        ):
+            text = text + ")"
+            span += cells[index + 1].colspan
+            index += 2
+        else:
+            index += 1
+        merged.append(_Cell(text, max(span, 1)))
+    return merged
+
+
+def _place(cells: list[_Cell]) -> list[tuple[int, str, int]]:
+    placed: list[tuple[int, str, int]] = []
+    pos = 0
+    for cell in _merge_parens(cells):
+        placed.append((pos, cell.text, cell.colspan))
+        pos += cell.colspan
+    return placed
+
+
+def _end_date(text: str) -> str | None:
+    match = _DATE.search(text)
+    if match:
+        month = _MONTHS[match.group(1).lower()]
+        return f"{int(match.group(3)):04d}-{month:02d}-{int(match.group(2)):02d}"
+    years = _YEAR.findall(text)
+    if years:
+        return f"{years[-1]}-12-31"
+    return None
+
+
+def _span_name(text: str) -> str:
+    lowered = text.lower()
+    if "three months" in lowered or "three month" in lowered:
+        return "quarter"
+    if (
+        "six months" in lowered
+        or "nine months" in lowered
+        or "year to date" in lowered
+        or "year-to-date" in lowered
+    ):
+        return "year to date"
+    if "twelve months" in lowered or "year ended" in lowered or "fiscal year" in lowered:
+        return "fiscal year"
+    return ""
+
+
+def _header_columns(rows: list[list[_Cell]]) -> list[dict[str, object]]:
+    span_ranges: list[tuple[int, int, str]] = []
+    dates: list[tuple[int, int, str]] = []
+    for row in rows:
+        placed = _place(row)
+        texts = [text for _, text, _ in placed]
+        if any(_role_for(_norm_label(text)) for text in texts):
+            continue
+        for pos, text, colspan in placed:
+            named = _span_name(text)
+            if named:
+                span_ranges.append((pos, pos + colspan, named))
+            end = _end_date(text)
+            if end:
+                dates.append((pos, colspan, end))
+    columns: list[dict[str, object]] = []
+    for pos, colspan, end in dates:
+        named = ""
+        for start, stop, span in span_ranges:
+            if start <= pos < stop:
+                named = span
+        columns.append({"pos": pos, "width": colspan, "end": end, "span": named})
+    return columns
+
+
+def _current_column(columns: list[dict[str, object]]) -> dict[str, object] | None:
+    if not columns:
+        return None
+    latest = max(str(column["end"]) for column in columns)
+    current = [column for column in columns if column["end"] == latest]
+    current.sort(key=lambda column: (_SPAN_RANK.get(str(column["span"]), 3), int(column["pos"])))
+    return current[0]
+
+
+def _chunks_in(placed: list[tuple[int, str, int]], start: int, width: int) -> list[str]:
+    stop = start + width
+    found: list[str] = []
+    for pos, text, colspan in placed:
+        if pos >= stop or pos + colspan <= start:
+            continue
+        if text.strip():
+            found.append(text.strip())
+    return found
+
+
+def _value_in_column(placed: list[tuple[int, str, int]], column: dict[str, object]) -> Decimal | None:
+    chunks = _chunks_in(placed, int(column["pos"]), int(column["width"]))
+    joined: list[str] = []
+    index = 0
+    while index < len(chunks):
+        text = chunks[index]
+        if text.startswith("(") and not text.endswith(")") and index + 1 < len(chunks) and chunks[index + 1] == ")":
+            joined.append(text + ")")
+            index += 2
+        else:
+            joined.append(text)
+            index += 1
+    number = None
+    for text in joined:
+        parsed = _plain_number(text)
+        if parsed is not None:
+            number = parsed
+            break
+        if text not in {"$", "—", "-", "–"} and _plain_number(text) is None and text.strip():
+            # A non-value such as a percent, footnote, or omission blocks the column.
+            if text.endswith("%") or text.startswith("[") or text.startswith("(") or "*" in text:
+                return None
+    return number
+
+
+def _unit_for(role: str, scale_text: str) -> str | None:
+    lowered = scale_text.lower()
+    millions = "in millions" in lowered
+    thousands = "in thousands" in lowered
+    shares_clause = "share" in lowered and "in thousands" in lowered
+    if role == "shares":
+        if shares_clause or thousands:
+            return "shares thousands"
+        if millions:
+            return "shares"
+        return None
+    if millions and thousands and not shares_clause:
+        return None
+    if millions and thousands and shares_clause:
+        return "USD millions"
+    if millions:
+        return "USD millions"
+    if thousands:
+        return "USD thousands"
+    return None
+
+
+def _table_kind(rows: list[list[_Cell]]) -> str:
+    blob = " ".join(cell.text for row in rows for cell in row).lower()
+    if "operating activities" in blob or "cash flows" in blob:
+        return "cashflow"
+    if "total assets" in blob or "assets:" in blob:
+        return "balance"
+    if "net sales" in blob or "operating income" in blob or "revenue" in blob:
+        return "income"
+    return "other"
 
 
 def _comma_form(value: Decimal) -> str:
@@ -137,60 +365,23 @@ def _locate(raw: str, label: str, value: Decimal, offset: int) -> tuple[int, int
     return None
 
 
-def _table_kind(rows: list[list[str]]) -> str:
-    blob = " ".join(cell for row in rows for cell in row).lower()
-    if "operating activities" in blob or "cash flows" in blob:
-        return "cashflow"
-    if "total assets" in blob or blob.startswith("assets") or "\nassets" in blob or "assets:" in blob:
-        return "balance"
-    if "net sales" in blob or "operating income" in blob or "revenue" in blob:
-        return "income"
-    return "other"
-
-
-def _span_hint(kind: str, rows: list[list[str]]) -> str:
-    blob = " ".join(cell for row in rows[:3] for cell in row).lower()
-    if kind == "balance":
-        return "period end"
-    if "three months" in blob:
-        return "quarter"
-    if "twelve months" in blob or "year ended" in blob:
-        return "fiscal year"
-    return "reported period"
-
-
-def _unit_for(role: str, document_text: str) -> str:
-    lowered = document_text.lower()
-    share_row = role == "shares"
-    millions = "in millions" in lowered
-    thousands = "in thousands" in lowered
-    shares_in_thousands = "shares, which are reflected in thousands" in lowered
-    if share_row and (shares_in_thousands or thousands):
-        return "shares thousands"
-    if share_row:
-        return "shares"
-    if millions:
-        return "USD millions"
-    if thousands and not millions:
-        return "USD thousands"
-    return "USD"
-
-
 def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[Fact], bool]:
     parser = _Tables()
     parser.feed(text)
     facts: list[Fact] = []
     price_metric = False
     offset = 0
-    for rows in parser.tables:
+    for caption, rows in parser.tables:
         kind = _table_kind(rows)
-        span = _span_hint(kind, rows)
+        columns = _header_columns(rows)
+        chosen = _current_column(columns)
+        header_text = " ".join(cell.text for row in rows[:4] for cell in row)
+        scale_text = f"{caption} {header_text}"
         for row in rows:
-            if not row:
-                continue
+            placed = _place(row)
             label = ""
-            for cell in row:
-                if cell.strip() and cell.strip() not in {"$", "—", "-"} and _parse_number(cell) is None:
+            for _pos, cell, _span in placed:
+                if cell.strip() and _role_for(_norm_label(cell)):
                     label = cell.strip()
                     break
             if not label:
@@ -202,22 +393,41 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
             role = _role_for(normalized)
             if not role:
                 continue
-            value = None
-            for cell in row:
-                parsed = _parse_number(cell)
-                if parsed is not None:
-                    value = parsed
-                    break
+            if chosen is None:
+                numbers = []
+                for pos, cell, colspan in placed:
+                    parsed = _plain_number(cell)
+                    if parsed is not None:
+                        numbers.append((pos, parsed, colspan))
+                if len(numbers) != 1:
+                    continue
+                pos, value, colspan = numbers[0]
+                chosen_here = {"pos": pos, "width": colspan, "end": "", "span": ""}
+                value = _value_in_column(placed, chosen_here)
+            else:
+                value = _value_in_column(placed, chosen)
             if value is None:
+                continue
+            unit = _unit_for(role, scale_text)
+            if unit is None:
                 continue
             located = _locate(text, label, value, offset)
             if located is None:
                 continue
             start, end = located
             offset = end
-            unit = _unit_for(role, text)
-            period_kind = "instant" if kind == "balance" or role in {"cash", "debt"} else "duration"
-            period = Period(kind=period_kind, key=f"{kind}-current")
+            column = chosen if chosen is not None else chosen_here
+            end_date = str(column["end"])
+            span = str(column["span"])
+            instant = kind == "balance" or role in {"cash", "debt"}
+            if instant:
+                span = "period end"
+            period = Period(
+                kind="instant" if instant else "duration",
+                end=end_date,
+                span=span,
+                key=f"{span}|{end_date}",
+            )
             fact_id = letter_id(
                 "fact",
                 f"{document}|{normalized}|{value}|{start}|{role}",
@@ -245,7 +455,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                     origin="table",
                     kind="shares" if role == "shares" else "amount",
                     table_kind=kind,
-                    span_hint=span if period_kind == "duration" else "period end",
+                    span_hint=span if not instant else "period end",
                 )
             )
     return facts, price_metric

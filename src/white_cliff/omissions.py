@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import re
 
-_OMISSION = re.compile(r"\[\*{2,}\]")
+_OMISSION = re.compile(
+    r"\[\*(?:\s*\*)*\]"
+    r"|\*{3,}"
+    r"|\[(?i:redacted)\]"
+    r"|\[(?i:omitted)\]"
+)
 
 
 def find_omissions(text: str) -> list[tuple[int, int, str]]:

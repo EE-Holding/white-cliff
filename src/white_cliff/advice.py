@@ -5,33 +5,15 @@ from __future__ import annotations
 import re
 import unicodedata
 
-_CONFUSABLES = str.maketrans(
-    {
-        "а": "a",
-        "е": "e",
-        "о": "o",
-        "р": "p",
-        "с": "c",
-        "у": "y",
-        "х": "x",
-        "і": "i",
-        "ѕ": "s",
-        "ј": "j",
-        "һ": "h",
-        "ԁ": "d",
-        "ɡ": "g",
-        "в": "b",
-        "м": "m",
-        "н": "h",
-        "к": "k",
-        "т": "t",
-        "α": "a",
-        "ο": "o",
-        "ν": "v",
-        "τ": "t",
-        "ρ": "p",
-    }
-)
+from white_cliff.skeleton import skeleton
+
+def _folded(items):
+    return {skeleton(item) for item in items}
+
+
+def _folded_seq(items):
+    return tuple(skeleton(item) for item in items)
+
 
 _ADVICE_WORDS = {
     "buy",
@@ -63,6 +45,10 @@ _SQUASHED = {
     "strongsell",
     "deberiascomprar",
     "ilfautacheter",
+    "golong",
+    "takeprofit",
+    "sousevalue",
+    "kaufempfehlung",
 }
 
 _PHRASES = (
@@ -81,12 +67,39 @@ _PHRASES = (
     "vous devriez",
     "sie sollten",
     "ought to acquire",
+    "go long",
+    "take profit",
     "建议买入",
     "应该买入",
     "应该持有",
     "建议持有",
 )
 
+_PREFIXES = (
+    "buy",
+    "sell",
+    "accumulat",
+    "overweight",
+    "underweight",
+    "outperform",
+    "underperform",
+    "upside",
+    "downside",
+    "bargain",
+    "attractiv",
+    "trim",
+    "avoid",
+    "opportun",
+    "kauf",
+    "verkauf",
+    "achet",
+    "unterbewert",
+    "infravalor",
+    "sobrevalor",
+)
+
+_MODAL = {"should", "ought", "consider", "recommends", "recommend", "recommended", "considering"}
+_FUTURE = {"will", "shall", "likely", "outlook"}
 _FORECAST_DIRECTION = {
     "rise",
     "rises",
@@ -104,7 +117,21 @@ _FORECAST_DIRECTION = {
     "underperform",
     "soar",
     "plunge",
+    "expand",
+    "expands",
+    "rally",
+    "improve",
+    "improves",
 }
+
+
+_ADVICE_WORDS = _folded(_ADVICE_WORDS)
+_SQUASHED = _folded(_SQUASHED)
+_PHRASES = _folded_seq(_PHRASES)
+_PREFIXES = _folded_seq(_PREFIXES)
+_MODAL = _folded(_MODAL)
+_FUTURE = _folded(_FUTURE)
+_FORECAST_DIRECTION = _folded(_FORECAST_DIRECTION)
 
 
 def _strip_marks(text: str) -> str:
@@ -119,14 +146,10 @@ def _join_tokens(tokens: list[str]) -> list[str]:
         token = tokens[index]
         if len(token) == 1 and token.isalpha():
             end = index
-            while (
-                end < len(tokens)
-                and len(tokens[end]) == 1
-                and tokens[end].isalpha()
-            ):
+            while end < len(tokens) and len(tokens[end]) == 1 and tokens[end].isalpha():
                 end += 1
             word = "".join(tokens[index:end])
-            if word in _ADVICE_WORDS or word in _SQUASHED:
+            if word in _ADVICE_WORDS or word in _SQUASHED or _stem(word):
                 joined.append(word)
             else:
                 joined.extend(tokens[index:end])
@@ -149,7 +172,7 @@ def _join_tokens(tokens: list[str]) -> list[str]:
                 and len(current[index + 1]) <= 3
             ):
                 glued = current[index] + current[index + 1]
-                if glued in _ADVICE_WORDS or glued in _SQUASHED:
+                if glued in _ADVICE_WORDS or glued in _SQUASHED or _stem(glued):
                     nxt.append(glued)
                     index += 2
                     changed = True
@@ -162,17 +185,44 @@ def _join_tokens(tokens: list[str]) -> list[str]:
 
 def normalize(text: str) -> str:
     """Fold homoglyphs, spacing tricks, and accents into comparable text."""
-    folded = unicodedata.normalize("NFKC", text)
-    folded = "".join(ch for ch in folded if unicodedata.category(ch) != "Cf")
-    folded = folded.replace("\u00ad", "")
-    folded = _strip_marks(folded).lower()
-    folded = folded.translate(_CONFUSABLES)
-    folded = folded.replace("-", " ")
+    folded = skeleton(text)
+    folded = _strip_marks(folded)
+    folded = folded.replace("-", " ").replace("_", " ")
     folded = re.sub(r"[^\w\s/']+", " ", folded, flags=re.UNICODE)
     folded = re.sub(r"\b(over|under)\s+valued\b", r"\1valued", folded)
     folded = re.sub(r"\s+", " ", folded).strip()
     tokens = _join_tokens(folded.split()) if folded else []
     return " ".join(tokens)
+
+
+_COMPR = skeleton("compr")
+_COMPREHENS = skeleton("comprehens")
+
+
+def _stem(token: str) -> bool:
+    if token in {"withhold", "withholding", "withheld", "withholds"}:
+        return False
+    if token.startswith("hold") and token not in {"holder", "holders"}:
+        return True
+    if token.startswith("vend") and not token.startswith(("vendor", "vending")):
+        return True
+    if token.startswith(_COMPR) and not token.startswith(_COMPREHENS):
+        return True
+    if token in {"short", "shorts"}:
+        return True
+    return any(token.startswith(prefix) for prefix in _PREFIXES)
+
+
+def _future_token(token: str) -> bool:
+    if token in _FUTURE:
+        return True
+    return token.startswith("expect") or token.startswith("anticipat")
+
+
+def _sentences(text: str) -> list[str]:
+    protected = re.sub(r"\b(?:Inc|U\.S|Mr|Mrs|Ms|Dr|Jr|Sr|Co|Ltd|Corp)\.", lambda m: m.group(0).replace(".", "\u0001"), text)
+    parts = re.split(r"(?<=[.!?])\s+", protected)
+    return [part.replace("\u0001", ".").strip() for part in parts if part.strip()]
 
 
 def rule_list_reason(text: str) -> str | None:
@@ -189,12 +239,18 @@ def rule_list_reason(text: str) -> str | None:
     for phrase in _SQUASHED:
         if phrase in squashed:
             return "advice phrase"
-    tokens = set(normalized.split())
-    if tokens & _ADVICE_WORDS:
+    tokens = normalized.split()
+    token_set = set(tokens)
+    if token_set & _ADVICE_WORDS:
         return "advice word"
-    if "peer" in tokens or "peers" in tokens:
-        if tokens & {"cheap", "expensive", "price", "valuation", "undervalued", "overvalued"}:
+    if any(_stem(token) for token in tokens):
+        return "advice word"
+    if "peer" in token_set or "peers" in token_set:
+        if token_set & {"cheap", "expensive", "price", "valuation", "undervalued", "overvalued"}:
             return "advice peer comparison"
+    for index, token in enumerate(tokens[:-1]):
+        if token == "take" and tokens[index + 1].startswith("profit"):
+            return "advice phrase"
     return None
 
 
@@ -210,6 +266,8 @@ def classifier_reason(text: str) -> str | None:
     features: set[str] = set()
     if token_set & {"buy", "sell", "hold", "acquire", "comprar", "vender", "acheter", "vendre", "kaufen", "verkaufen"}:
         features.add("transaction")
+    if any(_stem(token) for token in tokens):
+        features.add("transaction")
     if token_set & {"undervalued", "overvalued", "cheap", "expensive"}:
         features.add("valuation")
     if "target" in token_set and "price" in token_set:
@@ -218,6 +276,8 @@ def classifier_reason(text: str) -> str | None:
         features.add("target")
     if token_set & {"forecast", "forecasts"}:
         features.add("forecast")
+    if any(_future_token(token) for token in tokens):
+        features.add("forecast")
     for index, token in enumerate(tokens):
         if token == "will":
             window = set(tokens[index : index + 5])
@@ -225,15 +285,45 @@ def classifier_reason(text: str) -> str | None:
                 features.add("forecast")
     if "price" in token_set and "will" in token_set:
         features.add("forecast")
-    if {"you", "should"} <= token_set or {"you", "ought"} <= token_set:
+    if token_set & _MODAL or "youshould" in token_set or "youought" in token_set:
         features.add("modal")
-    if "youshould" in token_set or "youought" in token_set:
+    if {"you", "should"} <= token_set or {"you", "ought"} <= token_set:
         features.add("modal")
     if features & {"transaction", "valuation", "target", "forecast", "modal"}:
         return "advice classifier:" + ",".join(sorted(features))
     return None
 
 
-def advice_reason(text: str) -> str | None:
+def _verbatim(sentence: str, filing_text: str) -> bool:
+    if not filing_text:
+        return False
+    folded = re.sub(r"\s+", " ", skeleton(sentence)).strip(" .!?\"'")
+    source = re.sub(r"\s+", " ", skeleton(filing_text))
+    return bool(folded) and folded in source
+
+
+def _forecast_only(reason: str | None) -> bool:
+    if not reason or not reason.startswith("advice classifier:"):
+        return False
+    features = set(reason.split(":", 1)[1].split(","))
+    return features <= {"forecast"}
+
+
+def advice_reason(text: str, filing_text: str = "") -> str | None:
     """Block when either the rule list or the classifier matches."""
-    return rule_list_reason(text) or classifier_reason(text)
+    listed = rule_list_reason(text)
+    classified = classifier_reason(text)
+    if listed:
+        return listed
+    if classified and not _forecast_only(classified):
+        return classified
+    for sentence in _sentences(text):
+        tokens = set(normalize(sentence).split())
+        if not any(_future_token(token) for token in tokens):
+            continue
+        bare = re.sub(r"\[section:[^\]]+\]", "", sentence)
+        bare = bare.strip(" \"'“”‘’«»„‹›")
+        if _verbatim(bare, filing_text):
+            continue
+        return classified or "advice forecast"
+    return None

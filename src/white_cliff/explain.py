@@ -8,6 +8,7 @@ from datetime import date
 from white_cliff.facts import Fact, FactStore
 from white_cliff.formulas import FormulaError, comparable_yoy, margin, net_debt, yoy_change
 from white_cliff.redact import Redaction
+from white_cliff.quotes import review_quotes
 from white_cliff.review import review_text
 
 _REVENUE = (
@@ -41,6 +42,9 @@ _SECTION = {
 }
 _REASON = (
     ("bare digit", "bare digit"),
+    ("number word", "number word"),
+    ("markup", "markup"),
+    ("personal", "personal"),
     ("unresolved", "placeholder"),
     ("advice", "advice"),
     ("price", "price metric"),
@@ -54,6 +58,7 @@ class Block:
     text: str
     redaction: Redaction | None = None
     reason: str | None = None
+    quotes: tuple = ()
 
 
 def _length(fact: Fact) -> int | None:
@@ -94,11 +99,15 @@ def _span(fact: Fact) -> str:
     return "reported period"
 
 
+def _from_filing(fact: Fact) -> bool:
+    return fact.origin in {"xbrl", "ixbrl"}
+
+
 def _duration(facts: list[Fact], focus: str | None, period_end: str | None) -> Fact | None:
     pool = [
         fact
         for fact in facts
-        if fact.origin == "xbrl"
+        if _from_filing(fact)
         and fact.period.kind == "duration"
         and fact.period.end == period_end
     ]
@@ -128,7 +137,7 @@ def _instant(facts: list[Fact], period_end: str | None) -> Fact | None:
     pool = [
         fact
         for fact in facts
-        if fact.origin == "xbrl"
+        if _from_filing(fact)
         and fact.period.kind == "instant"
         and fact.period.end == period_end
     ]
@@ -169,7 +178,7 @@ def _prior(facts: list[Fact], current: Fact) -> Fact | None:
     candidates = [
         fact
         for fact in facts
-        if fact.origin == "xbrl"
+        if fact.origin == current.origin
         and fact.concept == current.concept
         and fact.unit == current.unit
         and fact.id != current.id
@@ -283,12 +292,18 @@ def build_blocks(
             )
         )
     ]
+    if filing_url and not filing_url.startswith("https://www.sec.gov/"):
+        blocks.append(
+            Block(text="This filing was not retrieved from EDGAR [section:Document].")
+        )
     if model_text is not None:
         reason = review_text(model_text, store, filing_text, filing_url)
         if reason:
             blocks.append(_omission("Income statement", reason))
         else:
-            blocks.append(Block(text=model_text))
+            blocks.append(
+                Block(text=model_text, quotes=tuple(review_quotes(model_text, filing_text, filing_url)))
+            )
 
     chosen: dict[str, Fact] = {}
     table_kinds = {
@@ -351,7 +366,7 @@ def build_blocks(
     add_margin("net_margin", "net_income")
 
     revenue = chosen.get("revenue")
-    if revenue is not None and revenue.origin == "xbrl":
+    if revenue is not None and _from_filing(revenue):
         prior = _prior(facts, revenue)
         if prior is not None:
             try:

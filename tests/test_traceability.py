@@ -121,6 +121,41 @@ def test_golden_numbers_resolve_and_match_the_filing():
         assert "https://github.com/EE-Holding/white-cliff/issues/new?template=filing_error.md" in explained.markdown
 
 
+def test_every_shown_fact_has_a_hand_checked_expected_entry():
+    manifest = json.loads((PINNED / "manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["filings"]:
+        directory = PINNED / "filings" / entry["accession"]
+        expected = json.loads((directory / "expected.json").read_text(encoding="utf-8"))
+        filing = load_directory(directory)
+        explained = explain_filing(filing)
+        shown = []
+        for match in LINK.finditer(explained.markdown):
+            label, url = match.group(1), match.group(2)
+            fragment = urlsplit(url).fragment
+            if not fragment.startswith("fact="):
+                continue
+            identifier = fragment.split("=", 1)[1].split("&", 1)[0]
+            shown.append(filing.store.get(identifier))
+        assert shown, entry["accession"]
+        for fact in shown:
+            matched = False
+            for item in expected["facts"]:
+                if Decimal(item["value"]) != fact.value or item["unit"] != fact.unit:
+                    continue
+                if item.get("match") == "table":
+                    matched = item["row"].lower() in fact.label.lower()
+                else:
+                    matched = (
+                        fact.concept == item["concept"]
+                        and fact.period.kind == item["kind"]
+                        and fact.period.end == item["end"]
+                        and (item["start"] is None or fact.period.start == item["start"])
+                    )
+                if matched:
+                    break
+            assert matched, (entry["accession"], fact.concept, fact.label, fact.value, fact.unit)
+
+
 def test_bare_digit_fails_review():
     from white_cliff.facts import FactStore
 

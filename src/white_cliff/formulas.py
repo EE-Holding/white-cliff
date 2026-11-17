@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from white_cliff.facts import Calculation, Fact, Period, format_decimal
 from white_cliff.ids import letter_id
@@ -50,15 +50,18 @@ def _reject_price(fact: Fact) -> None:
 
 
 def same_period(left: Period, right: Period) -> bool:
+    """Two periods match only when their dates, or their span and end, agree."""
     if left.kind != right.kind:
         return False
+    if left.kind == "instant":
+        return bool(left.end and right.end and left.end == right.end)
     if left.start and right.start and left.end and right.end:
+        if left.span and right.span and left.span != right.span:
+            return False
         return left.start == right.start and left.end == right.end
-    if left.kind == "instant" and left.end and right.end:
-        return left.end == right.end
-    if left.key and right.key:
-        return left.key == right.key
-    return False
+    if not left.span or not right.span or not left.end or not right.end:
+        return False
+    return left.span == right.span and left.end == right.end
 
 
 def _days(start: str, end: str) -> int:
@@ -118,6 +121,11 @@ def compute(name: str, inputs: list[Fact]) -> Calculation:
     raise FormulaError(f"unknown formula {name}")
 
 
+def _percent(value: Decimal) -> Decimal:
+    """One decimal percent, half up, so the shown figure is not a long ratio."""
+    return (value * Decimal("100")).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+
 def yoy_change(current: Fact, prior: Fact) -> Calculation:
     _reject_price(current)
     _reject_price(prior)
@@ -127,12 +135,12 @@ def yoy_change(current: Fact, prior: Fact) -> Calculation:
         raise FormulaError("mismatched periods")
     if prior.value == 0:
         raise FormulaError("division by zero")
-    value = (current.value - prior.value) / abs(prior.value)
+    value = _percent((current.value - prior.value) / abs(prior.value))
     return _build(
         "yoy_change",
         "(current - prior) / abs(prior)",
         value,
-        "ratio",
+        "percent",
         current.period,
         (current.id, prior.id),
     )
@@ -149,12 +157,12 @@ def margin(numerator: Fact, denominator: Fact, name: str = "margin") -> Calculat
         raise FormulaError("mismatched periods")
     if denominator.value == 0:
         raise FormulaError("division by zero")
-    value = numerator.value / denominator.value
+    value = _percent(numerator.value / denominator.value)
     return _build(
         name,
         "(numerator / denominator)",
         value,
-        "ratio",
+        "percent",
         numerator.period,
         (numerator.id, denominator.id),
     )

@@ -62,6 +62,25 @@ _INLINE = re.compile(
     r"<(?:[A-Za-z_][\w.-]*:)?nonFraction\b([^>]*)>([^<]*)</(?:[A-Za-z_][\w.-]*:)?nonFraction>",
     re.I | re.DOTALL,
 )
+_NONNUMERIC = re.compile(
+    r"<(?:[A-Za-z_][\w.-]*:)?nonNumeric\b([^>]*)>(.*?)</(?:[A-Za-z_][\w.-]*:)?nonNumeric>",
+    re.I | re.DOTALL,
+)
+_SCALE_WORD = {"3": "thousands", "6": "millions", "9": "billions"}
+_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
 
 
 @dataclass
@@ -226,12 +245,6 @@ def _fact_from_hit(
         return None
     if attrs.get("sign") == "-" and value > 0:
         value = -value
-    scale = attrs.get("scale")
-    if scale and origin == "ixbrl":
-        try:
-            value = value * (Decimal(10) ** int(scale))
-        except ValueError:
-            return None
     if is_price_text(concept):
         return None
     relative = raw_inner.find(stripped)
@@ -239,6 +252,10 @@ def _fact_from_hit(
     end = start + len(stripped)
     unit_ref = attrs.get("unitRef", "")
     unit = units.get(unit_ref, _norm_measure(unit_ref) if unit_ref else "")
+    scaled = _unit_with_scale(unit, attrs.get("scale"), origin)
+    if scaled is None:
+        return None
+    unit = scaled
     role = _ROLES.get(concept, "")
     period = Period(
         kind=context["kind"],
@@ -310,6 +327,54 @@ def parse_instance(text: str, document: str, url: str, sha256: str) -> ParsedFac
     )
 
 
+def _unit_with_scale(unit: str, scale: str | None, origin: str) -> str | None:
+    """Keep the digits that are written in the file and name the scale in the unit."""
+    if origin != "ixbrl" or not scale or scale == "0":
+        return unit or "number"
+    word = _SCALE_WORD.get(scale)
+    if word is None or unit not in {"USD", "shares"}:
+        return None
+    return f"{unit} {word}"
+
+
+def _iso_date(value: str) -> str | None:
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return value
+    match = re.fullmatch(r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})", value)
+    if not match:
+        return None
+    month = _MONTHS.get(match.group(1).lower())
+    if month is None:
+        return None
+    return f"{int(match.group(3)):04d}-{month:02d}-{int(match.group(2)):02d}"
+
+
+def _dei_inline(text: str, contexts: dict[str, dict]) -> dict[str, str]:
+    """Cover facts in inline XBRL sit inside ix:nonNumeric, often wrapped in HTML."""
+    wanted = {
+        "EntityRegistrantName": "filer",
+        "DocumentType": "form",
+        "DocumentFiscalPeriodFocus": "focus",
+        "DocumentPeriodEndDate": "period_end",
+    }
+    found: dict[str, str] = {}
+    for match in _NONNUMERIC.finditer(text):
+        attrs = _attrs(match.group(1))
+        key = wanted.get(attrs.get("name", "").split(":")[-1])
+        if not key or key in found:
+            continue
+        context = contexts.get(attrs.get("contextRef", ""), {})
+        if context.get("dimensional"):
+            continue
+        value = re.sub(r"<[^>]+>", " ", match.group(2))
+        value = re.sub(r"\s+", " ", value).strip()
+        if key == "period_end":
+            value = _iso_date(value) or ""
+        if value:
+            found[key] = value
+    return found
+
+
 def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
     """Inline XBRL. Contexts are read from the same document when they are present."""
     contexts: dict[str, dict] = {}
@@ -326,6 +391,8 @@ def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts
         contexts = _parse_contexts(root)
         units = _parse_units(root)
         meta = _dei(root, contexts)
+    for key, value in _dei_inline(text, contexts).items():
+        meta.setdefault(key, value)
     facts: list[Fact] = []
     for match in _INLINE.finditer(text):
         attrs = _attrs(match.group(1))

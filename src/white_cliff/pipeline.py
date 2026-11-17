@@ -7,7 +7,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from white_cliff.disclaimer import OutputRefused
 from white_cliff.explain import Block, build_blocks
+from white_cliff.review import audit_rendered
 from white_cliff.facts import FactStore
 from white_cliff.omissions import find_omissions
 from white_cliff.prices import is_price_text
@@ -116,7 +118,7 @@ def load_file(path: Path) -> Filing:
     blob = path.read_bytes()
     digest = hashlib.sha256(blob).hexdigest()
     text = blob.decode("utf-8")
-    url = "https://www.sec.gov/Archives/edgar/data/0/000000000000000000/" + path.name
+    url = path.resolve().as_uri()
     parsed = _parse_text(text, path.name, url, digest)
     store = FactStore()
     _absorb(store, parsed)
@@ -150,9 +152,11 @@ def explain_filing(filing: Filing, model_text: str | None = None) -> Explained:
     )
     markdown = render_markdown(blocks, filing.store)
     html_text = render_html(blocks, filing.store)
+    for rendered in (markdown, html_text):
+        problem = audit_rendered(rendered)
+        if problem:
+            raise OutputRefused(problem)
     if contains_personal(markdown) or contains_personal(html_text):
-        from white_cliff.disclaimer import OutputRefused
-
         raise OutputRefused("personal data in output")
     reasons = [block.reason for block in blocks if block.reason]
     return Explained(

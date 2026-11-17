@@ -14,16 +14,34 @@ def test_yoy_change_records_formula_and_inputs():
     assert result.name == "yoy_change"
     assert result.formula == "(current - prior) / abs(prior)"
     assert result.input_ids == (current.id, prior.id)
-    assert result.value == Decimal("0.1")
-    assert result.unit == "ratio"
+    assert result.value == Decimal("10.0")
+    assert result.unit == "percent"
     assert Decimal(format_decimal(result.value)) == result.value
+
+
+def test_margin_is_a_percent_with_one_decimal():
+    profit = make_fact("25", concept="GrossProfit", role="gross_profit")
+    revenue = make_fact("100")
+    gross = margin(profit, revenue, name="gross_margin")
+    assert gross.unit == "percent"
+    assert gross.value == Decimal("25.0")
+    assert format_decimal(gross.value) in {"25.0", "25"}
+    shown = f"{gross.value:.1f}"
+    assert shown == "25.0"
+    current = make_fact("110")
+    prior = make_fact("100", start="2023-01-01", end="2023-12-31")
+    change = yoy_change(current, prior)
+    assert change.unit == "percent"
+    assert change.value == Decimal("10.0")
+    assert f"{change.value:.1f}" == "10.0"
 
 
 def test_margin_and_net_debt():
     profit = make_fact("25", concept="GrossProfit", role="gross_profit")
     revenue = make_fact("100")
     gross = margin(profit, revenue, name="gross_margin")
-    assert gross.value == Decimal("0.25")
+    assert gross.value == Decimal("25.0")
+    assert gross.unit == "percent"
     assert gross.formula == "(numerator / denominator)"
     debt = make_fact("40", concept="LongTermDebt", role="debt", kind="instant", start=None, end="2024-12-31")
     cash = make_fact("15", concept="Cash", role="cash", kind="instant", start=None, end="2024-12-31")
