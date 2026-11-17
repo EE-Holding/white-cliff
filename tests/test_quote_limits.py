@@ -21,7 +21,7 @@ def test_valid_quote_links_to_sec():
     assert "quote=" in quotes[0].url
 
 
-def test_quote_limits():
+def test_quote_limits(tmp_path):
     long_quote = " ".join(["word"] * 51)
     with pytest.raises(QuoteError):
         review_quotes(f'"{long_quote}"', long_quote, URL)
@@ -40,6 +40,72 @@ def test_quote_limits():
         review_quotes('"Not in the filing at all."', FILING, URL)
     with pytest.raises(QuoteError):
         review_quotes('"The company expects demand to remain steady in the next year."', FILING, "file:///tmp/filing.htm")
+
+    body = (
+        "The company expects demand to remain steady in the next year. "
+        "Operations continued without interruption during the reported period. "
+        "Customers renewed agreements throughout the reported period. "
+        "Suppliers delivered components throughout the reported period."
+    )
+    html = f"<p>{body}</p>"
+    directory = write_filing(tmp_path / "limits", "filing.htm", html, URL, form="8-K")
+    filing = load_directory(directory)
+    linked = explain_filing(
+        filing,
+        model_text='"The company expects demand to remain steady in the next year." [section:Notes].',
+    )
+    assert "#quote=" in linked.markdown
+    assert "https://www.sec.gov/" in linked.markdown
+    assert linked.markdown.count("#quote=") == 1
+    long_dir = write_filing(
+        tmp_path / "long",
+        "filing.htm",
+        f"<p>{long_quote}</p>",
+        URL,
+        form="8-K",
+    )
+    refused_long = explain_filing(
+        load_directory(long_dir),
+        model_text=f'"{long_quote}" [section:Notes].',
+    )
+    assert long_quote not in refused_long.markdown
+    assert long_quote not in refused_long.html
+    assert "quote" in refused_long.markdown
+    two = explain_filing(
+        filing,
+        model_text=(
+            '[section:Notes] "The company expects demand to remain steady in the next year. '
+            'Operations continued without interruption during the reported period." [section:Notes].'
+        ),
+    )
+    assert "quote" in two.markdown
+    assert "Operations continued without interruption during the reported period." not in two.markdown
+    cited = " [section:Notes]. "
+    accepted = explain_filing(
+        filing,
+        model_text=cited.join(
+            (
+                '"The company expects demand to remain steady in the next year."',
+                '"Operations continued without interruption during the reported period."',
+                '"Customers renewed agreements throughout the reported period." [section:Notes].',
+            )
+        ),
+    )
+    assert accepted.markdown.count("#quote=") == 3
+    overflow = explain_filing(
+        filing,
+        model_text=cited.join(
+            (
+                '"The company expects demand to remain steady in the next year."',
+                '"Operations continued without interruption during the reported period."',
+                '"Customers renewed agreements throughout the reported period."',
+                '"Suppliers delivered components throughout the reported period." [section:Notes].',
+            )
+        ),
+    )
+    assert "quote" in overflow.markdown
+    assert "Suppliers delivered components throughout the reported period." not in overflow.markdown
+    assert overflow.markdown.count("#quote=") == 0
 
 
 def test_other_quote_marks_and_abbreviations():
