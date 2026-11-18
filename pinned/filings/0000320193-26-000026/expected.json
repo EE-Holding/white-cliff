@@ -2,75 +2,67 @@
   "facts": [
     {
       "concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "value": "478834000000",
-      "unit": "USD",
+      "value": "478834",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-09-28",
       "end": "2026-09-26"
     },
     {
       "concept": "GrossProfit",
-      "value": "233602000000",
-      "unit": "USD",
+      "value": "233602",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-09-28",
       "end": "2026-09-26"
     },
     {
       "concept": "OperatingIncomeLoss",
-      "value": "158063000000",
-      "unit": "USD",
+      "value": "158063",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-09-28",
       "end": "2026-09-26"
     },
     {
       "concept": "NetIncomeLoss",
-      "value": "132175000000",
-      "unit": "USD",
+      "value": "132175",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-09-28",
       "end": "2026-09-26"
     },
     {
       "concept": "NetCashProvidedByUsedInOperatingActivities",
-      "value": "145097000000",
-      "unit": "USD",
+      "value": "145097",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-09-28",
       "end": "2026-09-26"
     },
     {
       "concept": "LongTermDebt",
-      "value": "78114000000",
-      "unit": "USD",
+      "value": "78114",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2026-09-26"
     },
     {
       "concept": "CashAndCashEquivalentsAtCarryingValue",
-      "value": "36305000000",
-      "unit": "USD",
+      "value": "36305",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2026-09-26"
     },
     {
       "concept": "CommonStockSharesOutstanding",
-      "value": "14532259000",
-      "unit": "shares",
+      "value": "14532259",
+      "unit": "shares thousands",
       "kind": "instant",
       "start": null,
       "end": "2026-09-26"
-    },
-    {
-      "concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "value": "416161000000",
-      "unit": "USD",
-      "kind": "duration",
-      "start": "2024-09-29",
-      "end": "2025-09-27"
     }
   ]
 }

@@ -2,56 +2,56 @@
   "facts": [
     {
       "concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "value": "94193000000",
-      "unit": "USD",
+      "value": "94193",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2024-12-30",
       "end": "2025-12-28"
     },
     {
       "concept": "GrossProfit",
-      "value": "63937000000",
-      "unit": "USD",
+      "value": "63937",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2024-12-30",
       "end": "2025-12-28"
     },
     {
       "concept": "NetIncomeLoss",
-      "value": "26804000000",
-      "unit": "USD",
+      "value": "26804",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2024-12-30",
       "end": "2025-12-28"
     },
     {
       "concept": "NetCashProvidedByUsedInOperatingActivities",
-      "value": "24530000000",
-      "unit": "USD",
+      "value": "24530",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2024-12-30",
       "end": "2025-12-28"
     },
     {
       "concept": "LongTermDebt",
-      "value": "41438000000",
-      "unit": "USD",
+      "value": "41438",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-28"
     },
     {
       "concept": "CashAndCashEquivalentsAtCarryingValue",
-      "value": "19709000000",
-      "unit": "USD",
+      "value": "19709",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-28"
     },
     {
       "concept": "WeightedAverageNumberOfSharesOutstandingBasic",
-      "value": "2407400000",
-      "unit": "shares",
+      "value": "2407.4",
+      "unit": "shares millions",
       "kind": "duration",
       "start": "2024-12-30",
       "end": "2025-12-28"

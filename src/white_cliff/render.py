@@ -28,6 +28,13 @@ def _fragment(identifier: str, start: int | None, end: int | None) -> str:
     return fragment
 
 
+def _linkable(url: str) -> bool:
+    base = url.split("#", 1)[0]
+    if base.startswith("https://www.sec.gov/"):
+        return True
+    return re.fullmatch(r"https://data\.sec\.gov/submissions/CIK[0-9]{10}\.json", base) is not None
+
+
 def _filing_href(
     url: str,
     identifier: str,
@@ -113,12 +120,14 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
         else:
             href = url
         title = "Registrant name in the filing"
+        visible = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if not _linkable(href):
+            return html.escape(name, quote=False) if mode == "html" else visible
         if mode == "html":
             return (
                 f'<a class="registrant-chip" title="{html.escape(title, quote=True)}" '
                 f'href="{html.escape(href, quote=True)}">{html.escape(name, quote=False)}</a>'
             )
-        visible = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f'[{visible}]({href} "{title}")'
     if match.group(0) == "{redaction}":
         if block.redaction is None:
@@ -128,6 +137,8 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
             redaction.url,
             f"redaction={redaction.id}&start={redaction.start}&end={redaction.end}",
         )
+        if not href.startswith("https://www.sec.gov/"):
+            return "source"
         if mode == "html":
             return (
                 f'<a class="redaction-chip" data-id="{redaction.id}" '
@@ -186,8 +197,18 @@ REFUSAL_SENTENCE = "This filing has no tagged figures that White Cliff can expla
 
 
 def render_refusal(url: str) -> tuple[str, str]:
-    """A public page with the disclaimer, one sentence, and the filing link."""
-    markdown = f"{DISCLAIMER}\n\n{REFUSAL_SENTENCE} [the filing]({url})\n"
+    """Disclaimer, one sentence, the EDGAR filing link or a refusal, and the report link."""
+    if url.startswith("https://www.sec.gov/"):
+        filing_md = f"{REFUSAL_SENTENCE} [the filing]({url})"
+        filing_html = (
+            f"{REFUSAL_SENTENCE} "
+            f'<a href="{html.escape(url, quote=True)}">the filing</a>'
+        )
+    else:
+        filing_md = f"{REFUSAL_SENTENCE} This filing was not retrieved from EDGAR."
+        filing_html = filing_md
+    report = f"Report an error: [Report an error]({ISSUE_URL})."
+    markdown = f"{DISCLAIMER}\n\n{filing_md}\n\n{report}\n"
     document = (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -196,8 +217,8 @@ def render_refusal(url: str) -> tuple[str, str]:
         "</head>\n"
         "<body>\n"
         f'<p class="disclaimer">{DISCLAIMER}</p>\n'
-        f"<p>{REFUSAL_SENTENCE} "
-        f'<a href="{html.escape(url, quote=True)}">the filing</a></p>\n'
+        f"<p>{filing_html}</p>\n"
+        f'<p><a href="{ISSUE_URL}">Report an error</a></p>\n'
         "</body>\n"
         "</html>\n"
     )

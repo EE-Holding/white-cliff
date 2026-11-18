@@ -5,10 +5,11 @@
   "form": "10-K",
   "files": [
     {
-      "name": "ko-20251231_htm.xml",
-      "url": "https://www.sec.gov/Archives/edgar/data/21344/000162828026010047/ko-20251231_htm.xml",
-      "sha256": "5428e5c422a5b88dd967793d3b04411d226272acdc3c040efe3d870bb5b56d31",
-      "retrieved_at": "2026-11-17T17:40:00Z"
+      "name": "ko-20251231.htm",
+      "url": "https://www.sec.gov/Archives/edgar/data/21344/000162828026010047/ko-20251231.htm",
+      "sha256": "7c344724ffd25824080de9272cf711543400cfcbbafb06b787fc482fa3d1a5e2",
+      "retrieved_at": "2026-11-18T04:23:53Z",
+      "document_type": "10-K"
     }
   ]
 }

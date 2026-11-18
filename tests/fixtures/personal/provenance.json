@@ -1,11 +1,11 @@
 {
   "filer": "Example Co",
-  "form": "8-K",
+  "form": "10-K",
   "files": [
     {
       "name": "filing.html",
       "url": "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/personal.htm",
-      "sha256": "369c79a6d4ec533edf9e0e52aa843a1d121903feec1b23f4ebe5eb9a1c732c21",
+      "sha256": "3372069833727eaf4ab274e200b0a4871107fc5122784a2182c6ba0347af54c1",
       "retrieved_at": "2026-11-17T17:40:00Z"
     }
   ]

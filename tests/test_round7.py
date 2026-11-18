@@ -7,7 +7,7 @@ from decimal import Decimal
 from hashlib import sha256
 from urllib.parse import urlsplit
 
-from white_cliff.disclaimer import DISCLAIMER
+from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL
 from white_cliff.explain import Block
 from white_cliff.facts import Fact, FactStore, Period, SourcePointer
 from white_cliff.pipeline import explain_filing, load_directory
@@ -32,22 +32,50 @@ _CONTEXT = """
 """
 
 
+def _as_inline(fragment: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        prefix, tag, attrs, inner = match.group(1), match.group(2), match.group(3), match.group(4)
+        kind = "nonNumeric" if prefix == "dei" else "nonFraction"
+        return f'<ix:{kind} name="{prefix}:{tag}"{attrs}>{inner}</ix:{kind}>'
+
+    return re.sub(
+        r"<(us-gaap|dei):([A-Za-z0-9]+)([^>]*)>([^<]*)</\1:\2>",
+        repl,
+        fragment,
+        flags=re.DOTALL,
+    )
+
+
 def _xbrl(units: str, facts: str, extra_ns: str = "", root: str = "xbrl") -> str:
-    open_tag = root if root == "xbrl" else root
-    close_tag = root.split()[0]
-    return f"""<?xml version="1.0" encoding="utf-8"?>
-<{open_tag} xmlns="http://www.xbrl.org/2003/instance"
-      xmlns:us-gaap="http://fasb.org/us-gaap/2026"
-      xmlns:dei="http://xbrl.sec.gov/dei/2026"
-      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"{extra_ns}>
-{_CONTEXT}
+    body = f"""{_CONTEXT}
   {units}
   <dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>
   <dei:DocumentType contextRef="c-year">10-K</dei:DocumentType>
   <dei:DocumentFiscalPeriodFocus contextRef="c-year">FY</dei:DocumentFiscalPeriodFocus>
   <dei:DocumentPeriodEndDate contextRef="c-year">2024-12-31</dei:DocumentPeriodEndDate>
+  <dei:EntityCentralIndexKey contextRef="c-year">0000000001</dei:EntityCentralIndexKey>
   {facts}
+"""
+    if root != "xbrl":
+        close_tag = root.split()[0]
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<{root} xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:us-gaap="http://fasb.org/us-gaap/2026"
+      xmlns:dei="http://xbrl.sec.gov/dei/2026"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"{extra_ns}>
+{body}
 </{close_tag}>
+"""
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:us-gaap="http://fasb.org/us-gaap/2026"
+      xmlns:dei="http://xbrl.sec.gov/dei/2026"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"{extra_ns}>
+<body>
+{_as_inline(body)}
+</body>
+</html>
 """
 
 
@@ -64,7 +92,10 @@ def test_untagged_filing_page_is_exact(tmp_path) -> None:
     html = "<html><body><p>Total net sales were 5,000.</p></body></html>"
     directory = write_filing(tmp_path / "plain", "plain.htm", html, URL, form="8-K")
     explained = explain_filing(load_directory(directory))
-    assert explained.markdown == f"{DISCLAIMER}\n\n{SENTENCE} [the filing]({URL})\n"
+    assert explained.markdown == (
+        f"{DISCLAIMER}\n\n{SENTENCE} [the filing]({URL})\n\n"
+        f"Report an error: [Report an error]({ISSUE_URL}).\n"
+    )
     assert explained.html == (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -75,6 +106,7 @@ def test_untagged_filing_page_is_exact(tmp_path) -> None:
         f'<p class="disclaimer">{DISCLAIMER}</p>\n'
         f"<p>{SENTENCE} "
         f'<a href="{URL}">the filing</a></p>\n'
+        f'<p><a href="{ISSUE_URL}">Report an error</a></p>\n'
         "</body>\n"
         "</html>\n"
     )
@@ -223,19 +255,17 @@ def test_unicode_digits_are_refused(tmp_path) -> None:
         assert SENTENCE in rendered
 
 
-def test_prefixed_instance_root_reads_concept_unit_and_scale(tmp_path) -> None:
+def test_an_instance_document_is_refused(tmp_path) -> None:
     xml = _xbrl(
         '<xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>',
         '<us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0" scale="6">5000</us-gaap:Revenues>',
         root='xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"',
     )
     filing = _load(tmp_path, xml)
-    revenue = [fact for fact in filing.store.facts() if fact.concept == "Revenues"]
-    assert revenue and revenue[0].value == Decimal("5000")
-    assert revenue[0].unit == "USD millions"
-    rendered = explain_filing(filing).markdown
-    assert "5000 USD millions" in rendered
-    assert "nonFraction" not in rendered
+    rendered = explain_filing(filing).markdown + explain_filing(filing).html
+    assert filing.store.facts() == []
+    assert SENTENCE in rendered
+    assert "5000" not in rendered
 
 
 def test_a_dropped_figure_drops_its_sentence() -> None:
@@ -266,21 +296,25 @@ def test_a_dropped_figure_drops_its_sentence() -> None:
 
 def test_registrant_chip_points_at_the_xbrl_fact(tmp_path) -> None:
     xml = """<?xml version="1.0" encoding="utf-8"?>
-<xbrl xmlns="http://www.xbrl.org/2003/instance"
+<html xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
       xmlns:us-gaap="http://fasb.org/us-gaap/2026"
       xmlns:dei="http://xbrl.sec.gov/dei/2026"
       xmlns:iso4217="http://www.xbrl.org/2003/iso4217">
+<body>
+  <!-- Example Co -->
   <context id="c-year">
     <entity><identifier scheme="http://www.sec.gov/CIK">0000000001</identifier></entity>
     <period><startDate>2024-01-01</startDate><endDate>2024-12-31</endDate></period>
   </context>
   <unit id="usd"><measure>iso4217:USD</measure></unit>
-  <dei:DocumentType contextRef="c-year">Example Co</dei:DocumentType>
-  <dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>
-  <dei:DocumentFiscalPeriodFocus contextRef="c-year">FY</dei:DocumentFiscalPeriodFocus>
-  <dei:DocumentPeriodEndDate contextRef="c-year">2024-12-31</dei:DocumentPeriodEndDate>
-  <us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0">5000</us-gaap:Revenues>
-</xbrl>
+  <ix:nonNumeric name="dei:DocumentType" contextRef="c-year">10-K</ix:nonNumeric>
+  <ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">Example Co</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="c-year">FY</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-year">2024-12-31</ix:nonNumeric>
+  <ix:nonFraction name="us-gaap:Revenues" contextRef="c-year" unitRef="usd" decimals="0">5000</ix:nonFraction>
+</body>
+</html>
 """
     filing = _load(tmp_path, xml)
     explained = explain_filing(filing)
@@ -300,8 +334,8 @@ def test_registrant_shape_rule_still_chooses_the_chip_or_the_filer(tmp_path) -> 
             '<unit id="usd"><measure>iso4217:USD</measure></unit>',
             "<us-gaap:Revenues contextRef=\"c-year\" unitRef=\"usd\" decimals=\"0\">5000</us-gaap:Revenues>",
         ).replace(
-            "<dei:EntityRegistrantName contextRef=\"c-year\">Example Co</dei:EntityRegistrantName>",
-            f"<dei:EntityRegistrantName contextRef=\"c-year\">{name}</dei:EntityRegistrantName>",
+            '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">Example Co</ix:nonNumeric>',
+            f'<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">{name}</ix:nonNumeric>',
         )
         explained = explain_filing(_load(tmp_path, xml))
         return explained.markdown + explained.html
@@ -349,7 +383,10 @@ def test_index_registrant_matches_the_filing_page(tmp_path) -> None:
         '<unit id="usd"><measure>iso4217:USD</measure></unit>',
         '<us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0">5000</us-gaap:Revenues>',
     )
-    hidden = named.replace(">Example Co<", ">" + ("A" * 101) + "<")
+    hidden = named.replace(
+        '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">Example Co</ix:nonNumeric>',
+        '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">' + ("A" * 101) + "</ix:nonNumeric>",
+    )
     refused = _xbrl(
         '<unit id="usd"><measure>iso4217:USD</measure></unit>',
         '<dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>',

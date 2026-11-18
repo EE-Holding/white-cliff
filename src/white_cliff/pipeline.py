@@ -15,7 +15,7 @@ from white_cliff.omissions import find_omissions
 from white_cliff.prices import is_price_text
 from white_cliff.redact import Redaction, contains_personal, find_redactions
 from white_cliff.render import copy_text, render_html, render_markdown, render_refusal
-from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, is_instance_document, parse_inline, parse_instance
+from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, parse_inline
 
 
 @dataclass
@@ -33,6 +33,7 @@ class Filing:
     url: str
     filer_start: int | None = None
     filer_end: int | None = None
+    cik: str = ""
 
 
 @dataclass
@@ -47,12 +48,47 @@ class Explained:
         return copy_text(self.markdown)
 
 
+_PRIMARY_FORMS = frozenset({"10-K", "10-Q"})
+
+
 def _parse_text(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
-    if is_instance_document(text):
-        return parse_instance(text, document, url, sha256)
-    if "nonfraction" in text.lower():
-        return parse_inline(text, document, url, sha256)
-    return ParsedFacts(facts=[])
+    return parse_inline(text, document, url, sha256)
+
+
+def _verified(path: Path, item: dict) -> bytes:
+    blob = (path / item["name"]).read_bytes()
+    digest = hashlib.sha256(blob).hexdigest()
+    if digest != item["sha256"]:
+        raise ValueError(f"sha256 mismatch for {item['name']}")
+    return blob
+
+
+def _primary_item(files: list[dict], form: str) -> dict | None:
+    """The inline 10-K or 10-Q. Exhibits and index files are not read for facts."""
+    if form not in _PRIMARY_FORMS:
+        return None
+    usable: list[dict] = []
+    for item in files:
+        name = str(item.get("name", ""))
+        if "index" in name.lower():
+            continue
+        document_type = str(item.get("document_type") or "")
+        if document_type and document_type not in _PRIMARY_FORMS:
+            continue
+        usable.append(item)
+    matched = [item for item in usable if item.get("document_type") == form]
+    if matched:
+        return matched[0]
+    if len(usable) == 1:
+        return usable[0]
+    return None
+
+
+def _cik_text(raw: str) -> str:
+    digits = "".join(char for char in raw if char.isdigit())
+    if not digits or len(digits) > 10:
+        return ""
+    return digits.zfill(10)
 
 
 def _absorb(store: FactStore, parsed: ParsedFacts) -> None:
@@ -62,56 +98,51 @@ def _absorb(store: FactStore, parsed: ParsedFacts) -> None:
 
 def load_directory(path: Path) -> Filing:
     provenance = json.loads((path / "provenance.json").read_text(encoding="utf-8"))
+    files = list(provenance["files"])
+    blobs = [_verified(path, item) for item in files]
+    form = str(provenance.get("form", ""))
+    chosen = _primary_item(files, form)
+    if chosen is None:
+        first = files[0]
+        text = blobs[0].decode("utf-8")
+        return Filing(
+            store=FactStore(),
+            filer=str(provenance.get("filer", "")),
+            document_filer="",
+            form=form,
+            focus=None,
+            period_end=None,
+            price_metric=False,
+            redactions=[],
+            omissions=[],
+            text=text,
+            url=str(first.get("url", "")),
+            cik=_cik_text(str(provenance.get("cik", ""))),
+        )
+    index = files.index(chosen)
+    blob = blobs[index]
+    digest = hashlib.sha256(blob).hexdigest()
+    text = blob.decode("utf-8")
+    parsed = _parse_text(text, chosen["name"], chosen["url"], digest)
+    if parsed.form != form:
+        parsed = ParsedFacts(facts=[], form=form, filer=parsed.filer, cik=parsed.cik)
     store = FactStore()
-    filer = provenance.get("filer", "")
-    document_filer = ""
-    filer_start: int | None = None
-    filer_end: int | None = None
-    form = provenance.get("form", "")
-    base = 0
-    focus = None
-    period_end = None
-    price = False
-    redactions: list[Redaction] = []
-    omissions: list[tuple[int, int, str]] = []
-    texts: list[str] = []
-    url = ""
-    for item in provenance["files"]:
-        blob = (path / item["name"]).read_bytes()
-        digest = hashlib.sha256(blob).hexdigest()
-        if digest != item["sha256"]:
-            raise ValueError(f"sha256 mismatch for {item['name']}")
-        text = blob.decode("utf-8")
-        texts.append(text)
-        url = url or item["url"]
-        parsed = _parse_text(text, item["name"], item["url"], digest)
-        _absorb(store, parsed)
-        if parsed.filer:
-            document_filer = parsed.filer
-            filer_start = None if parsed.filer_start is None else base + parsed.filer_start
-            filer_end = None if parsed.filer_end is None else base + parsed.filer_end
-        filer = parsed.filer or filer
-        base += len(text) + 1
-        form = parsed.form or form
-        focus = parsed.focus or focus
-        period_end = parsed.period_end or period_end
-        price = price or parsed.price_metric or is_price_text(text)
-        redactions.extend(find_redactions(text, item["name"], item["url"], digest))
-        omissions.extend(find_omissions(text))
+    _absorb(store, parsed)
     return Filing(
         store=store,
-        filer=filer,
-        document_filer=document_filer,
-        filer_start=filer_start,
-        filer_end=filer_end,
+        filer=parsed.filer or str(provenance.get("filer", "")),
+        document_filer=parsed.filer,
+        filer_start=parsed.filer_start,
+        filer_end=parsed.filer_end,
         form=form,
-        focus=focus,
-        period_end=period_end,
-        price_metric=price,
-        redactions=redactions,
-        omissions=omissions,
-        text="\n".join(texts),
-        url=url,
+        focus=parsed.focus,
+        period_end=parsed.period_end,
+        price_metric=parsed.price_metric or is_price_text(text),
+        redactions=find_redactions(text, chosen["name"], chosen["url"], digest),
+        omissions=find_omissions(text),
+        text=text,
+        url=str(chosen["url"]),
+        cik=_cik_text(str(provenance.get("cik", "")) or parsed.cik),
     )
 
 
@@ -142,6 +173,7 @@ def load_file(path: Path) -> Filing:
         omissions=find_omissions(text),
         text=text,
         url=url,
+        cik=parsed.cik,
     )
 
 
@@ -168,6 +200,7 @@ def explain_filing(filing: Filing) -> Explained:
         omissions=filing.omissions,
         filing_text=filing.text,
         filing_url=filing.url,
+        cik=filing.cik,
     )
     markdown = render_markdown(blocks, filing.store)
     html_text = render_html(blocks, filing.store)

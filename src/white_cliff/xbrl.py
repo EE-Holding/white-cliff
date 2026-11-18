@@ -1,11 +1,10 @@
-"""XBRL instance and inline-XBRL fact extraction."""
+"""Inline XBRL fact extraction for a primary 10-K or 10-Q."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from xml.etree import ElementTree as ET
 from xml.parsers import expat
 
 from white_cliff.explain import registrant_span
@@ -54,16 +53,17 @@ _SECTION = {
     "shares": "Equity",
 }
 
-_ELEMENT = re.compile(
-    r"<(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)\b([^>]*)>([^<]*)</",
-    re.DOTALL,
-)
-_ATTR = re.compile(r'([A-Za-z_:][\w:.-]*)\s*=\s*"([^"]*)"')
 _PLAIN_NUMBER = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?$")
 _DOT_DECIMAL = re.compile(r"^-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?$")
 _ASCII_INT = re.compile(r"-?[0-9]+$")
 _INSTANCE_NS = "http://www.xbrl.org/2003/instance"
 _ISO_NS = "http://www.xbrl.org/2003/iso4217"
+_IX_NS = frozenset(
+    {
+        "http://www.xbrl.org/2013/inlineXBRL",
+        "http://www.xbrl.org/2008/inlineXBRL",
+    }
+)
 _IXT_NS = frozenset(
     {
         "http://www.xbrl.org/2008/inlineXBRL/transformation",
@@ -75,20 +75,21 @@ _IXT_NS = frozenset(
         "http://www.sec.gov/inlineXBRL/transformation/2015-08-31",
     }
 )
+_CIK_SCHEME = "http://www.sec.gov/CIK"
 _NS_SEP = "\x1f"
-_INSTANCE_ROOT = re.compile(r"<xbrl(?:\s|>|/)", re.I)
-_HTML_ROOT = re.compile(r"<html(?:\s|>|/)", re.I)
-_IX_MARK = re.compile(r"xmlns:ix\b|inlinexbrl|<\s*ix:", re.I)
-_XML_DECL = re.compile(r"<\?xml[^>]*\?>", re.I)
-_INLINE = re.compile(
-    r"<(?:[A-Za-z_][\w.-]*:)?nonFraction\b([^>]*)>([^<]*)</(?:[A-Za-z_][\w.-]*:)?nonFraction>",
-    re.I | re.DOTALL,
-)
-_NONNUMERIC = re.compile(
-    r"<(?:[A-Za-z_][\w.-]*:)?nonNumeric\b([^>]*)>(.*?)</(?:[A-Za-z_][\w.-]*:)?nonNumeric>",
-    re.I | re.DOTALL,
-)
 _SCALE_WORD = {"3": "thousands", "6": "millions", "9": "billions"}
+_ALLOWED_SCALE = frozenset({"0", "3", "6", "9"})
+_PRIMARY_FORMS = frozenset({"10-K", "10-Q"})
+_DEI = frozenset(
+    {
+        "EntityRegistrantName",
+        "DocumentType",
+        "DocumentFiscalPeriodFocus",
+        "DocumentPeriodEndDate",
+        "EntityCentralIndexKey",
+    }
+)
+_DIRECT_TEXT = frozenset({"identifier", "startDate", "endDate", "instant"})
 _MONTHS = {
     "january": 1,
     "february": 2,
@@ -118,6 +119,7 @@ class ParsedFacts:
     price_metric: bool = False
     filer_start: int | None = None
     filer_end: int | None = None
+    cik: str = ""
 
 
 @dataclass
@@ -126,41 +128,112 @@ class _BoundUnit:
     divide: bool
 
 
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
+def _split_name(name: str) -> tuple[str, str]:
+    if _NS_SEP in name:
+        uri, local = name.split(_NS_SEP, 1)
+        return uri, local
+    return "", name
 
 
-def _attrs(text: str) -> dict[str, str]:
-    return dict(_ATTR.findall(text))
+def _attr(attrs: dict[str, str], local: str) -> str:
+    if local in attrs:
+        return attrs[local]
+    for key, value in attrs.items():
+        if key.split(_NS_SEP)[-1] == local:
+            return value
+    return ""
+
+
+def _concept_name(raw: str) -> str:
+    return raw.split(":")[-1].strip()
+
+
+def _cik_number(raw: str) -> int | None:
+    digits = re.sub(r"\D", "", raw or "")
+    if not digits or len(digits) > 10:
+        return None
+    return int(digits)
+
+
+def _cik_text(number: int | None) -> str:
+    if number is None:
+        return ""
+    return str(number).zfill(10)
+
+
+@dataclass
+class _Hit:
+    concept: str
+    context_id: str
+    text: str
+    byte_start: int
+    byte_end: int
+    fmt: str | None = None
+    scale: str = ""
+    sign: str = ""
+    unit_ref: str = ""
+    decimals: str = ""
+    nil: bool = False
+
+
+@dataclass
+class _Context:
+    kind: str
+    start: str | None
+    end: str | None
+    cik: int | None
+    scheme: str
+    bad: bool = False
 
 
 class _Scope:
-    """In-scope namespace map, unit measures, and inline format kinds."""
+    """One pass over the live element tree. Comments and CDATA stay text."""
 
     def __init__(self) -> None:
         self.units: dict[str, _BoundUnit] = {}
         self.duplicates: set[str] = set()
-        self.leaves: list[tuple[str, str | None]] = []
-        self.inline_formats: list[str | None] = []
+        self.contexts: dict[str, _Context] = {}
+        self.duplicate_contexts: set[str] = set()
+        self.hits: list[_Hit] = []
+        self.dei: list[_Hit] = []
         self._ns: list[dict[str, str]] = [{}]
         self._frames: list[dict] = []
         self._unit: dict | None = None
+        self._ctx: dict | None = None
         self._buf: list[str] = []
+        self._parser: expat.XMLParserType | None = None
+        self._raw = b""
+        self.ok = True
 
-    def parse(self, text: str) -> None:
+    def parse(self, text: str) -> bool:
+        self._raw = text.encode("utf-8")
         parser = expat.ParserCreate(namespace_separator=_NS_SEP)
         parser.StartNamespaceDeclHandler = self._start_ns
         parser.EndNamespaceDeclHandler = self._end_ns
         parser.StartElementHandler = self._start
         parser.EndElementHandler = self._end
         parser.CharacterDataHandler = self._text
+        parser.ExternalEntityRefHandler = self._external
+        try:
+            parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+        except AttributeError:
+            pass
+        self._parser = parser
         try:
             parser.Parse(text, True)
         except expat.ExpatError:
+            self.ok = False
             self.units.clear()
             self.duplicates.clear()
-            self.leaves.clear()
-            self.inline_formats.clear()
+            self.contexts.clear()
+            self.hits.clear()
+            self.dei.clear()
+            return False
+        self._finish_contexts()
+        return True
+
+    def _external(self, *_args: object) -> int:
+        return 1
 
     def _start_ns(self, prefix: str | None, uri: str) -> None:
         mapped = dict(self._ns[-1])
@@ -169,18 +242,34 @@ class _Scope:
 
     def _end_ns(self, prefix: str | None) -> None:
         del prefix
-        self._ns.pop()
+        if len(self._ns) > 1:
+            self._ns.pop()
 
     def _start(self, name: str, attrs: dict[str, str]) -> None:
-        local = name.split(_NS_SEP)[-1]
+        uri, local = _split_name(name)
+        concept = _concept_name(_attr(attrs, "name"))
+        keep = False
+        if local == "nonFraction" and uri in _IX_NS:
+            keep = True
+        elif local == "nonNumeric" and uri in _IX_NS and concept in _DEI:
+            keep = True
+        elif local in _DIRECT_TEXT:
+            keep = True
         self._frames.append(
-            {"local": local, "fmt": self._format_kind(attrs.get("format", "")), "child": False}
+            {
+                "local": local,
+                "uri": uri,
+                "attrs": attrs,
+                "fmt": self._format_kind(_attr(attrs, "format")),
+                "chunks": [],
+                "byte_start": None,
+                "keep": keep,
+                "concept": concept,
+            }
         )
-        if len(self._frames) > 1:
-            self._frames[-2]["child"] = True
         if local == "unit" and self._unit is None:
             self._unit = {
-                "id": attrs.get("id", ""),
+                "id": _attr(attrs, "id"),
                 "measures": [],
                 "divide": False,
                 "depth": len(self._frames),
@@ -189,31 +278,153 @@ class _Scope:
             self._unit["divide"] = True
         if local == "measure" and self._unit is not None:
             self._buf = []
+        if local == "context" and uri in {_INSTANCE_NS, ""}:
+            self._ctx = {
+                "id": _attr(attrs, "id"),
+                "bad": False,
+                "scheme": "",
+                "ident": [],
+                "start": [],
+                "end": [],
+                "instant": [],
+                "depth": len(self._frames),
+            }
+        elif self._ctx is not None and local in {"segment", "scenario"}:
+            self._ctx["bad"] = True
+
+    def _excluded(self) -> bool:
+        return any(frame["local"] == "exclude" and frame["uri"] in _IX_NS for frame in self._frames)
 
     def _text(self, data: str) -> None:
-        if self._unit is not None and self._frames and self._frames[-1]["local"] == "measure":
+        if not data or self._excluded() or not self._frames:
+            return
+        top = self._frames[-1]
+        if top["local"] == "measure" and self._unit is not None:
             self._buf.append(data)
+            return
+        target = None
+        for frame in reversed(self._frames):
+            if frame["keep"] and frame["local"] in {"nonFraction", "nonNumeric", *_DIRECT_TEXT}:
+                target = frame
+                break
+        if target is None:
+            return
+        if target["byte_start"] is None and self._parser is not None:
+            target["byte_start"] = self._parser.CurrentByteIndex
+        target["chunks"].append(data)
 
     def _end(self, name: str) -> None:
-        local = name.split(_NS_SEP)[-1]
+        uri, local = _split_name(name)
+        del uri
+        if not self._frames:
+            return
+        frame = self._frames.pop()
         if local == "measure" and self._unit is not None:
             self._unit["measures"].append(self._resolve("".join(self._buf).strip()))
             self._buf = []
         if (
             local == "unit"
             and self._unit is not None
-            and len(self._frames) == self._unit["depth"]
+            and len(self._frames) + 1 == self._unit["depth"]
         ):
             self._store_unit()
             self._unit = None
-        frame = self._frames.pop()
-        if not frame["child"]:
-            self.leaves.append((frame["local"], frame["fmt"]))
-            if local == "nonFraction":
-                self.inline_formats.append(frame["fmt"])
+        if self._ctx is not None and local in _DIRECT_TEXT:
+            self._ctx[{"startDate": "start", "endDate": "end", "instant": "instant"}.get(local, "ident")].extend(
+                frame["chunks"]
+            )
+            if local == "identifier":
+                self._ctx["scheme"] = _attr(frame["attrs"], "scheme").strip()
+        if (
+            local == "context"
+            and self._ctx is not None
+            and len(self._frames) + 1 == self._ctx["depth"]
+        ):
+            self._store_context()
+            self._ctx = None
+        if frame["keep"] and frame["byte_start"] is not None and self._parser is not None:
+            self._store_hit(frame, self._parser.CurrentByteIndex)
+
+    def _store_hit(self, frame: dict, byte_end: int) -> None:
+        text = "".join(frame["chunks"]).strip()
+        if frame["byte_start"] is None or byte_end < frame["byte_start"]:
+            return
+        attrs = frame["attrs"]
+        hit = _Hit(
+            concept=frame["concept"],
+            context_id=_attr(attrs, "contextRef").strip(),
+            text=text,
+            byte_start=frame["byte_start"],
+            byte_end=byte_end,
+            fmt=frame["fmt"],
+            scale=_attr(attrs, "scale").strip(),
+            sign=_attr(attrs, "sign").strip(),
+            unit_ref=_attr(attrs, "unitRef").strip(),
+            decimals=_attr(attrs, "decimals").strip(),
+            nil=_attr(attrs, "nil").strip().lower() in {"true", "1"},
+        )
+        if frame["local"] == "nonFraction":
+            self.hits.append(hit)
+        elif frame["local"] == "nonNumeric":
+            self.dei.append(hit)
+
+    def _store_context(self) -> None:
+        assert self._ctx is not None
+        context_id = self._ctx["id"]
+        if not context_id:
+            return
+        instant = "".join(self._ctx["instant"]).strip()
+        start = "".join(self._ctx["start"]).strip()
+        end = "".join(self._ctx["end"]).strip()
+        ident = "".join(self._ctx["ident"]).strip()
+        record = _Context(
+            kind="instant" if instant else "duration",
+            start=start or None,
+            end=(instant or end) or None,
+            cik=_cik_number(ident),
+            scheme=self._ctx["scheme"],
+            bad=self._ctx["bad"],
+        )
+        if context_id in self.contexts or context_id in self.duplicate_contexts:
+            self.duplicate_contexts.add(context_id)
+            self.contexts.pop(context_id, None)
+            return
+        self.contexts[context_id] = record
+
+    def _finish_contexts(self) -> None:
+        for record in self.contexts.values():
+            if record.kind == "duration" and record.start and record.end and record.start >= record.end:
+                record.bad = True
+            if record.scheme.rstrip("/") != _CIK_SCHEME:
+                record.bad = True
+        filer = self._filer_cik()
+        if filer is None:
+            return
+        for record in self.contexts.values():
+            if record.cik != filer:
+                record.bad = True
+
+    def _filer_cik(self) -> int | None:
+        for hit in self.dei:
+            if hit.concept != "EntityCentralIndexKey":
+                continue
+            record = self.contexts.get(hit.context_id)
+            if record is None or record.bad:
+                continue
+            number = _cik_number(hit.text)
+            if number is not None:
+                return number
+        for hit in self.dei:
+            if hit.concept != "EntityRegistrantName":
+                continue
+            record = self.contexts.get(hit.context_id)
+            if record is None or record.bad or record.cik is None:
+                continue
+            return record.cik
+        return None
 
     def _resolve(self, raw: str) -> tuple[str, str] | None:
-        if not raw:
+        if not raw or not self._ns:
             return None
         if ":" in raw:
             prefix, local = raw.split(":", 1)
@@ -231,7 +442,7 @@ class _Scope:
             prefix, local = token.split(":", 1)
         else:
             prefix, local = "", token
-        if self._ns[-1].get(prefix) not in _IXT_NS:
+        if not self._ns or self._ns[-1].get(prefix) not in _IXT_NS:
             return None
         folded = local.lower().replace("-", "").replace("_", "")
         if folded == "numdotdecimal":
@@ -249,60 +460,11 @@ class _Scope:
             return
         self.units[unit_id] = _BoundUnit(tuple(self._unit["measures"]), self._unit["divide"])
 
-
-def _read_scope(text: str) -> _Scope:
-    scope = _Scope()
-    scope.parse(text)
-    return scope
-
-
-def _parse_contexts(root: ET.Element) -> dict[str, dict]:
-    contexts: dict[str, dict] = {}
-    for ctx in root.iter():
-        if _local(ctx.tag) != "context" or not ctx.get("id"):
-            continue
-        kind = "duration"
-        start = end = None
-        dimensional = False
-        for child in ctx.iter():
-            name = _local(child.tag)
-            if name == "instant" and child.text:
-                kind = "instant"
-                end = child.text.strip()
-            elif name == "startDate" and child.text:
-                kind = "duration"
-                start = child.text.strip()
-            elif name == "endDate" and child.text:
-                kind = "duration"
-                end = child.text.strip()
-            elif name in {"explicitMember", "typedMember"}:
-                dimensional = True
-        contexts[ctx.get("id")] = {
-            "kind": kind,
-            "start": start,
-            "end": end,
-            "dimensional": dimensional,
-        }
-    return contexts
-
-
-def _dei(root: ET.Element, contexts: dict[str, dict]) -> dict[str, str]:
-    wanted = {
-        "EntityRegistrantName": "filer",
-        "DocumentType": "form",
-        "DocumentFiscalPeriodFocus": "focus",
-        "DocumentPeriodEndDate": "period_end",
-    }
-    found: dict[str, str] = {}
-    for element in root.iter():
-        key = wanted.get(_local(element.tag))
-        if not key or key in found or not element.text:
-            continue
-        context = contexts.get(element.get("contextRef") or "", {})
-        if context.get("dimensional"):
-            continue
-        found[key] = element.text.strip()
-    return found
+    def char_at(self, byte_index: int) -> int | None:
+        try:
+            return len(self._raw[:byte_index].decode("utf-8"))
+        except UnicodeDecodeError:
+            return None
 
 
 def _decimals(raw: str | None) -> int | None:
@@ -315,8 +477,7 @@ def _decimals(raw: str | None) -> int | None:
     return int(raw)
 
 
-def _read_amount(text: str, kind: str | None, origin: str) -> Decimal | None:
-    del origin
+def _read_amount(text: str, kind: str | None) -> Decimal | None:
     stripped = text.strip()
     if kind == "plain" and _PLAIN_NUMBER.fullmatch(stripped):
         return Decimal(stripped)
@@ -350,184 +511,24 @@ def _unit_label(
     return None
 
 
-def _leaf_kind(leaves: list[tuple[str, str | None]], index: list[int], concept: str, attr_text: str) -> str | None:
-    while index[0] < len(leaves) and leaves[index[0]][0] != concept:
-        index[0] += 1
-    if index[0] < len(leaves):
-        kind = leaves[index[0]][1]
-        index[0] += 1
-        return kind
-    if _attrs(attr_text).get("format", "").strip() == "":
-        return "plain"
-    return None
-
-
-def _fact_from_hit(
-    *,
-    concept: str,
-    attr_text: str,
-    raw_inner: str,
-    inner_start: int,
-    contexts: dict[str, dict],
-    units: dict[str, _BoundUnit],
-    duplicates: set[str],
-    format_kind: str | None,
-    document: str,
-    url: str,
-    sha256: str,
-    origin: str,
-) -> Fact | None:
-    role = _ROLES.get(concept, "")
-    if not role or concept.endswith("TextBlock") or concept.endswith("TableTextBlock"):
-        return None
-    attrs = _attrs(attr_text)
-    context_id = attrs.get("contextRef")
-    if not context_id or context_id not in contexts:
-        return None
-    context = contexts[context_id]
-    if context["dimensional"]:
-        return None
-    stripped = raw_inner.strip()
-    if not stripped:
-        return None
-    value = _read_amount(stripped, format_kind, origin)
-    if value is None:
-        return None
-    if attrs.get("sign") == "-" and value > 0:
-        value = -value
-    if is_price_text(concept):
-        return None
-    relative = raw_inner.find(stripped)
-    start = inner_start + max(relative, 0)
-    end = start + len(stripped)
-    unit = _unit_label(attrs.get("unitRef", ""), units, duplicates, role)
-    if unit is None:
-        return None
-    scaled = _unit_with_scale(unit, attrs.get("scale"))
-    if scaled is None:
-        return None
-    unit = scaled
-    period = Period(
-        kind=context["kind"],
-        start=context["start"],
-        end=context["end"],
-    )
-    fact_id = letter_id(
-        "fact",
-        f"{document}|{concept}|{context_id}|{value}|{start}",
-    )
-    kind = "shares" if unit == "shares" else "amount"
-    return Fact(
-        id=fact_id,
-        concept=concept,
-        label=concept,
-        value=value,
-        unit=unit or "number",
-        period=period,
-        source=SourcePointer(
-            document=document,
-            section=_SECTION.get(role, "Statements"),
-            url=url,
-            sha256=sha256,
-            char_start=start,
-            char_end=end,
-        ),
-        role=role,
-        origin=origin,
-        kind=kind,
-        decimals=_decimals(attrs.get("decimals")),
-    )
-
-
-def _name_bounds(name: str, inner: str, base: int) -> tuple[int, int] | None:
-    found = registrant_span(name, inner)
-    if found is None:
-        return None
-    return base + found[0], base + found[1]
-
-
-def _instance_name_bounds(text: str, name: str, contexts: dict[str, dict]) -> tuple[int, int] | None:
-    if not name:
-        return None
-    for match in _ELEMENT.finditer(text):
-        if match.group(1) != "EntityRegistrantName":
-            continue
-        context = contexts.get(_attrs(match.group(2)).get("contextRef", ""), {})
-        if context.get("dimensional"):
-            continue
-        return _name_bounds(name, match.group(3), match.start(3))
-    return None
-
-
-def _inline_name_bounds(text: str, name: str, contexts: dict[str, dict]) -> tuple[int, int] | None:
-    if not name:
-        return None
-    for match in _NONNUMERIC.finditer(text):
-        attrs = _attrs(match.group(1))
-        if attrs.get("name", "").split(":")[-1] != "EntityRegistrantName":
-            continue
-        context = contexts.get(attrs.get("contextRef", ""), {})
-        if context.get("dimensional"):
-            continue
-        return _name_bounds(name, match.group(2), match.start(2))
-    return None
-
-
-def parse_instance(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
-    root = ET.fromstring(text)
-    contexts = _parse_contexts(root)
-    scope = _read_scope(text)
-    meta = _dei(root, contexts)
-    facts: list[Fact] = []
-    seen: set[tuple[str, str, str, int]] = set()
-    leaf = [0]
-    for match in _ELEMENT.finditer(text):
-        fact = _fact_from_hit(
-            concept=match.group(1),
-            attr_text=match.group(2),
-            raw_inner=match.group(3),
-            inner_start=match.start(3),
-            contexts=contexts,
-            units=scope.units,
-            duplicates=scope.duplicates,
-            format_kind=_leaf_kind(scope.leaves, leaf, match.group(1), match.group(2)),
-            document=document,
-            url=url,
-            sha256=sha256,
-            origin="xbrl",
-        )
-        if fact is None:
-            continue
-        key = (fact.concept, fact.period.end or "", str(fact.value), fact.source.char_start or 0)
-        if key in seen:
-            continue
-        seen.add(key)
-        facts.append(fact)
-    price = any(is_price_text(fact.concept) or is_price_text(fact.label) for fact in facts)
-    filer = meta.get("filer", "")
-    bounds = _instance_name_bounds(text, filer, contexts)
-    return ParsedFacts(
-        facts=facts,
-        filer=filer,
-        form=meta.get("form", ""),
-        focus=meta.get("focus"),
-        period_end=meta.get("period_end"),
-        price_metric=price,
-        filer_start=None if bounds is None else bounds[0],
-        filer_end=None if bounds is None else bounds[1],
-    )
-
-
 def _unit_with_scale(unit: str, scale: str | None) -> str | None:
     """Keep the digits that are written in the file and name the scale in the unit."""
     if not scale or scale == "0":
         return unit
-    if re.fullmatch(r"[0-9]+", scale) is None:
+    if scale not in _ALLOWED_SCALE:
         return None
     word = _SCALE_WORD.get(scale)
     if word is None or unit not in {"USD", "shares"}:
         return None
     return f"{unit} {word}"
+
+
+def _scale_number(scale: str) -> int | None:
+    if scale in {"", "0"}:
+        return 0
+    if scale not in _ALLOWED_SCALE:
+        return None
+    return int(scale)
 
 
 def _iso_date(value: str) -> str | None:
@@ -542,108 +543,149 @@ def _iso_date(value: str) -> str | None:
     return f"{int(match.group(3)):04d}-{month:02d}-{int(match.group(2)):02d}"
 
 
-def _dei_inline(text: str, contexts: dict[str, dict]) -> dict[str, str]:
-    """Cover facts in inline XBRL sit inside ix:nonNumeric, often wrapped in HTML."""
-    wanted = {
-        "EntityRegistrantName": "filer",
-        "DocumentType": "form",
-        "DocumentFiscalPeriodFocus": "focus",
-        "DocumentPeriodEndDate": "period_end",
-    }
-    found: dict[str, str] = {}
-    for match in _NONNUMERIC.finditer(text):
-        attrs = _attrs(match.group(1))
-        key = wanted.get(attrs.get("name", "").split(":")[-1])
-        if not key or key in found:
-            continue
-        context = contexts.get(attrs.get("contextRef", ""), {})
-        if context.get("dimensional"):
-            continue
-        value = re.sub(r"<[^>]+>", " ", match.group(2))
-        value = re.sub(r"\s+", " ", value).strip()
-        if key == "period_end":
-            value = _iso_date(value) or ""
-        if value:
-            found[key] = value
-    return found
+def _dei_value(hit: _Hit, contexts: dict[str, _Context]) -> str:
+    record = contexts.get(hit.context_id)
+    if record is None or record.bad:
+        return ""
+    if hit.concept == "DocumentPeriodEndDate":
+        return _iso_date(hit.text) or ""
+    return hit.text
+
+
+def _narrow(text: str, start: int, end: int, needle: str) -> tuple[int, int] | None:
+    if start < 0 or end > len(text) or start >= end or not needle:
+        return None
+    at = text[start:end].find(needle)
+    if at < 0:
+        return None
+    return start + at, start + at + len(needle)
 
 
 def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
-    """Inline XBRL. Contexts are read from the same document when they are present."""
-    contexts: dict[str, dict] = {}
+    """Read live ix:nonFraction elements. A parse error yields no facts."""
+    scope = _Scope()
+    if not scope.parse(text):
+        return ParsedFacts(facts=[])
     meta: dict[str, str] = {}
-    try:
-        # Inline documents are XHTML. A tolerant parse is enough when the
-        # document is well formed; otherwise regex facts still carry context ids
-        # only when the context table was parsed.
-        root = ET.fromstring(text)
-    except ET.ParseError:
-        root = None
-    scope = _read_scope(text)
-    if root is not None:
-        contexts = _parse_contexts(root)
-        meta = _dei(root, contexts)
-    for key, value in _dei_inline(text, contexts).items():
-        meta.setdefault(key, value)
-    matches = list(_INLINE.finditer(text))
-    if len(scope.inline_formats) == len(matches):
-        kinds = scope.inline_formats
-    else:
-        kinds = [
-            "plain" if _attrs(match.group(1)).get("format", "").strip() == "" else None
-            for match in matches
-        ]
+    name_hit: _Hit | None = None
+    for hit in scope.dei:
+        if hit.concept == "EntityRegistrantName" and name_hit is None and _dei_value(hit, scope.contexts):
+            name_hit = hit
+        key = {
+            "EntityRegistrantName": "filer",
+            "DocumentType": "form",
+            "DocumentFiscalPeriodFocus": "focus",
+            "DocumentPeriodEndDate": "period_end",
+        }.get(hit.concept)
+        if key is None or key in meta:
+            continue
+        value = _dei_value(hit, scope.contexts)
+        if value:
+            meta[key] = value
+    filer_cik = scope._filer_cik()
     facts: list[Fact] = []
-    for match, kind in zip(matches, kinds):
-        attrs = _attrs(match.group(1))
-        name = attrs.get("name", "")
-        concept = name.split(":")[-1]
-        fact = _fact_from_hit(
-            concept=concept,
-            attr_text=match.group(1),
-            raw_inner=match.group(2),
-            inner_start=match.start(2),
-            contexts=contexts,
-            units=scope.units,
-            duplicates=scope.duplicates,
-            format_kind=kind,
-            document=document,
-            url=url,
-            sha256=sha256,
-            origin="ixbrl",
-        )
-        if fact is not None:
-            facts.append(fact)
+    form = meta.get("form", "")
+    if form in _PRIMARY_FORMS:
+        for hit in scope.hits:
+            fact = _fact_from_hit(
+                hit,
+                text,
+                scope,
+                document=document,
+                url=url,
+                sha256=sha256,
+            )
+            if fact is not None:
+                facts.append(fact)
     filer = meta.get("filer", "")
-    bounds = _inline_name_bounds(text, filer, contexts)
+    bounds = _name_span(text, filer, name_hit, scope)
     return ParsedFacts(
         facts=facts,
         filer=filer,
-        form=meta.get("form", ""),
+        form=form,
         focus=meta.get("focus"),
         period_end=meta.get("period_end"),
         price_metric=False,
         filer_start=None if bounds is None else bounds[0],
         filer_end=None if bounds is None else bounds[1],
+        cik=_cik_text(filer_cik),
     )
 
 
-def _root_is_instance(head: str) -> bool:
-    match = re.match(r"<\s*(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)([^>]*)>", head)
-    if not match or match.group(2).lower() != "xbrl":
-        return False
-    prefix = match.group(1) or ""
-    key = f"xmlns:{prefix}" if prefix else "xmlns"
-    return _attrs(match.group(3)).get(key) == _INSTANCE_NS
+def _name_span(text: str, filer: str, hit: _Hit | None, scope: _Scope) -> tuple[int, int] | None:
+    if hit is None or not filer:
+        return None
+    start = scope.char_at(hit.byte_start)
+    end = scope.char_at(hit.byte_end)
+    if start is None or end is None:
+        return None
+    found = registrant_span(filer, text[start:end])
+    if found is None:
+        return None
+    return start + found[0], start + found[1]
 
 
-def is_instance_document(text: str) -> bool:
-    """An instance has an xbrl root. Inline XBRL has an ix namespace or an html root."""
-    head = text.lstrip()
-    head = _XML_DECL.sub("", head, count=1).lstrip()
-    if _root_is_instance(head):
-        return True
-    window = head[:8000].lower()
-    if _HTML_ROOT.search(window) or _IX_MARK.search(window):
-        return False
-    return _INSTANCE_ROOT.search(window) is not None
+def _fact_from_hit(
+    hit: _Hit,
+    text: str,
+    scope: _Scope,
+    *,
+    document: str,
+    url: str,
+    sha256: str,
+) -> Fact | None:
+    role = _ROLES.get(hit.concept, "")
+    if not role or hit.concept.endswith("TextBlock") or hit.concept.endswith("TableTextBlock"):
+        return None
+    if hit.nil or not hit.text or is_price_text(hit.concept):
+        return None
+    if hit.context_id in scope.duplicate_contexts or hit.context_id not in scope.contexts:
+        return None
+    context = scope.contexts[hit.context_id]
+    if context.bad:
+        return None
+    value = _read_amount(hit.text, hit.fmt)
+    if value is None:
+        return None
+    if hit.sign == "-" and value > 0:
+        value = -value
+    scale = _scale_number(hit.scale)
+    if scale is None:
+        return None
+    unit = _unit_label(hit.unit_ref, scope.units, scope.duplicates, role)
+    if unit is None:
+        return None
+    scaled = _unit_with_scale(unit, hit.scale)
+    if scaled is None:
+        return None
+    start = scope.char_at(hit.byte_start)
+    end = scope.char_at(hit.byte_end)
+    if start is None or end is None:
+        return None
+    narrowed = _narrow(text, start, end, hit.text)
+    if narrowed is None:
+        return None
+    start, end = narrowed
+    fact_id = letter_id("fact", f"{document}|{hit.concept}|{hit.context_id}|{value}|{start}")
+    return Fact(
+        id=fact_id,
+        concept=hit.concept,
+        label=hit.concept,
+        value=value,
+        unit=scaled,
+        period=Period(kind=context.kind, start=context.start, end=context.end),
+        source=SourcePointer(
+            document=document,
+            section=_SECTION.get(role, "Statements"),
+            url=url,
+            sha256=sha256,
+            char_start=start,
+            char_end=end,
+        ),
+        role=role,
+        origin="ixbrl",
+        kind="shares" if scaled == "shares" else "amount",
+        decimals=_decimals(hit.decimals),
+        scale=scale,
+        context_id=hit.context_id,
+    )

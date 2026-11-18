@@ -2,48 +2,48 @@
   "facts": [
     {
       "concept": "Revenues",
-      "value": "332238000000",
-      "unit": "USD",
+      "value": "332238",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "NetIncomeLoss",
-      "value": "28844000000",
-      "unit": "USD",
+      "value": "28844",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "NetCashProvidedByUsedInOperatingActivities",
-      "value": "51970000000",
-      "unit": "USD",
+      "value": "51970",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "LongTermDebtAndCapitalLeaseObligations",
-      "value": "34241000000",
-      "unit": "USD",
+      "value": "34241",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-31"
     },
     {
       "concept": "CashAndCashEquivalentsAtCarryingValue",
-      "value": "10681000000",
-      "unit": "USD",
+      "value": "10681",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-31"
     },
     {
       "concept": "CommonStockSharesOutstanding",
-      "value": "4179000000",
-      "unit": "shares",
+      "value": "4179",
+      "unit": "shares millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-31"

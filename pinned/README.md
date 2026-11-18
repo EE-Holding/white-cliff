@@ -2,7 +2,7 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 # Pinned filings
 
-Each accession is a directory under `filings/`. The directory holds the raw EDGAR file, `provenance.json` (URL, SHA-256, and retrieval time), and `expected.json` (facts read from that file).
+Each accession is a directory under `filings/`. The directory holds the raw EDGAR files, `provenance.json` (URL, SHA-256, and retrieval time), and `expected.json` (facts read from the primary 10-K or 10-Q).
 
 `manifest.json` lists the set. `target_count` is 30. To grow the set, add a directory and append one object to `filings`. Do not invent expected values; each value must appear in the raw file.
 

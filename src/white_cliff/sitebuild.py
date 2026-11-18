@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, OutputRefused, ensure_safe_output
-from white_cliff.explain import shown_registrant
+from white_cliff.explain import filer_record, shown_registrant
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.review import audit_rendered
 from white_cliff.sic import sector_html
@@ -73,12 +73,18 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
             if money and edgar
             else None
         )
+        record = filer_record(filing.cik or str(entry.get("cik", "")))
         if chip:
             shown, start, end = chip
             href = f"{edgar}#registrant={start}&end={end}"
             filer_html = (
                 f'<a class="registrant-chip" title="Registrant name in the filing" '
                 f'href="{html.escape(href, quote=True)}">{html.escape(shown, quote=False)}</a>'
+            )
+        elif money and record:
+            filer_html = (
+                f'<a class="registrant-chip" title="Filer on EDGAR" '
+                f'href="{html.escape(record, quote=True)}">the filer</a>'
             )
         else:
             filer_html = "the filer"

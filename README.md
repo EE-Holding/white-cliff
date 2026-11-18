@@ -2,9 +2,9 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 # white-cliff
 
-white-cliff explains a public company filing in plain language. It reads the tagged XBRL figures in a US EDGAR annual report, quarterly report, or earnings exhibit and shows revenue, margins, cash flow, debt, and share count. Every figure points back to the filing. The tool does not recommend buying, selling, or holding any security.
+white-cliff explains a public company filing in plain language. It reads the inline XBRL figures in a US EDGAR annual report or quarterly report and shows revenue, margins, cash flow, debt, and share count. Every figure points back to the filing. The tool does not recommend buying, selling, or holding any security.
 
-Figures come from the filing's XBRL tags. A filing with no tagged money figures is shown without numbers. The tool does not use prices, estimates, news, or any other source. It does not compute price multiples. Explanations use fixed sentences.
+Figures come from the inline XBRL tags in that report. A filing of another form, or one with no tagged money figures, is shown without numbers. The tool does not use prices, estimates, news, or any other source. It does not compute price multiples. Explanations use fixed sentences.
 
 ## Install
 

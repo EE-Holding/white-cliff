@@ -5,10 +5,11 @@
   "form": "10-Q",
   "files": [
     {
-      "name": "aapl-20260627_htm.xml",
-      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000020/aapl-20260627_htm.xml",
-      "sha256": "28f986bb243c8fdd445560d381df4b57912ca290b03b8451ecd518e63cdb5d2b",
-      "retrieved_at": "2026-11-17T17:40:00Z"
+      "name": "aapl-20260627.htm",
+      "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000020/aapl-20260627.htm",
+      "sha256": "9afca93bb6e1dd4a20410bb6e708cdf5e9d5cbed3827c55dcde7efb655edf0e4",
+      "retrieved_at": "2026-11-18T04:23:53Z",
+      "document_type": "10-Q"
     }
   ]
 }

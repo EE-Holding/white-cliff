@@ -11,10 +11,12 @@ from white_cliff.facts import Fact, Period, SourcePointer
 from white_cliff.ids import letter_id
 
 MINI_XML = """<?xml version="1.0" encoding="utf-8"?>
-<xbrl xmlns="http://www.xbrl.org/2003/instance"
+<html xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
       xmlns:us-gaap="http://fasb.org/us-gaap/2026"
       xmlns:dei="http://xbrl.sec.gov/dei/2026"
       xmlns:iso4217="http://www.xbrl.org/2003/iso4217">
+<body>
   <context id="c-year">
     <entity><identifier scheme="http://www.sec.gov/CIK">0000000001</identifier></entity>
     <period><startDate>2024-01-01</startDate><endDate>2024-12-31</endDate></period>
@@ -29,44 +31,50 @@ MINI_XML = """<?xml version="1.0" encoding="utf-8"?>
   </context>
   <unit id="usd"><measure>iso4217:USD</measure></unit>
   <unit id="shares"><measure>shares</measure></unit>
-  <dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>
-  <dei:DocumentType contextRef="c-year">10-K</dei:DocumentType>
-  <dei:DocumentFiscalPeriodFocus contextRef="c-year">FY</dei:DocumentFiscalPeriodFocus>
-  <dei:DocumentPeriodEndDate contextRef="c-year">2024-12-31</dei:DocumentPeriodEndDate>
-  <us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="-3">5000</us-gaap:Revenues>
-  <us-gaap:Revenues contextRef="c-prior" unitRef="usd" decimals="-3">4000</us-gaap:Revenues>
-  <us-gaap:NetIncomeLoss contextRef="c-year" unitRef="usd" decimals="-3">800</us-gaap:NetIncomeLoss>
-  <us-gaap:CashAndCashEquivalentsAtCarryingValue contextRef="c-end" unitRef="usd" decimals="-3">300</us-gaap:CashAndCashEquivalentsAtCarryingValue>
-  <us-gaap:LongTermDebt contextRef="c-end" unitRef="usd" decimals="-3">100</us-gaap:LongTermDebt>
-  <us-gaap:CommonStockSharesOutstanding contextRef="c-end" unitRef="shares" decimals="0">50</us-gaap:CommonStockSharesOutstanding>
-</xbrl>
+  <ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">Example Co</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentType" contextRef="c-year">10-K</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="c-year">FY</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-year">2024-12-31</ix:nonNumeric>
+  <ix:nonNumeric name="dei:EntityCentralIndexKey" contextRef="c-year">0000000001</ix:nonNumeric>
+  <ix:nonFraction name="us-gaap:Revenues" contextRef="c-year" unitRef="usd" decimals="-3">5000</ix:nonFraction>
+  <ix:nonFraction name="us-gaap:Revenues" contextRef="c-prior" unitRef="usd" decimals="-3">4000</ix:nonFraction>
+  <ix:nonFraction name="us-gaap:NetIncomeLoss" contextRef="c-year" unitRef="usd" decimals="-3">800</ix:nonFraction>
+  <ix:nonFraction name="us-gaap:CashAndCashEquivalentsAtCarryingValue" contextRef="c-end" unitRef="usd" decimals="-3">300</ix:nonFraction>
+  <ix:nonFraction name="us-gaap:LongTermDebt" contextRef="c-end" unitRef="usd" decimals="-3">100</ix:nonFraction>
+  <ix:nonFraction name="us-gaap:CommonStockSharesOutstanding" contextRef="c-end" unitRef="shares" decimals="0">50</ix:nonFraction>
+</body>
+</html>
 """
 
 
 def narrative_instance(note: str) -> str:
-    """A small 10-K instance plus one non-numeric note from the filing."""
+    """A small inline 10-K plus one non-numeric note from the filing."""
     escaped = (
         note.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
     return f"""<?xml version="1.0" encoding="utf-8"?>
-<xbrl xmlns="http://www.xbrl.org/2003/instance"
+<html xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
       xmlns:us-gaap="http://fasb.org/us-gaap/2026"
       xmlns:dei="http://xbrl.sec.gov/dei/2026"
       xmlns:iso4217="http://www.xbrl.org/2003/iso4217">
+<body>
   <context id="c-year">
     <entity><identifier scheme="http://www.sec.gov/CIK">0000000001</identifier></entity>
     <period><startDate>2024-01-01</startDate><endDate>2024-12-31</endDate></period>
   </context>
   <unit id="usd"><measure>iso4217:USD</measure></unit>
-  <dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>
-  <dei:DocumentType contextRef="c-year">10-K</dei:DocumentType>
-  <dei:DocumentFiscalPeriodFocus contextRef="c-year">FY</dei:DocumentFiscalPeriodFocus>
-  <dei:DocumentPeriodEndDate contextRef="c-year">2024-12-31</dei:DocumentPeriodEndDate>
-  <us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0">5000</us-gaap:Revenues>
-  <dei:TradingSymbol contextRef="c-year">{escaped}</dei:TradingSymbol>
-</xbrl>
+  <ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">Example Co</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentType" contextRef="c-year">10-K</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="c-year">FY</ix:nonNumeric>
+  <ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-year">2024-12-31</ix:nonNumeric>
+  <ix:nonNumeric name="dei:EntityCentralIndexKey" contextRef="c-year">0000000001</ix:nonNumeric>
+  <ix:nonFraction name="us-gaap:Revenues" contextRef="c-year" unitRef="usd" decimals="0">5000</ix:nonFraction>
+  <ix:nonNumeric name="dei:TradingSymbol" contextRef="c-year">{escaped}</ix:nonNumeric>
+</body>
+</html>
 """
 
 

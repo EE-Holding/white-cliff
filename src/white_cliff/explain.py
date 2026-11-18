@@ -6,6 +6,7 @@ import html
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import ROUND_HALF_EVEN, Decimal
 
 from white_cliff.facts import Fact, FactStore
 from white_cliff.formulas import FormulaError, comparable_yoy, margin, net_debt, yoy_change
@@ -41,6 +42,11 @@ _REASON = (
 
 
 _NAME_EXTRA = set(" ., &'()-/")
+_NAME_BANNED = re.compile(
+    r"%|\b(?:usd|dollars?|millions?|thousands?|billions?|shares|percent)\b",
+    re.IGNORECASE,
+)
+_RECORD = re.compile(r"https://data\.sec\.gov/submissions/CIK[0-9]{10}\.json\Z")
 
 
 _ENTITY = re.compile(r"&(?:#x[0-9A-Fa-f]+|#\d+|[A-Za-z][A-Za-z0-9]+);")
@@ -107,16 +113,29 @@ def shown_registrant(
 
 
 def acceptable_name(name: str) -> str | None:
-    """A filing-supplied label: one short line of letters, digits, and light punctuation."""
+    """A filing-supplied label: one short line of letters and light punctuation."""
     if not name or name != name.strip():
         return None
     if len(name) > 100 or any(char in "\n\r" for char in name):
         return None
     for char in name:
-        if char.isalpha() or char.isdigit() or char in _NAME_EXTRA:
+        if char.isalpha() or char in _NAME_EXTRA:
             continue
         return None
+    if _NAME_BANNED.search(name):
+        return None
     return name
+
+
+def filer_record(cik: str) -> str | None:
+    """The filer's EDGAR submissions file, when the CIK is the one the filing states."""
+    digits = re.sub(r"\D", "", cik or "")
+    if not digits or len(digits) > 10:
+        return None
+    url = f"https://data.sec.gov/submissions/CIK{digits.zfill(10)}.json"
+    if _RECORD.fullmatch(url) is None:
+        return None
+    return url
 
 
 @dataclass
@@ -134,8 +153,38 @@ def _length(fact: Fact) -> int | None:
     return None
 
 
+def _absolute(fact: Fact) -> Decimal:
+    return fact.value * (Decimal(10) ** fact.scale)
+
+
+def _base_unit(fact: Fact) -> str:
+    return fact.unit.split(" ", 1)[0]
+
+
+def _group_agrees(group: list[Fact]) -> bool:
+    if len(group) < 2:
+        return True
+    absolutes = [_absolute(fact) for fact in group]
+    known = [fact.decimals for fact in group if fact.decimals is not None]
+    if len(known) != len(group):
+        return len(set(absolutes)) == 1
+    quantum = Decimal(1).scaleb(-min(known))
+    rounded = [value.quantize(quantum, rounding=ROUND_HALF_EVEN) for value in absolutes]
+    return len(set(rounded)) == 1
+
+
 def _prefer(facts: list[Fact]) -> Fact | None:
+    """Keep one fact when the same context and unit agree after scale and decimals."""
     if not facts:
+        return None
+    groups: dict[tuple[str, str], list[Fact]] = {}
+    for fact in facts:
+        groups.setdefault((fact.context_id, _base_unit(fact)), []).append(fact)
+    kept: list[Fact] = []
+    for group in groups.values():
+        if _group_agrees(group):
+            kept.extend(group)
+    if not kept:
         return None
 
     def rank(fact: Fact) -> int:
@@ -143,9 +192,9 @@ def _prefer(facts: list[Fact]) -> Fact | None:
             return 10**9
         return fact.decimals
 
-    best = max(rank(fact) for fact in facts)
-    top = [fact for fact in facts if rank(fact) == best]
-    if len({fact.value for fact in top}) != 1:
+    best = max(rank(fact) for fact in kept)
+    top = [fact for fact in kept if rank(fact) == best]
+    if len({_absolute(fact) for fact in top}) != 1:
         return None
     return top[0]
 
@@ -408,17 +457,12 @@ def build_blocks(
     filing_url: str,
     filer_start: int | None = None,
     filer_end: int | None = None,
+    cik: str = "",
 ) -> list[Block]:
     facts = store.facts()
     chip = shown_registrant(filer, filing_text, filer_start, filer_end)
-    if chip is None:
-        cover = Block(
-            text=(
-                f"This explanation covers the filer in {_form_words(form)} "
-                "[section:Cover]."
-            )
-        )
-    else:
+    record = filer_record(cik)
+    if chip is not None:
         name, start, end = chip
         cover = Block(
             text=(
@@ -426,6 +470,21 @@ def build_blocks(
                 "[section:Cover]."
             ),
             registrant=(name, filing_url, start, end),
+        )
+    elif record is not None:
+        cover = Block(
+            text=(
+                f"This explanation covers {{registrant}} in {_form_words(form)} "
+                "[section:Cover]."
+            ),
+            registrant=("the filer", record, -1, -1),
+        )
+    else:
+        cover = Block(
+            text=(
+                f"This explanation covers the filer in {_form_words(form)} "
+                "[section:Cover]."
+            )
         )
     blocks: list[Block] = [cover]
     if filing_url and not filing_url.startswith("https://www.sec.gov/"):

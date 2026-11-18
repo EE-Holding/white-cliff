@@ -52,6 +52,8 @@ class Fact:
     table_kind: str = ""
     span_hint: str = ""
     header: str = ""
+    scale: int = 0
+    context_id: str = ""
 
 
 @dataclass(frozen=True)

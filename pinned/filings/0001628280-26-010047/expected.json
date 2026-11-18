@@ -2,64 +2,64 @@
   "facts": [
     {
       "concept": "Revenues",
-      "value": "47941000000",
-      "unit": "USD",
+      "value": "47941",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "GrossProfit",
-      "value": "29544000000",
-      "unit": "USD",
+      "value": "29544",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "OperatingIncomeLoss",
-      "value": "13762000000",
-      "unit": "USD",
+      "value": "13762",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "NetIncomeLoss",
-      "value": "13107000000",
-      "unit": "USD",
+      "value": "13107",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "NetCashProvidedByUsedInOperatingActivities",
-      "value": "7408000000",
-      "unit": "USD",
+      "value": "7408",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"
     },
     {
       "concept": "LongTermDebtAndCapitalLeaseObligations",
-      "value": "42119000000",
-      "unit": "USD",
+      "value": "42119",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-31"
     },
     {
       "concept": "CashAndCashEquivalentsAtCarryingValue",
-      "value": "10270000000",
-      "unit": "USD",
+      "value": "10270",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2025-12-31"
     },
     {
       "concept": "WeightedAverageNumberOfSharesOutstandingBasic",
-      "value": "4303000000",
-      "unit": "shares",
+      "value": "4303",
+      "unit": "shares millions",
       "kind": "duration",
       "start": "2025-01-01",
       "end": "2025-12-31"

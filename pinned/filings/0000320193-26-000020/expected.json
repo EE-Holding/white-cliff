@@ -2,64 +2,64 @@
   "facts": [
     {
       "concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "value": "109417000000",
-      "unit": "USD",
+      "value": "109417",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2026-03-29",
       "end": "2026-06-27"
     },
     {
       "concept": "GrossProfit",
-      "value": "54770000000",
-      "unit": "USD",
+      "value": "54770",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2026-03-29",
       "end": "2026-06-27"
     },
     {
       "concept": "OperatingIncomeLoss",
-      "value": "35695000000",
-      "unit": "USD",
+      "value": "35695",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2026-03-29",
       "end": "2026-06-27"
     },
     {
       "concept": "NetIncomeLoss",
-      "value": "29789000000",
-      "unit": "USD",
+      "value": "29789",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2026-03-29",
       "end": "2026-06-27"
     },
     {
       "concept": "NetCashProvidedByUsedInOperatingActivities",
-      "value": "116996000000",
-      "unit": "USD",
+      "value": "116996",
+      "unit": "USD millions",
       "kind": "duration",
       "start": "2025-09-28",
       "end": "2026-06-27"
     },
     {
       "concept": "LongTermDebt",
-      "value": "82300000000",
-      "unit": "USD",
+      "value": "82.3",
+      "unit": "USD billions",
       "kind": "instant",
       "start": null,
       "end": "2026-06-27"
     },
     {
       "concept": "CashAndCashEquivalentsAtCarryingValue",
-      "value": "39544000000",
-      "unit": "USD",
+      "value": "39544",
+      "unit": "USD millions",
       "kind": "instant",
       "start": null,
       "end": "2026-06-27"
     },
     {
       "concept": "CommonStockSharesOutstanding",
-      "value": "14608963000",
-      "unit": "shares",
+      "value": "14608963",
+      "unit": "shares thousands",
       "kind": "instant",
       "start": null,
       "end": "2026-06-27"

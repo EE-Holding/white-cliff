@@ -9,7 +9,7 @@ import pytest
 from white_cliff.disclaimer import OutputRefused
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.sic import accepted_sector, sic_title
-from white_cliff.xbrl import is_instance_document, parse_inline, parse_instance
+from white_cliff.xbrl import parse_inline
 from tests.support import write_filing
 
 URL = "https://www.sec.gov/Archives/edgar/data/1/000000000126000001/inline.htm"
@@ -104,7 +104,7 @@ def test_an_undefined_unit_ref_is_refused() -> None:
   <us-gaap:Revenues contextRef="c" unitRef="usd" decimals="0">5</us-gaap:Revenues>
 </xbrl>
 """
-    parsed = parse_instance(instance, "instance.xml", URL, "abc")
+    parsed = parse_inline(instance, "instance.xml", URL, "abc")
     assert [fact for fact in parsed.facts if fact.role == "revenue"] == []
 
 
@@ -122,7 +122,6 @@ def test_inline_document_with_an_early_xbrli_tag_keeps_the_comma_fact(tmp_path: 
     text = _inline("5,000", "ixt:num-dot-decimal", pad=True)
     assert "<xbrli:" in text[:800]
     assert "nonfraction" not in text[:800].lower()
-    assert is_instance_document(text) is False
     directory = write_filing(tmp_path / "inline", "inline.htm", text, URL, form="10-Q")
     explained = explain_filing(load_directory(directory))
     assert "5000 USD millions" in explained.markdown

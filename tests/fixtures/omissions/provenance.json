@@ -1,11 +1,11 @@
 {
   "filer": "Example Co",
-  "form": "8-K",
+  "form": "10-K",
   "files": [
     {
       "name": "filing.html",
       "url": "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/omission.htm",
-      "sha256": "c74cc28105ef2038f7ae72dc97e3bab64a56bd74cd01765fba9c15dabdf863a6",
+      "sha256": "1c7d42b81c84514e42b2700641fdb18b0aa467f5ea761d0dc1558aab134ce8d4",
       "retrieved_at": "2026-11-17T17:40:00Z"
     }
   ]

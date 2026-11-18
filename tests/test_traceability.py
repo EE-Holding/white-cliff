@@ -100,7 +100,6 @@ def test_golden_numbers_resolve_and_match_the_filing():
         expected = json.loads((directory / "expected.json").read_text(encoding="utf-8"))
         filing = load_directory(directory)
         raw_name = provenance["files"][0]["name"]
-        raw = (directory / raw_name).read_text(encoding="utf-8")
         recorded = (directory / raw_name).read_bytes()
         assert __import__("hashlib").sha256(recorded).hexdigest() == provenance["files"][0]["sha256"]
         for item in expected["facts"]:
@@ -125,6 +124,7 @@ def test_golden_numbers_resolve_and_match_the_filing():
                 ]
             assert found, item
             fact = found[0]
+            raw = (directory / fact.source.document).read_text(encoding="utf-8")
             slice_text = raw[fact.source.char_start : fact.source.char_end]
             assert _digits(format(fact.value, "f")) == _digits(slice_text)
         explained = explain_filing(filing)

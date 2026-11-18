@@ -156,7 +156,9 @@ def test_local_file_without_provenance_invents_no_sec_url(tmp_path, capsys):
     explained = explain_filing(filing)
     rendered = explained.markdown + explained.html
     assert "https://www.sec.gov/" not in rendered
+    assert "file://" not in rendered
     assert "This filing has no tagged figures that White Cliff can explain." in rendered
+    assert "This filing was not retrieved from EDGAR." in rendered
 
 
 def test_output_without_the_disclaimer_is_refused():
