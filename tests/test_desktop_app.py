@@ -216,7 +216,7 @@ def test_plain_failures(monkeypatch, tmp_path):
     denial = app.handle("POST", "/explain", {"query": "AAPL"})
     assert "did not accept the name and email" in denial.body
     assert NO_INTERNET not in denial.body
-    assert "busy" not in denial.body.casefold()
+    assert BUSY not in denial.body
 
     app.transport = transport
     missing = app.handle("POST", "/explain", {"query": "zzzznomatchqq"})
@@ -1375,8 +1375,10 @@ def test_step_labels_name_an_earlier_quarter_only_when_it_is_fetched(monkeypatch
         "Reading the filing and the earlier quarter",
     ]
     progress = app.handle("GET", "/progress", {})
-    assert progress.body == "Reading the filing and the earlier quarter"
-    assert progress.content_type.startswith("text/plain")
+    reported = json.loads(progress.body)
+    assert reported["step"] == 3
+    assert reported["reading"] == "Reading the filing and the earlier quarter"
+    assert progress.content_type.startswith("application/json")
     assert any(url.endswith("nvda-20260426.htm") for url, _user_agent in nvidia.calls)
 
     annual = _app(monkeypatch, tmp_path, _Transport())

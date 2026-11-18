@@ -314,7 +314,7 @@ def _filing_href(url: str) -> str:
     return ""
 
 
-def _parts_html(template_id: str, parts: list[tuple]) -> str:
+def _parts_html(template_id: str, parts: list[tuple], class_name: str = "") -> str:
     if template_id not in TEMPLATES:
         raise ValueError(template_id)
     body: list[str] = []
@@ -328,7 +328,8 @@ def _parts_html(template_id: str, parts: list[tuple]) -> str:
         body.append(
             f'<a href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
         )
-    return f'<p data-template="{template_id}">{"".join(body)}</p>\n'
+    class_attr = f' class="{class_name}"' if class_name else ""
+    return f'<p{class_attr} data-template="{template_id}">{"".join(body)}</p>\n'
 
 
 def _plain(parts: list[tuple]) -> str:
@@ -494,61 +495,43 @@ def _comparison_block(role: str, fact: Fact, last: Cell | None, year: Cell | Non
         kind=fact.period.kind,
         fact=fact,
     )
-    chunks = []
     if last is None and year is None:
         return ""
-    present = []
-    if last is not None and last.available:
-        present.append(last)
-    if year is not None and year.available:
-        present.append(year)
-    if len(present) == 2 and last is not None and year is not None and last.fact and year.fact:
-        chunks.append(_parts_html("C1", [
-            ("text", f"{label} was "),
-            _link_fact(fact),
-            ("text", " in "),
-            _period_link(period_phrase(current.kind, current.period_start, current.period_end), fact),
-            ("text", ". It was "),
-            _link_fact(last.fact),
-            ("text", " in "),
-            _period_link(period_phrase(last.kind, last.period_start, last.period_end), last.fact),
-            ("text", " and "),
-            _link_fact(year.fact),
-            ("text", " in "),
-            _period_link(period_phrase(year.kind, year.period_start, year.period_end), year.fact),
-            ("text", "."),
-        ]))
-    elif len(present) == 1:
-        only = present[0]
-        assert only.fact is not None
-        chunks.append(_parts_html("C1", [
-            ("text", f"{label} was "),
-            _link_fact(fact),
-            ("text", " in "),
-            _period_link(period_phrase(current.kind, current.period_start, current.period_end), fact),
-            ("text", ". It was "),
-            _link_fact(only.fact),
-            ("text", " in "),
-            _period_link(period_phrase(only.kind, only.period_start, only.period_end), only.fact),
-            ("text", "."),
-        ]))
+    chunks: list[str] = []
     _append_changes(chunks, label, current, last, year, measure, form_words, filed)
-    heads = _column_heads(current, last, year)
-    return heads + "".join(chunks)
+    current_caption = column_header(current.kind, current.period_start, current.period_end)
+    named = ""
+    if current_caption.startswith(("Six months ended", "Nine months ended")):
+        named = f'<p class="caption">{html.escape(current_caption)}</p>\n'
+    return named + _prior_grid(label, last, year) + "".join(chunks)
 
 
-def _column_heads(current: Cell, last: Cell | None, year: Cell | None) -> str:
-    labels: list[str] = []
-    for cell in (current, last, year):
-        if cell is None or not cell.available or not cell.period_end:
-            continue
-        label = column_header(cell.kind, cell.period_start, cell.period_end)
-        if label and label not in labels:
-            labels.append(label)
-    if not labels:
+def _prior_grid(label: str, last: Cell | None, year: Cell | None) -> str:
+    cells = _prior_cell(label, last) + _prior_cell(label, year)
+    if not cells:
         return ""
-    spans = "".join(f'<span class="column-head">{html.escape(label)}</span>' for label in labels)
-    return f'<p class="column-heads">{spans}</p>\n'
+    return f'<div class="earlier">{cells}</div>\n'
+
+
+def _prior_cell(label: str, cell: Cell | None) -> str:
+    if cell is None:
+        return ""
+    if not cell.available or cell.fact is None:
+        if cell.basis == "structural":
+            text = f"{label} for the prior quarter is not available for this filing."
+            return f'<div class="prior"><p data-template="M6">{html.escape(text)}</p></div>'
+        period = cell.missing_period or "the prior period"
+        text = f"{label} for {period} is not in the filings White Cliff read, so no change is shown."
+        return f'<div class="prior"><p data-template="M2">{html.escape(text)}</p></div>'
+    caption = column_header(cell.kind, cell.period_start, cell.period_end)
+    value = html.escape(show_measure(cell.fact.value, cell.fact.unit))
+    href = fact_href(cell.fact)
+    if href.startswith("https://www.sec.gov/"):
+        shown = f'<a class="prior-value" href="{html.escape(href, quote=True)}">{value}</a>'
+    else:
+        shown = f'<span class="prior-value">{value}</span>'
+    cap = f'<p class="caption">{html.escape(caption)}</p>' if caption else ""
+    return f'<div class="prior">{cap}{shown}</div>'
 
 
 def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None:
@@ -561,7 +544,7 @@ def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None
             template_id = "C4"
         elif text.startswith("The periods") or text.startswith("The figures are in different"):
             template_id = "C6"
-        chunks.append(_parts_html(template_id, line))
+        chunks.append(_parts_html(template_id, line, "change-line"))
 
 
 def _percent_clause(current: Cell, prior: Cell, measure: str) -> tuple[str, list[tuple]] | None:
@@ -609,16 +592,10 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
         if column is None:
             continue
         if not column.available:
-            if column.basis == "structural":
-                chunks.append(_parts_html("M6", [
-                    ("text", f"{label} for the prior quarter is not available for this filing."),
-                ]))
-                continue
-            chunks.append(_parts_html("M2", _m2(label, column.missing_period or "the prior period")))
             if column.basis == "length":
-                chunks.append(_parts_html("C6", [("text", "The periods are different lengths.")]))
+                chunks.append(_parts_html("C6", [("text", "The periods are different lengths.")], "change-line"))
             if column.basis == "currency":
-                chunks.append(_parts_html("C6", [("text", "The figures are in different currencies, so no change is shown.")]))
+                chunks.append(_parts_html("C6", [("text", "The figures are in different currencies, so no change is shown.")], "change-line"))
             continue
         clause = _percent_clause(current, column, measure)
         if clause is not None:
@@ -635,13 +612,13 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
                 ("text", "; the earlier filing showed "),
                 _link_fact(column.revised_from),
                 ("text", "."),
-            ]))
+            ], "change-line"))
     if len(held) == 2 and all(kind == "unchanged" for _column, kind, _parts in held):
         for column, _kind, _parts in held:
             _emit_lines(chunks, label, _change_parts(label, current, column, measure))
         return
     if held:
-        chunks.append(_parts_html("C2", _it_line([parts for _column, _kind, parts in held])))
+        chunks.append(_parts_html("C2", _it_line([parts for _column, _kind, parts in held]), "change-line"))
 
 
 def _explain_block(role: str, fact: Fact, company: str, statement: str, formula: str, inputs: list[tuple[str, Fact]]) -> str:

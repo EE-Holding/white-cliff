@@ -149,6 +149,8 @@ class Desktop:
         self.token = secrets.token_urlsafe(32)
         self.limiter = RateLimiter(sleep=sleep, clock=clock)
         self.step = ""
+        self.step_n = 0
+        self.reading = READING
         self.steps: list[str] = []
 
     @classmethod
@@ -161,7 +163,8 @@ class Desktop:
         if path == "/stay":
             return Page(204, "")
         if method == "GET" and path == "/progress":
-            return Page(200, self.step, content_type="text/plain; charset=utf-8")
+            payload = json.dumps({"step": self.step_n, "reading": self.reading})
+            return Page(200, payload, content_type="application/json; charset=utf-8")
         if method == "POST" and path == "/identity":
             return self._save(form)
         if method == "POST" and path == "/identity/erase":
@@ -225,17 +228,24 @@ class Desktop:
             self.steps.append(label)
         self.step = label
 
+    def _mark(self, number: int, reading: str | None = None) -> None:
+        self.step_n = number
+        if reading:
+            self.reading = reading
+        label = {1: FINDING, 2: FILING_LIST, 3: self.reading}[number]
+        self._step(label)
+
     def _lookup(self, query: str, cik: str | None) -> Page:
         client = self._client()
         if client is None:
             return Page(200, first_run_page(token=self.token))
         self.steps = []
+        self.step_n = 0
+        self.reading = READING
         try:
             if cik:
-                self._step(FILING_LIST)
                 filing, explained, company, ticker, loaded, prior = self._explain_cik(client, cik)
             else:
-                self._step(FINDING)
                 found = self._search(client, query)
                 if isinstance(found, SeveralMatches):
                     return Page(
@@ -251,7 +261,6 @@ class Desktop:
                     return self._fail(NO_MATCH, query)
                 if not isinstance(found, OneMatch):
                     return self._fail(NO_MATCH, query)
-                self._step(FILING_LIST)
                 filing, explained, company, ticker, loaded, prior = self._explain_cik(
                     client, found.company.cik, found.company.title
                 )
@@ -301,11 +310,13 @@ class Desktop:
     def _search(self, client: SecClient, query: str):
         if not query.strip():
             raise EmptyQuery()
+        self._mark(1)
         payload = client.get(TICKERS_URL)
         companies = parse_tickers(payload)
         return resolve_company(query, companies)
 
     def _explain_cik(self, client: SecClient, cik: str, company: str = ""):
+        self._mark(2)
         payload = client.get(submissions_url(cik))
         data = json.loads(payload)
         extras = []
@@ -315,13 +326,13 @@ class Desktop:
         filing = select_latest(data, cik, extras)
         if filing is None:
             raise NoPeriodic()
-        self._step(READING)
+        self._mark(3, READING)
         body = client.get(filing.url)
         directory = write_cache(self.cache, filing, body)
         loaded = load_directory(directory)
         explained = explain_filing(loaded)
         if self._fetches_earlier(data, extras, loaded):
-            self._step(READING_PRIOR)
+            self._mark(3, READING_PRIOR)
         prior = self._prior_quarter(client, data, extras, loaded)
         listed = company or str(data.get("name") or "")
         raw_tickers = data.get("tickers") or []
