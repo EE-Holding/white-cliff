@@ -41,11 +41,36 @@ _REASON = (
 )
 
 
-_NAME_EXTRA = set(" ., &'()-/\u2019\u2018")
-_UNIT_WORD = re.compile(
-    r"%|\b(?:usd|eur|euros?|gbp|pounds?|yen|dollars?|millions?|thousands?|billions?|shares|percent)\b",
-    re.IGNORECASE,
+_NAME_EXTRA = set(" ., &'()-/\u2019\u2018$€£¥¢%")
+_CURRENCY_CODE = frozenset(
+    """
+    aed afn all amd ang aoa ars aud awg azn bam bbd bdt bgn bhd bif bmd bnd bob brl bsd
+    btn bwp byn bzd cad cdf chf clp cny cop crc cup cve czk djf dkk dop dzd egp ern etb
+    eur fjd fkp gbp gel ghs gip gmd gnf gtq gyd hkd hnl htg huf idr ils inr iqd irr isk
+    jmd jod jpy kes kgs khr kmf kpw krw kwd kyd kzt lak lbp lkr lrd lsl lyd mad mdl mga
+    mkd mmk mnt mop mru mur mvr mwk mxn myr mzn nad ngn nio nok npr nzd omr pab pen pgk
+    php pkr pln pyg qar ron rsd rub rwf sar sbd scr sdg sek sgd shp sle sos srd stn syp
+    szl thb tjs tmt tnd top try ttd twd tzs uah ugx usd uyu uzs ves vnd vuv wst xaf xcd
+    xof xpf yer zar zmw zwl
+    """.split()
 )
+_SCALE_TOKEN = frozenset(
+    {
+        "thousand",
+        "thousands",
+        "million",
+        "millions",
+        "billion",
+        "billions",
+        "trillion",
+        "trillions",
+        "bn",
+        "mln",
+        "mn",
+        "mm",
+    }
+)
+_UNIT_TOKEN = frozenset({"share", "shares", "cent", "cents", "pct", "percent"})
 _RECORD = re.compile(r"https://data\.sec\.gov/submissions/CIK[0-9]{10}\.json\Z")
 
 
@@ -122,10 +147,55 @@ def acceptable_name(name: str) -> str | None:
         if char.isalpha() or char.isdigit() or char in _NAME_EXTRA:
             continue
         return None
-    for run in re.split(r"[,;]", name):
-        if re.search(r"\d", run) and _UNIT_WORD.search(run):
-            return None
+    if _money_digit(name):
+        return None
     return name
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Words of a name. Punctuation separates tokens and is not itself a token."""
+    tokens = []
+    for chunk in re.split(r"[\s,;]+", name):
+        token = chunk.strip("\"'`“”‘’()[]{}<>.:!?/\\")
+        if token:
+            tokens.append(token)
+    return tokens
+
+
+def _token_words(token: str) -> list[str]:
+    return re.findall(r"[A-Za-z]+|%", token)
+
+
+def _currency_token(token: str) -> bool:
+    if any(symbol in token for symbol in "$€£¥¢"):
+        return True
+    return any(word.lower() in _CURRENCY_CODE for word in _token_words(token))
+
+
+def _scale_or_unit_token(token: str) -> bool:
+    if "%" in token:
+        return True
+    return any(
+        word.lower() in _SCALE_TOKEN or word.lower() in _UNIT_TOKEN for word in _token_words(token)
+    )
+
+
+def _single_scale_suffix(token: str) -> bool:
+    return re.search(r"(?i)\d[kmb](?![a-z])", token) is not None
+
+
+def _money_digit(name: str) -> bool:
+    """A digit fused with, or within three tokens of, a currency, scale, or unit."""
+    tokens = _name_tokens(name)
+    for index, token in enumerate(tokens):
+        if not any(char.isdigit() for char in token):
+            continue
+        window = tokens[max(0, index - 3) : index + 4]
+        if any(_currency_token(item) or _scale_or_unit_token(item) for item in window):
+            return True
+        if _single_scale_suffix(token) and any(_currency_token(item) for item in window):
+            return True
+    return False
 
 
 def filer_record(cik: str) -> str | None:
@@ -199,7 +269,8 @@ def _prefer(facts: list[Fact]) -> Fact | None:
     for group in groups.values():
         if _group_agrees(group):
             kept.extend(group)
-    if not kept:
+    visible = [fact for fact in kept if not fact.concealed]
+    if not visible:
         return None
 
     def rank(fact: Fact) -> int:
@@ -207,8 +278,8 @@ def _prefer(facts: list[Fact]) -> Fact | None:
             return 10**9
         return fact.decimals
 
-    best = max(rank(fact) for fact in kept)
-    top = [fact for fact in kept if rank(fact) == best]
+    best = max(rank(fact) for fact in visible)
+    top = [fact for fact in visible if rank(fact) == best]
     if len({_absolute(fact) for fact in top}) != 1:
         return None
     return top[0]

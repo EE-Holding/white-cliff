@@ -8,6 +8,7 @@
       "name": "aapl-20260926.htm",
       "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000026/aapl-20260926.htm",
       "sha256": "a57a9acaf658191789ccc31102d9e86d97dab038ae65b7efcd5a8fb1c5feafdc",
+      "content_sha256": "bc6e71908b83b5260b23271176e4b8b709094670cb0f3bd8a9a44a9c91df8cbb",
       "retrieved_at": "2026-11-18T04:23:53Z",
       "document_type": "10-K"
     },
@@ -15,6 +16,7 @@
       "name": "a10-kexhibit23109262026.htm",
       "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000026/a10-kexhibit23109262026.htm",
       "sha256": "29c2f81b6ff212e0bf1b152c9b50ea51bc782c675294ccd8023bc8dd61677b2a",
+      "content_sha256": "9ac7983e7c6fc4cd295575fe4bd2fadb1ed609607cb5ff7e02d85291168c1031",
       "retrieved_at": "2026-11-18T04:23:53Z",
       "document_type": "EX-23.1"
     }

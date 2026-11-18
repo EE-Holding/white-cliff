@@ -155,17 +155,19 @@ def test_two_fiscal_years_with_the_same_end_are_refused(tmp_path: Path) -> None:
     assert "5000 USD" not in rendered
 
 
-def test_microsoft_agent_filed_quarter_shows_under_the_directory_cik() -> None:
+def test_microsoft_uses_the_directory_cik_and_refuses_a_word_period_end() -> None:
     directory = PINNED / "0001193125-26-436133"
     provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))
     url = provenance["files"][0]["url"]
     assert "/Archives/edgar/data/789019/000119312526436133/" in url
     assert provenance["cik"] == "0000789019"
     assert provenance["accession"].split("-")[0] != provenance["cik"]
-    explained = explain_filing(load_directory(directory))
-    assert "92279 USD millions" in explained.markdown
-    assert SENTENCE not in explained.markdown
+    filing = load_directory(directory)
+    assert filing.period_end is None
+    explained = explain_filing(filing)
     rendered = explained.markdown + explained.html
+    assert "92279" not in rendered
+    assert SENTENCE not in explained.markdown
     assert "/Archives/edgar/data/789019/" in rendered
     assert "/Archives/edgar/data/1193125/" not in rendered
     assert "CIK0001193125" not in rendered
@@ -355,7 +357,7 @@ def test_a_nonfraction_inside_ix_hidden_is_refused(tmp_path: Path) -> None:
     explained = _explain(tmp_path, _page(body))
     rendered = explained.markdown + explained.html
     assert "9999" not in rendered
-    assert "5000 USD" in explained.markdown
+    assert "5000" not in rendered
 
 
 def test_dei_inside_ix_hidden_still_identifies_the_filing(tmp_path: Path) -> None:

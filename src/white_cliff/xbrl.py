@@ -91,6 +91,25 @@ _DEI = frozenset(
     }
 )
 _DIRECT_TEXT = frozenset({"identifier", "startDate", "endDate", "instant"})
+_DISPLAY_NONE = re.compile(r"(?i)(?:^|;)\s*display\s*:\s*none\b")
+
+
+def _style_hides(attrs: dict[str, str]) -> bool:
+    for key, value in attrs.items():
+        local = key.rsplit(_NS_SEP, 1)[-1]
+        if local.lower() == "style" and value and _DISPLAY_NONE.search(value):
+            return True
+    return False
+
+
+def _concealed(frame: dict, ancestors: list[dict]) -> bool:
+    """A figure inside ix:hidden or a display:none block is not shown."""
+    for item in (*ancestors, frame):
+        if item["local"] == "hidden" and item["uri"] in _IX_NS:
+            return True
+        if _style_hides(item["attrs"]):
+            return True
+    return False
 
 
 MONEY_ROLES = frozenset(role for role in _ROLES.values() if role != "shares")
@@ -162,6 +181,7 @@ class _Hit:
     unit_ref: str = ""
     decimals: str = ""
     nil: bool = False
+    concealed: bool = False
 
 
 @dataclass
@@ -356,9 +376,7 @@ class _Scope:
             role = _ROLES.get(frame["concept"], "")
             if role:
                 self.seen_roles.add(role)
-            hidden = any(item["local"] == "hidden" and item["uri"] in _IX_NS for item in self._frames)
-            if hidden:
-                return
+            hit.concealed = _concealed(frame, self._frames)
             self.hits.append(hit)
         elif frame["local"] == "nonNumeric":
             self.dei.append(hit)
@@ -531,11 +549,7 @@ def _dei_value(hit: _Hit, contexts: dict[str, _Context]) -> str:
     if record is None or record.bad:
         return ""
     if hit.concept == "DocumentPeriodEndDate":
-        strict = _strict_date(hit.text.strip())
-        if strict:
-            return strict
-        # The cover date is often words. The context period is the date.
-        return record.end or ""
+        return _strict_date(hit.text.strip()) or ""
     return hit.text
 
 
@@ -696,4 +710,5 @@ def _fact_from_hit(
         scale=scale,
         context_id=hit.context_id,
         entity=_cik_text(context.cik),
+        concealed=hit.concealed,
     )

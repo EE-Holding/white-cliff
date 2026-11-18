@@ -55,6 +55,7 @@ class Fact:
     scale: int = 0
     context_id: str = ""
     entity: str = ""
+    concealed: bool = False
 
 
 @dataclass(frozen=True)

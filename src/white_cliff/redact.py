@@ -17,7 +17,7 @@ _ACCOUNT = re.compile(
     r"(?i)\b(?:bank\s+)?account(?:\s+(?:number|no\.?))?\s*[:#]?\s*\d[\d\s-]{5,}\d"
 )
 _ROUTING = re.compile(r"(?i)\b(?:routing|aba)(?:\s+number)?\s*[:#]?\s*\d{9}\b")
-_IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
+_IBAN = re.compile(r"(?i)\b[a-z]{2}\d{2}[a-z0-9]{11,30}\b")
 _STREET = (
     r"Street|St\.?|Avenue|Ave\.?|Road|Rd\.?|Boulevard|Blvd\.?|"
     r"Lane|Ln\.?|Drive|Dr\.?|Ct\.?|Place|Pl\.?|Terrace|Way|"
@@ -47,6 +47,13 @@ class Redaction:
     sha256: str
 
 
+def _iban_matches(text: str):
+    """IBANs in either case. A match needs enough digits to not be a filename."""
+    for match in _IBAN.finditer(text):
+        if sum(char.isdigit() for char in match.group(0)) >= 8:
+            yield match
+
+
 def find_redactions(text: str, document: str, url: str, sha256: str) -> list[Redaction]:
     spans: list[tuple[int, int, str]] = []
     for kind, pattern in (
@@ -60,7 +67,8 @@ def find_redactions(text: str, document: str, url: str, sha256: str) -> list[Red
         ("address", _ADDRESS),
     ):
         addresses = [(match.start(), match.end()) for match in _ENTITY_ADDRESS.finditer(text)]
-        for match in pattern.finditer(text):
+        matches = _iban_matches(text) if pattern is _IBAN else pattern.finditer(text)
+        for match in matches:
             if kind == "address" and any(
                 start <= match.start() and match.end() <= end for start, end in addresses
             ):
@@ -92,6 +100,8 @@ def find_redactions(text: str, document: str, url: str, sha256: str) -> list[Red
 
 
 def contains_personal(text: str) -> bool:
+    if next(_iban_matches(text), None) is not None:
+        return True
     return any(
         pattern.search(text)
         for pattern in (
@@ -101,7 +111,6 @@ def contains_personal(text: str) -> bool:
             _SSN_PLAIN,
             _ACCOUNT,
             _ROUTING,
-            _IBAN,
             _ADDRESS,
         )
     )

@@ -27,17 +27,44 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _MAX_WAIT = 30.0
 _PRIMARY_FORM = frozenset({"10-K", "10-Q"})
-_DIRECTORY = re.compile(r"/Archives/edgar/data/([0-9]{1,10})/([0-9]{18})/")
+_DIRECTORY = re.compile(r"^/Archives/edgar/data/([0-9]{1,10})/([0-9]{18})(?:/|$)")
+_IX_DOC = re.compile(
+    r"^/ix\?doc=/Archives/edgar/data/([0-9]{1,10})/([0-9]{18})/([A-Za-z0-9._-]+\.htm)$"
+)
+_EDGAR_SCRIPT = re.compile(
+    rb"""<script\s+type="text/javascript"\s+src="[^"]*"></script>""",
+    re.IGNORECASE,
+)
 
 
 def directory_cik(url: str) -> str | None:
-    """The filer CIK in /Archives/edgar/data/<CIK>/<accession>/, never the accession prefix."""
+    """The filer CIK in the URL path /Archives/edgar/data/<CIK>/<accession>/, never the query string."""
     if not url.startswith("https://www.sec.gov/"):
         return None
-    match = _DIRECTORY.search(url)
+    match = _DIRECTORY.match(urllib.parse.urlsplit(url).path)
     if match is None:
         return None
     return match.group(1).zfill(10)
+
+
+def strip_edgar_script(data: bytes) -> bytes:
+    """Remove EDGAR's trailing injected script, immediately before </body>.
+
+    The tag is ``<script type="text/javascript" src="..."></script>``. The src
+    path changes on every download, so the raw sha256 does not. The bytes with
+    that one tag removed are the comparable filing. A script that is not
+    trailing is left in place.
+    """
+    body_at = data.lower().rfind(b"</body>")
+    if body_at < 0:
+        return data
+    head = data[:body_at]
+    found = None
+    for found in _EDGAR_SCRIPT.finditer(head):
+        pass
+    if found is None or head[found.end() :].strip():
+        return data
+    return head[: found.start()] + data[body_at:]
 
 
 class DisallowedHost(Exception):
@@ -178,7 +205,7 @@ class EdgarClient:
         if confirmed is None or int(confirmed) != int(cik):
             raise FetchError("filer cik")
         index_body = self.get(f"{base}/{accession}-index.html")
-        chosen = _primary_documents(index_body.decode("utf-8"))
+        chosen = _primary_documents(index_body.decode("utf-8"), cik=cik, accession=accession)
         if not chosen:
             raise FetchError("no primary document")
         form = chosen[0][1]
@@ -251,9 +278,16 @@ class _IndexTable(HTMLParser):
             self._cell.append(data)
 
 
-def _document_name(href: str) -> str:
+def _document_name(href: str, *, cik: str, accession: str) -> str:
     if not href or ".." in href or "\\" in href:
         raise FetchError("unsafe file name")
+    ix = _IX_DOC.fullmatch(href)
+    if ix:
+        same_filer = int(ix.group(1)) == int(cik)
+        same_accession = ix.group(2) == accession.replace("-", "")
+        if not same_filer or not same_accession:
+            raise FetchError("unsafe file name")
+        return _safe_file_name(ix.group(3))
     if href.startswith("/") and not href.startswith("/Archives/edgar/data/"):
         raise FetchError("unsafe file name")
     if not href.startswith("/") and "/" in href:
@@ -261,7 +295,7 @@ def _document_name(href: str) -> str:
     return _safe_file_name(href.rsplit("/", 1)[-1])
 
 
-def _primary_documents(html: str) -> list[tuple[str, str]]:
+def _primary_documents(html: str, *, cik: str, accession: str) -> list[tuple[str, str]]:
     parser = _IndexTable()
     parser.feed(html)
     chosen: list[tuple[str, str]] = []
@@ -269,5 +303,5 @@ def _primary_documents(html: str) -> list[tuple[str, str]]:
         kind = next((cell for cell in cells if cell in _PRIMARY_FORM), "")
         if not kind or not href:
             continue
-        chosen.append((_document_name(href), kind))
+        chosen.append((_document_name(href, cik=cik, accession=accession), kind))
     return chosen

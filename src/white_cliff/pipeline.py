@@ -79,7 +79,8 @@ def _primary_item(files: list[dict], form: str) -> dict | None:
             continue
         usable.append(item)
     matched = [item for item in usable if item.get("document_type") == form]
-    if len(matched) > 1:
+    untyped = [item for item in usable if not str(item.get("document_type") or "")]
+    if len(matched) > 1 or (matched and untyped):
         return None
     if matched:
         return matched[0]
