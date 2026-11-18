@@ -390,6 +390,26 @@ def _reduced_steps(page: DevTools) -> bool:
     return raw is True
 
 
+def _hold(page: DevTools) -> None:
+    """Stop the page while the picture is taken, so the result cannot replace the steps."""
+    try:
+        page.call("Debugger.enable")
+        page.call("Debugger.pause")
+    except PageError:
+        pass
+
+
+def _release(page: DevTools) -> None:
+    try:
+        page.call("Debugger.resume")
+    except PageError:
+        pass
+    try:
+        page.call("Debugger.disable")
+    except PageError:
+        pass
+
+
 def _reduced_motion(page: DevTools) -> None:
     page.call(
         "Emulation.setEmulatedMedia",
@@ -526,10 +546,14 @@ def drive(
         while time.time() < reduced_deadline:
             try:
                 if _reduced_steps(page):
-                    _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png")
+                    _hold(page)
+                    try:
+                        _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png")
+                    finally:
+                        _release(page)
                     break
             except PageError:
-                pass
+                _release(page)
             time.sleep(0.02)
         else:
             raise PageError("the reduced-motion steps were not shown")
