@@ -182,6 +182,7 @@ class _Hit:
     decimals: str = ""
     nil: bool = False
     concealed: bool = False
+    transform: str = ""
 
 
 @dataclass
@@ -270,6 +271,7 @@ class _Scope:
                 "uri": uri,
                 "attrs": attrs,
                 "fmt": self._format_kind(_attr(attrs, "format")),
+                "transform": self._transform_local(_attr(attrs, "format")),
                 "chunks": [],
                 "byte_start": None,
                 "keep": keep,
@@ -371,6 +373,7 @@ class _Scope:
             unit_ref=_attr(attrs, "unitRef").strip(),
             decimals=_attr(attrs, "decimals").strip(),
             nil=_attr(attrs, "nil").strip().lower() in {"true", "1"},
+            transform=frame["transform"],
         )
         if frame["local"] == "nonFraction":
             role = _ROLES.get(frame["concept"], "")
@@ -432,6 +435,17 @@ class _Scope:
         if prefix not in self._ns[-1]:
             return None
         return self._ns[-1][prefix], local
+
+    def _transform_local(self, fmt: str) -> str:
+        token = fmt.strip()
+        if not token:
+            return ""
+        if ":" not in token:
+            return "unknown"
+        prefix, local = token.split(":", 1)
+        if not self._ns or self._ns[-1].get(prefix) not in _IXT_NS:
+            return "unknown"
+        return local
 
     def _format_kind(self, fmt: str) -> str | None:
         token = fmt.strip()
@@ -540,6 +554,54 @@ def _strict_date(value: str) -> str | None:
     return value
 
 
+_MONTHS = {
+    "January": 1,
+    "February": 2,
+    "March": 3,
+    "April": 4,
+    "May": 5,
+    "June": 6,
+    "July": 7,
+    "August": 8,
+    "September": 9,
+    "October": 10,
+    "November": 11,
+    "December": 12,
+}
+_WORD_DATE_FORMATS = frozenset({"date-monthname-day-year-en", "datemonthdayyearen"})
+_MONTHNAME_DATE = re.compile(
+    r"^(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)"
+    r"[ \u00a0]([1-9]|0[1-9]|[12][0-9]|3[01]),[ \u00a0]([0-9]{4})$"
+)
+_US_DATE = re.compile(r"^([1-9]|0[1-9]|1[0-2])/([1-9]|0[1-9]|[12][0-9]|3[01])/([0-9]{4})$")
+
+
+def _calendar_date(year: str, month: int, day: str) -> str | None:
+    try:
+        found = date(int(year), month, int(day))
+    except ValueError:
+        return None
+    return found.isoformat()
+
+
+def _cover_date(text: str, transform: str) -> str | None:
+    """The cover date from an allow-listed format. Anything else is empty."""
+    if transform == "":
+        return _strict_date(text)
+    if transform in _WORD_DATE_FORMATS:
+        match = _MONTHNAME_DATE.fullmatch(text)
+        if match is None:
+            return None
+        return _calendar_date(match.group(3), _MONTHS[match.group(1)], match.group(2))
+    if transform == "date-month-day-year":
+        match = _US_DATE.fullmatch(text)
+        if match is None:
+            return None
+        return _calendar_date(match.group(3), int(match.group(1)), match.group(2))
+    return None
+
+
 def _iso_date(value: str) -> str | None:
     return _strict_date(value)
 
@@ -549,7 +611,7 @@ def _dei_value(hit: _Hit, contexts: dict[str, _Context]) -> str:
     if record is None or record.bad:
         return ""
     if hit.concept == "DocumentPeriodEndDate":
-        return _strict_date(hit.text.strip()) or ""
+        return _cover_date(hit.text.strip(), hit.transform) or ""
     return hit.text
 
 

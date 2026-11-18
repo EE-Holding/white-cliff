@@ -134,15 +134,8 @@ def test_golden_numbers_resolve_and_match_the_filing():
             assert explained.markdown.startswith(DISCLAIMER)
             assert audit_rendered(explained.markdown) is None
             continue
-        if filing.period_end:
-            _audit_markdown(explained.markdown, filing.store)
-            _audit_html(explained.html, filing.store)
-        else:
-            assert "<data" not in explained.html
-            for match in LINK.finditer(explained.markdown):
-                assert re.match(r"-?\d", match.group(1)) is None
-            assert audit_rendered(explained.markdown) is None
-            assert audit_rendered(explained.html) is None
+        _audit_markdown(explained.markdown, filing.store)
+        _audit_html(explained.html, filing.store)
         assert "https://github.com/EE-Holding/white-cliff/issues/new?template=filing_error.md" in explained.markdown
 
 
@@ -164,9 +157,6 @@ def test_every_shown_fact_has_a_hand_checked_expected_entry():
                 continue
             identifier = fragment.split("=", 1)[1].split("&", 1)[0]
             shown.append(filing.store.get(identifier))
-        if not filing.period_end:
-            assert not shown, entry["accession"]
-            continue
         assert shown, entry["accession"]
         for fact in shown:
             matched = False

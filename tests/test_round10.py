@@ -10,7 +10,7 @@ from white_cliff.fetch import FetchError, directory_cik
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.redact import contains_personal
 from tests.support import narrative_instance, write_filing
-from tests.test_round9 import SEC, SENTENCE, _explain, _page, _revenue
+from tests.test_round9 import SEC, SENTENCE, _explain, _page, _revenue, _year
 
 PINNED = Path(__file__).resolve().parents[1] / "pinned" / "filings"
 INDEX = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "edgar" / "0001193125-26-436133-index.html"
@@ -159,12 +159,122 @@ def test_a_cik_only_in_the_query_string_is_refused() -> None:
     assert directory_cik(path) == "0000789019"
 
 
-def test_a_period_end_written_in_words_is_refused(tmp_path: Path) -> None:
-    explained = _explain(tmp_path, _page(_revenue("5000"), period_end="September 30, 2026"))
+def test_a_word_date_with_no_format_is_refused(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2026-01-01", end="2026-09-30")
+    explained = _explain(
+        tmp_path,
+        _page(_revenue("5000"), contexts=contexts, period_end="September 30, 2026"),
+    )
     rendered = explained.markdown + explained.html
     assert "5000" not in rendered
     assert "2026-09-30" not in rendered
-    assert SENTENCE in explained.markdown or "5000 USD" not in explained.markdown
+
+
+def test_the_real_apple_coca_cola_and_microsoft_cover_dates_parse_and_match() -> None:
+    cases = (
+        ("0000320193-26-000026", "2026-09-26", "478834 USD millions"),
+        ("0001628280-26-010047", "2025-12-31", "47941 USD millions"),
+        ("0001193125-26-436133", "2026-09-30", "92279 USD millions"),
+    )
+    for accession, period_end, figure in cases:
+        filing = load_directory(PINNED / accession)
+        assert filing.period_end == period_end
+        explained = explain_filing(filing)
+        assert figure in explained.markdown
+        assert SENTENCE not in explained.markdown
+
+
+def test_september_31_2026_is_refused(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2026-01-01", end="2026-09-30")
+    explained = _explain(
+        tmp_path,
+        _page(
+            _revenue("5000"),
+            contexts=contexts,
+            period_end="September 31, 2026",
+            period_format="ixt:date-monthname-day-year-en",
+        ),
+    )
+    rendered = explained.markdown + explained.html
+    assert "5000" not in rendered
+    assert "2026-09-30" not in rendered
+
+
+def test_sept_26_2026_under_monthname_day_year_is_refused(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2026-01-01", end="2026-09-26")
+    explained = _explain(
+        tmp_path,
+        _page(
+            _revenue("5000"),
+            contexts=contexts,
+            period_end="Sept. 26 2026",
+            period_format="ixt:date-monthname-day-year-en",
+        ),
+    )
+    rendered = explained.markdown + explained.html
+    assert "5000" not in rendered
+    assert "2026-09-26" not in rendered
+
+
+def test_a_word_date_one_day_off_the_context_end_is_refused(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2026-01-01", end="2026-09-30")
+    explained = _explain(
+        tmp_path,
+        _page(
+            _revenue("5000"),
+            contexts=contexts,
+            period_end="September 29, 2026",
+            period_format="ixt:date-monthname-day-year-en",
+        ),
+    )
+    rendered = explained.markdown + explained.html
+    assert "5000" not in rendered
+    assert "2026-09-30" not in rendered
+    assert "2026-09-29" not in rendered
+
+
+def test_datemonthdayyearen_parses_the_month_name_form(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2024-01-01", end="2024-12-31")
+    explained = _explain(
+        tmp_path,
+        _page(
+            _revenue("5000"),
+            contexts=contexts,
+            period_end="December 31, 2024",
+            period_format="ixt:datemonthdayyearen",
+        ),
+    )
+    assert "5000 USD" in explained.markdown
+
+
+def test_a_numeric_us_date_parses_when_it_matches_the_context(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2024-01-01", end="2024-12-31")
+    explained = _explain(
+        tmp_path,
+        _page(
+            _revenue("5000"),
+            contexts=contexts,
+            period_end="12/31/2024",
+            period_format="ixt:date-month-day-year",
+        ),
+    )
+    assert "5000 USD" in explained.markdown
+
+
+def test_an_unknown_date_format_is_refused(tmp_path: Path) -> None:
+    contexts = _year("c-year", "2026-01-01", end="2026-09-26")
+    explained = _explain(
+        tmp_path,
+        _page(
+            _revenue("5000"),
+            contexts=contexts,
+            period_end="September 26, 2026",
+            period_format="ixt:date-day-month-year",
+        ),
+    )
+    rendered = explained.markdown + explained.html
+    assert "5000" not in rendered
+    assert "2026-09-26" not in rendered
 
 
 @pytest.mark.parametrize("name", FILER)

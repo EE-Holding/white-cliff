@@ -29,6 +29,7 @@ def _page(
     form: str = "10-K",
     focus: str = "FY",
     period_end: str = "2024-12-31",
+    period_format: str = "",
 ) -> str:
     unit_xml = units or '<xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>'
     context_xml = contexts or """
@@ -37,6 +38,7 @@ def _page(
   <xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period>
 </xbrli:context>
 """
+    format_attr = f' format="{period_format}"' if period_format else ""
     name_xml = ""
     if name is not None:
         name_xml = (
@@ -60,7 +62,7 @@ def _page(
 <ix:nonNumeric name="dei:DocumentType" contextRef="c-year">{form}</ix:nonNumeric>
 {name_xml}
 <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="c-year">{focus}</ix:nonNumeric>
-<ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-year">{period_end}</ix:nonNumeric>
+<ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-year"{format_attr}>{period_end}</ix:nonNumeric>
 {dei_xml}
 {body}
 </body>
@@ -155,19 +157,17 @@ def test_two_fiscal_years_with_the_same_end_are_refused(tmp_path: Path) -> None:
     assert "5000 USD" not in rendered
 
 
-def test_microsoft_uses_the_directory_cik_and_refuses_a_word_period_end() -> None:
+def test_microsoft_agent_filed_quarter_shows_under_the_directory_cik() -> None:
     directory = PINNED / "0001193125-26-436133"
     provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))
     url = provenance["files"][0]["url"]
     assert "/Archives/edgar/data/789019/000119312526436133/" in url
     assert provenance["cik"] == "0000789019"
     assert provenance["accession"].split("-")[0] != provenance["cik"]
-    filing = load_directory(directory)
-    assert filing.period_end is None
-    explained = explain_filing(filing)
-    rendered = explained.markdown + explained.html
-    assert "92279" not in rendered
+    explained = explain_filing(load_directory(directory))
+    assert "92279 USD millions" in explained.markdown
     assert SENTENCE not in explained.markdown
+    rendered = explained.markdown + explained.html
     assert "/Archives/edgar/data/789019/" in rendered
     assert "/Archives/edgar/data/1193125/" not in rendered
     assert "CIK0001193125" not in rendered
