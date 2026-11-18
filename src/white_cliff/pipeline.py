@@ -16,7 +16,7 @@ from white_cliff.prices import is_price_text
 from white_cliff.redact import Redaction, contains_personal, find_redactions
 from white_cliff.render import copy_text, render_html, render_markdown, render_refusal
 from white_cliff.fetch import directory_cik, strip_edgar_script
-from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, parse_inline
+from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, email_shifts, parse_inline
 
 
 @dataclass
@@ -53,13 +53,26 @@ class Explained:
 _PRIMARY_FORMS = frozenset({"10-K", "10-Q"})
 
 
-def _parse_text(text: str, document: str, url: str, sha256: str, filer_cik: str) -> ParsedFacts:
-    return parse_inline(text, document, url, sha256, filer_cik=filer_cik)
+def _parse_text(
+    text: str,
+    document: str,
+    url: str,
+    sha256: str,
+    filer_cik: str,
+    shifts: tuple[tuple[int, int, int], ...] = (),
+) -> ParsedFacts:
+    return parse_inline(text, document, url, sha256, filer_cik=filer_cik, shifts=shifts)
 
 
 def _verified(path: Path, item: dict) -> bytes:
     blob = (path / item["name"]).read_bytes()
     digest = hashlib.sha256(blob).hexdigest()
+    if item.get("tracked_sha256"):
+        if digest != item["tracked_sha256"]:
+            raise ValueError(f"tracked hash mismatch for {item['name']}")
+        if "sha256" not in item or "content_sha256" not in item:
+            raise ValueError(f"original hash missing for {item['name']}")
+        return blob
     if digest != item["sha256"]:
         raise ValueError(f"sha256 mismatch for {item['name']}")
     content = hashlib.sha256(strip_edgar_script(blob)).hexdigest()
@@ -141,7 +154,8 @@ def load_directory(path: Path) -> Filing:
     digest = hashlib.sha256(blob).hexdigest()
     text = blob.decode("utf-8")
     agreed = _agreed_cik(str(chosen["url"]), provenance)
-    parsed = _parse_text(text, chosen["name"], chosen["url"], digest, agreed)
+    shifts = email_shifts(text, list(chosen.get("redactions") or []))
+    parsed = _parse_text(text, chosen["name"], chosen["url"], digest, agreed, shifts)
     if not agreed or parsed.form != form:
         parsed = ParsedFacts(
             facts=[],

@@ -73,6 +73,26 @@ def strip_edgar_script(data: bytes) -> bytes:
     return head[: found.start()] + data[body_at:]
 
 
+_EMAIL_ADDRESS = re.compile(rb"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+EMAIL_REPLACEMENT = "[email removed]"
+
+
+def redact_emails(data: bytes) -> tuple[bytes, dict]:
+    """Replace every email address. The record stores the count, not the address."""
+    lengths: list[int] = []
+
+    def replace(match: re.Match[bytes]) -> bytes:
+        lengths.append(len(match.group(0)))
+        return EMAIL_REPLACEMENT.encode("ascii")
+
+    redacted = _EMAIL_ADDRESS.sub(replace, data)
+    return redacted, {
+        "count": len(lengths),
+        "replacement": EMAIL_REPLACEMENT,
+        "lengths": lengths,
+    }
+
+
 class DisallowedHost(Exception):
     """Raised when a URL is not an EDGAR host."""
 

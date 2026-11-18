@@ -8,8 +8,18 @@
       "url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000084/goog-20260930.htm",
       "sha256": "05e101ee90c126065e67822feabb1b40a91fa17cfab83bc1ac0721ff553b9fea",
       "content_sha256": "c09ed73af796390949a49e672042d37d0d57d1058b899bbba5176b8fe85c9952",
+      "tracked_sha256": "8d93630b6baa8c0ab14a1da1d761b4929adc3e21e73ca6961347a46ba472ebaf",
       "retrieved_at": "2026-11-18T06:52:42Z",
-      "document_type": "10-Q"
+      "document_type": "10-Q",
+      "redactions": [
+        {
+          "count": 1,
+          "replacement": "[email removed]",
+          "lengths": [
+            26
+          ]
+        }
+      ]
     }
   ],
   "filer": "Alphabet Inc."

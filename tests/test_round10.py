@@ -139,8 +139,12 @@ def test_pinned_files_match_the_raw_hash_and_the_hash_without_the_trailing_scrip
         provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))
         for item in provenance["files"]:
             raw = (directory / item["name"]).read_bytes()
-            assert sha256(raw).hexdigest() == item["sha256"]
-            assert sha256(strip_edgar_script(raw)).hexdigest() == item["content_sha256"]
+            if item.get("tracked_sha256"):
+                assert sha256(raw).hexdigest() == item["tracked_sha256"]
+                assert sha256(raw).hexdigest() != item["sha256"]
+            else:
+                assert sha256(raw).hexdigest() == item["sha256"]
+                assert sha256(strip_edgar_script(raw)).hexdigest() == item["content_sha256"]
             assert strip_edgar_script(raw) != raw
             checked += 1
     assert checked == 10

@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from white_cliff.fetch import EdgarClient, directory_cik, strip_edgar_script
+from white_cliff.fetch import EdgarClient, directory_cik, redact_emails, strip_edgar_script
 from white_cliff.pipeline import explain_filing, load_directory
 from tests.test_round9 import SEC, SENTENCE, UA, _explain, _page, _revenue, _year
 
-PINNED = Path(__file__).resolve().parents[1] / "pinned" / "filings"
+ROOT = Path(__file__).resolve().parents[1]
+PINNED = ROOT / "pinned" / "filings"
 FILER = (
     "Price 150 dollars Inc",
     "Acme 500 Dollars Inc",
@@ -206,7 +207,10 @@ def test_pinned_files_recompute_to_the_recorded_content_hash() -> None:
         provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))
         for item in provenance["files"]:
             raw = (directory / item["name"]).read_bytes()
-            assert sha256(strip_edgar_script(raw)).hexdigest() == item["content_sha256"]
+            if item.get("tracked_sha256"):
+                assert sha256(raw).hexdigest() == item["tracked_sha256"]
+            else:
+                assert sha256(strip_edgar_script(raw)).hexdigest() == item["content_sha256"]
             checked += 1
     assert checked >= 9
 
@@ -291,3 +295,110 @@ def test_a_name_without_an_upper_case_code_stays_verbatim(tmp_path: Path, name: 
     assert name in explained.html
     assert 'title="Registrant name in the filing"' in explained.html
     assert 'title="Filer on EDGAR"' not in explained.html
+
+
+def _emailed_page() -> bytes:
+    page = _page("Write to officer@example.com. " + _revenue("5000"))
+    text = page.replace(
+        "</body>",
+        '<script type="text/javascript" src="/nWkbdo/x"></script></body>',
+    )
+    return text.encode("utf-8")
+
+
+def _redacted_directory(tmp_path: Path, original: bytes, redacted: bytes, record: dict) -> Path:
+    directory = tmp_path / "redacted"
+    directory.mkdir()
+    (directory / "primary.htm").write_bytes(redacted)
+    provenance = {
+        "cik": "0000000001",
+        "form": "10-K",
+        "files": [
+            {
+                "name": "primary.htm",
+                "url": SEC,
+                "sha256": sha256(original).hexdigest(),
+                "content_sha256": sha256(strip_edgar_script(original)).hexdigest(),
+                "tracked_sha256": sha256(redacted).hexdigest(),
+                "redactions": [record],
+                "document_type": "10-K",
+            }
+        ],
+    }
+    (directory / "provenance.json").write_text(json.dumps(provenance), encoding="utf-8")
+    return directory
+
+
+def test_a_saved_redaction_is_reread_by_the_tracked_hash(tmp_path: Path) -> None:
+    original = _emailed_page()
+    redacted, record = redact_emails(original)
+    original_dir = tmp_path / "original"
+    original_dir.mkdir()
+    (original_dir / "primary.htm").write_bytes(original)
+    (original_dir / "provenance.json").write_text(
+        json.dumps(
+            {
+                "cik": "0000000001",
+                "form": "10-K",
+                "files": [
+                    {
+                        "name": "primary.htm",
+                        "url": SEC,
+                        "sha256": sha256(original).hexdigest(),
+                        "content_sha256": sha256(strip_edgar_script(original)).hexdigest(),
+                        "document_type": "10-K",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    directory = _redacted_directory(tmp_path, original, redacted, record)
+    original_explained = explain_filing(load_directory(original_dir))
+    redacted_explained = explain_filing(load_directory(directory))
+    assert redacted_explained.markdown == original_explained.markdown
+    assert redacted_explained.html == original_explained.html
+    assert "5000" in redacted_explained.markdown
+    changed = bytearray(redacted)
+    changed[changed.index(b"5000")] ^= 1
+    (directory / "primary.htm").write_bytes(changed)
+    with pytest.raises(ValueError, match="tracked hash"):
+        load_directory(directory)
+
+
+def test_a_refetch_matches_the_content_hash_after_the_same_redaction(tmp_path: Path) -> None:
+    original = _emailed_page()
+    redacted, record = redact_emails(original)
+    directory = _redacted_directory(tmp_path, original, redacted, record)
+    item = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))["files"][0]
+    assert sha256(strip_edgar_script(original)).hexdigest() == item["content_sha256"]
+    assert sha256(original).hexdigest() == item["sha256"]
+    again, again_record = redact_emails(original)
+    assert again == redacted
+    assert sha256(again).hexdigest() == item["tracked_sha256"]
+    assert again_record == record
+    assert record["count"] == 1
+    assert record["replacement"] == "[email removed]"
+    assert "@" not in json.dumps(item["redactions"])
+
+
+def test_the_alphabet_explanation_matches_the_page_after_the_email_is_removed() -> None:
+    directory = PINNED / "0001652044-26-000084"
+    raw = (directory / "goog-20260930.htm").read_bytes()
+    item = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))["files"][0]
+    assert item["sha256"] == "05e101ee90c126065e67822feabb1b40a91fa17cfab83bc1ac0721ff553b9fea"
+    assert item["content_sha256"] == "c09ed73af796390949a49e672042d37d0d57d1058b899bbba5176b8fe85c9952"
+    assert sha256(raw).hexdigest() == item["tracked_sha256"]
+    assert item["tracked_sha256"] != item["sha256"]
+    record = item["redactions"][0]
+    assert record["count"] == 1
+    assert record["replacement"] == "[email removed]"
+    assert "@" not in json.dumps(record)
+    assert b"[email removed]" in raw
+    import re
+
+    email = re.compile(rb"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+    assert email.search(raw) is None
+    explained = explain_filing(load_directory(directory))
+    page = (ROOT / "docs" / "0001652044-26-000084.html").read_text(encoding="utf-8")
+    assert explained.html == page

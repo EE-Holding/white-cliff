@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 from white_cliff.disclaimer import DISCLAIMER
 from white_cliff.pipeline import explain_filing, load_directory
+from white_cliff.xbrl import email_shifts, stored_offset
 from white_cliff.review import audit_rendered, review_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,7 +102,12 @@ def test_golden_numbers_resolve_and_match_the_filing():
         filing = load_directory(directory)
         raw_name = provenance["files"][0]["name"]
         recorded = (directory / raw_name).read_bytes()
-        assert __import__("hashlib").sha256(recorded).hexdigest() == provenance["files"][0]["sha256"]
+        recorded_hash = __import__("hashlib").sha256(recorded).hexdigest()
+        file_item = provenance["files"][0]
+        if file_item.get("tracked_sha256"):
+            assert recorded_hash == file_item["tracked_sha256"]
+        else:
+            assert recorded_hash == file_item["sha256"]
         for item in expected["facts"]:
             if item.get("match") == "table":
                 found = [
@@ -125,7 +131,13 @@ def test_golden_numbers_resolve_and_match_the_filing():
             assert found, item
             fact = found[0]
             raw = (directory / fact.source.document).read_text(encoding="utf-8")
-            slice_text = raw[fact.source.char_start : fact.source.char_end]
+            file_item = next(
+                entry for entry in provenance["files"] if entry["name"] == fact.source.document
+            )
+            shifts = email_shifts(raw, list(file_item.get("redactions") or []))
+            start = stored_offset(fact.source.char_start, shifts)
+            end = stored_offset(fact.source.char_end, shifts)
+            slice_text = raw[start:end]
             assert _digits(format(fact.value, "f")) == _digits(slice_text)
         explained = explain_filing(filing)
         if not expected["facts"]:
@@ -187,7 +199,11 @@ def test_pinned_raw_files_match_provenance_hashes():
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         for item in provenance["files"]:
             raw = (provenance_path.parent / item["name"]).read_bytes()
-            assert hashlib.sha256(raw).hexdigest() == item["sha256"]
+            digest = hashlib.sha256(raw).hexdigest()
+            if item.get("tracked_sha256"):
+                assert digest == item["tracked_sha256"]
+            else:
+                assert digest == item["sha256"]
             checked += 1
     assert checked >= len(manifest["filings"])
 

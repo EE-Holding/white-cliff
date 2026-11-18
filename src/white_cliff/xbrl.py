@@ -241,6 +241,15 @@ class _Scope:
         self._parser: expat.XMLParserType | None = None
         self._raw = b""
         self.ok = True
+        self.shifts: tuple[tuple[int, int, int], ...] = ()
+
+    def to_origin(self, index: int) -> int:
+        """Map a stored offset back to the downloaded filing."""
+        extra = 0
+        for start, original_len, repl_len in self.shifts:
+            if index >= start + repl_len:
+                extra += original_len - repl_len
+        return index + extra
 
     def parse(self, text: str) -> bool:
         self._raw = text.encode("utf-8")
@@ -679,9 +688,45 @@ def _dei_ciks(scope: _Scope) -> list[int]:
     return found
 
 
-def parse_inline(text: str, document: str, url: str, sha256: str, filer_cik: str = "") -> ParsedFacts:
+def email_shifts(text: str, redactions: list) -> tuple[tuple[int, int, int], ...]:
+    """Tracked start, original length, and replacement length for each removed address."""
+    cursor = 0
+    found: list[tuple[int, int, int]] = []
+    for record in redactions:
+        replacement = str(record["replacement"])
+        lengths = [int(length) for length in record["lengths"]]
+        if len(lengths) != int(record["count"]):
+            raise ValueError("redaction count")
+        for length in lengths:
+            at = text.find(replacement, cursor)
+            if at < 0:
+                raise ValueError("redaction was not found")
+            found.append((at, length, len(replacement)))
+            cursor = at + len(replacement)
+    return tuple(found)
+
+
+def stored_offset(origin: int, shifts: tuple[tuple[int, int, int], ...]) -> int:
+    """Map a downloaded-filing offset onto the stored copy."""
+    removed = 0
+    for tracked_start, original_len, repl_len in shifts:
+        original_start = tracked_start + removed
+        if origin >= original_start + original_len:
+            removed += original_len - repl_len
+    return origin - removed
+
+
+def parse_inline(
+    text: str,
+    document: str,
+    url: str,
+    sha256: str,
+    filer_cik: str = "",
+    shifts: tuple[tuple[int, int, int], ...] = (),
+) -> ParsedFacts:
     """Read live ix:nonFraction elements. A parse error yields no facts."""
     scope = _Scope()
+    scope.shifts = shifts
     if not scope.parse(text):
         return ParsedFacts(facts=[])
     filer_number = _cik_number(filer_cik)
@@ -762,7 +807,7 @@ def _name_span(text: str, filer: str, hit: _Hit | None, scope: _Scope) -> tuple[
     found = registrant_span(filer, text[start:end])
     if found is None:
         return None
-    return start + found[0], start + found[1]
+    return scope.to_origin(start + found[0]), scope.to_origin(start + found[1])
 
 
 def _fact_from_hit(
@@ -806,6 +851,8 @@ def _fact_from_hit(
     if narrowed is None:
         return None
     start, end = narrowed
+    start = scope.to_origin(start)
+    end = scope.to_origin(end)
     fact_id = letter_id("fact", f"{document}|{hit.concept}|{hit.context_id}|{value}|{start}")
     return Fact(
         id=fact_id,
