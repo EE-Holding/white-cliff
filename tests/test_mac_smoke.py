@@ -50,6 +50,8 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert "smoke-{ARCH}-6-result-640.png" in driver
     assert "smoke-{ARCH}-7-result-420.png" in driver
     assert "prefers-reduced-motion" in driver
+    assert "Page.navigate" in driver
+    assert "_reduced_steps" in driver
     tracked = driver + "\n" + workflow
     offenders = [
         match.group(0)
@@ -117,3 +119,6 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     narrow = (tmp_path / f"smoke-{driver.ARCH}-7-result-420.png").read_bytes()
     assert struct.unpack(">I", wide[16:20])[0] == 640
     assert struct.unpack(">I", narrow[16:20])[0] == 420
+    result = (tmp_path / f"smoke-{driver.ARCH}-3-nvda.png").read_bytes()
+    reduced = (tmp_path / f"smoke-{driver.ARCH}-5-reduced.png").read_bytes()
+    assert reduced != result

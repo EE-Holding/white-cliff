@@ -208,7 +208,7 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
                     {
                         "format": "png",
                         "captureBeyondViewport": True,
-                        "clip": {"x": 0, "y": 0, "width": 1100, "height": 1600, "scale": 1},
+                        "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
                     },
                     timeout=8,
                 )
@@ -294,6 +294,23 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
         raise PageError(f"{selector} showed {value!r}")
 
 
+def _grab(page: DevTools, directory: Path, name: str) -> Path:
+    """Photograph the page on the connection already in use, before it can change."""
+    page.call("Page.enable")
+    result = page.call(
+        "Page.captureScreenshot",
+        {"format": "png", "optimizeForSpeed": True},
+        timeout=8,
+    )
+    data = base64.b64decode(result["data"])
+    if len(data) < 1000:
+        raise PageError(f"{name} was empty")
+    path = directory / name
+    path.write_bytes(data)
+    print(f"screenshot {path}", flush=True)
+    return path
+
+
 def _loading(page: DevTools) -> bool:
     raw = _eval(
         page,
@@ -305,6 +322,29 @@ def _loading(page: DevTools) -> bool:
           const active = items.filter((item) => item.className === "active").length;
           const done = items.filter((item) => item.className === "done").length;
           return active === 1 && done >= 1;
+        })()
+        """,
+    )
+    return raw is True
+
+
+def _reduced_steps(page: DevTools) -> bool:
+    """True when this lookup is showing the static ring, not a spinning arc."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+          const panel = document.getElementById("steps");
+          if (!panel || panel.hidden) return false;
+          const items = Array.from(panel.querySelectorAll("li"));
+          const active = items.filter((item) => item.className === "active").length;
+          const done = items.filter((item) => item.className === "done").length;
+          const arc = document.querySelector("li.active .arc");
+          const dot = document.querySelector("li.active .dot");
+          const arcHidden = !arc || getComputedStyle(arc).display === "none";
+          const dotShown = !!dot && getComputedStyle(dot).display !== "none";
+          return active === 1 && done >= 1 && arcHidden && dotShown;
         })()
         """,
     )
@@ -433,16 +473,22 @@ def drive(
         _reduced_motion(page)
         page.call("Page.navigate", {"url": url})
         _wait_node(page, "#query", 20)
+        if _eval(page, "window.matchMedia('(prefers-reduced-motion: reduce)').matches") is not True:
+            raise PageError("reduced motion was not emulated")
         _fill(page, "#query", query)
         _click(page, 'form[action="/explain"] button')
-        _wait_result(
-            page,
-            out_dir,
-            heading,
-            suffix,
-            loading=False,
-            shot_name=f"smoke-{ARCH}-5-reduced.png",
-        )
+        reduced_deadline = time.time() + 60
+        while time.time() < reduced_deadline:
+            try:
+                if _reduced_steps(page):
+                    _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png")
+                    break
+            except PageError:
+                pass
+            time.sleep(0.02)
+        else:
+            raise PageError("the reduced-motion steps were not shown")
+        _wait_result(page, out_dir, heading, suffix, loading=False, capture=False)
     finally:
         page.close()
         if chrome.poll() is None:
@@ -462,6 +508,7 @@ def _wait_result(
     loading: bool,
     fresh: bool = False,
     shot_name: str = "",
+    capture: bool = True,
 ) -> None:
     deadline = time.time() + 180
     last = ""
@@ -479,7 +526,7 @@ def _wait_result(
         if loading and not saw_loading:
             try:
                 if _loading(page):
-                    _shot(page, out_dir, f"smoke-{ARCH}-4-loading.png")
+                    _grab(page, out_dir, f"smoke-{ARCH}-4-loading.png")
                     saw_loading = True
             except PageError:
                 pass
@@ -490,7 +537,8 @@ def _wait_result(
             continue
         last = state.get("text") or ""
         if state.get("failure"):
-            _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
+            if capture:
+                _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
             raise PageError(state["failure"])
         figures = state.get("figures") or []
         if heading in last and any(figure.endswith(suffix) for figure in figures):
@@ -501,11 +549,13 @@ def _wait_result(
                 _eval(page, "window.scrollTo(0, 0)")
             except PageError:
                 pass
-            _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
+            if capture:
+                _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
             print(f"result {heading} with a figure ending in {suffix}", flush=True)
             return
         time.sleep(0.05)
-    _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
+    if capture:
+        _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
     raise PageError(last[:800] or "the result page did not appear")
 
 
