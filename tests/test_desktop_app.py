@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import struct
 import subprocess
 import threading
@@ -200,6 +201,23 @@ def test_plain_failures(monkeypatch, tmp_path):
     assert NO_INTERNET in page.body
     assert "Traceback" not in page.body
 
+    def broken(url, user_agent):
+        raise ssl.SSLCertVerificationError("certificate verify failed")
+
+    app.transport = broken
+    certificate = app.handle("POST", "/explain", {"query": "AAPL"})
+    assert "could not confirm the connection" in certificate.body
+    assert NO_INTERNET not in certificate.body
+
+    def refused(url, user_agent):
+        return 403, b"no", {}
+
+    app.transport = refused
+    denial = app.handle("POST", "/explain", {"query": "AAPL"})
+    assert "did not accept the name and email" in denial.body
+    assert NO_INTERNET not in denial.body
+    assert "busy" not in denial.body.casefold()
+
     app.transport = transport
     missing = app.handle("POST", "/explain", {"query": "zzzznomatchqq"})
     assert NO_MATCH in missing.body
@@ -224,9 +242,10 @@ def test_plain_failures(monkeypatch, tmp_path):
     assert BUSY in busy.body
     assert "Traceback" not in busy.body
     transport.status = 403
-    busy = app.handle("POST", "/explain", {"query": "AAPL"})
-    assert BUSY in busy.body
-    assert "Traceback" not in busy.body
+    denied = app.handle("POST", "/explain", {"query": "AAPL"})
+    assert "did not accept the name and email" in denied.body
+    assert BUSY not in denied.body
+    assert "Traceback" not in denied.body
 
 
 def test_pipeline_refusal_hides_the_traceback(monkeypatch, tmp_path):
@@ -296,7 +315,7 @@ def test_desktop_source_contacts_only_sec_hosts():
             host = match.group(1).split(":")[0]
             assert host in {"www.sec.gov", "data.sec.gov", "127.0.0.1"}
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert "dependencies = []" in project
+    assert 'dependencies = ["certifi"]' in project
     assert "pywebview" not in project
     assert "pythonnet" not in project
 
