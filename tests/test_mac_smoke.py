@@ -35,6 +35,12 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert 'env["HOME"]' in driver
     assert "Input.dispatchMouseEvent" in driver
     assert "form.submit" not in driver
+    assert "time.monotonic() + 30" in driver
+    assert "stderr=subprocess.DEVNULL" not in driver
+    desktop = (ROOT / "tests" / "test_desktop_app.py").read_text(encoding="utf-8")
+    chrome_test = desktop.split("def test_chrome_submits_setup_search_pick_and_erase", 1)[1]
+    assert "time.monotonic() + 30" in chrome_test
+    assert "stderr=subprocess.DEVNULL" not in chrome_test
     assert "smoke-{ARCH}-1-first-run.png" in driver
     assert "smoke-{ARCH}-2-search.png" in driver
     assert "smoke-{ARCH}-3-nvda.png" in driver

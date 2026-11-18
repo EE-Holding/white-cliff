@@ -874,6 +874,13 @@ def test_a_multipart_post_is_accepted(monkeypatch, tmp_path):
         server.server_close()
 
 
+def _stderr_text(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    return text[-4000:]
+
+
 def _chrome_binary() -> str | None:
     for candidate in (
         os.environ.get("CHROME", ""),
@@ -1028,6 +1035,8 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
     debug_port = debug.getsockname()[1]
     debug.close()
     profile = tmp_path / "chrome"
+    stderr_path = tmp_path / "chrome-stderr.txt"
+    stderr_file = open(stderr_path, "wb")
     chrome = subprocess.Popen(
         [
             binary,
@@ -1041,13 +1050,19 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_file,
     )
     page = None
     try:
         port = server.server_address[1]
         info = None
-        for _ in range(50):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if chrome.poll() is not None:
+                stderr_file.close()
+                raise AssertionError(
+                    f"chrome exited {chrome.returncode}: {_stderr_text(stderr_path)}"
+                )
             try:
                 with urllib.request.urlopen(
                     f"http://127.0.0.1:{debug_port}/json/list", timeout=0.5
@@ -1058,7 +1073,14 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
                     break
             except (OSError, json.JSONDecodeError):
                 time.sleep(0.1)
-        assert info and info.get("webSocketDebuggerUrl")
+        if not info or not info.get("webSocketDebuggerUrl"):
+            if not stderr_file.closed:
+                stderr_file.close()
+            detail = _stderr_text(stderr_path)
+            message = "chrome did not open a debugging port within 30 seconds"
+            if detail:
+                message = f"{message}: {detail}"
+            raise AssertionError(message)
         page = _DevTools(info["webSocketDebuggerUrl"])
         page.call("Page.enable")
         page.call("Runtime.enable")
@@ -1131,5 +1153,7 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
             page.close()
         chrome.kill()
         chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
         server.shutdown()
         server.server_close()

@@ -257,6 +257,9 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     port = debug.getsockname()[1]
     debug.close()
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
+    stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
+    stderr_path = Path(stderr_name)
+    stderr_file = os.fdopen(stderr_fd, "wb")
     chrome = subprocess.Popen(
         [
             binary,
@@ -273,13 +276,16 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_file,
         start_new_session=True,
     )
     info = None
-    for _ in range(50):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
         if chrome.poll() is not None:
-            raise PageError(f"chrome exited {chrome.returncode}")
+            stderr_file.close()
+            detail = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+            raise PageError(f"chrome exited {chrome.returncode}: {detail[-4000:]}")
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5) as response:
                 tabs = json.loads(response.read().decode("utf-8"))
@@ -288,8 +294,16 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
                 break
         except (OSError, json.JSONDecodeError):
             time.sleep(0.1)
+    if not stderr_file.closed:
+        stderr_file.close()
     if not info or not info.get("webSocketDebuggerUrl"):
-        raise PageError("chrome did not open a debugging port")
+        if chrome.poll() is None:
+            os.killpg(chrome.pid, signal.SIGTERM)
+        detail = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        message = "chrome did not open a debugging port within 30 seconds"
+        if detail:
+            message = f"{message}: {detail[-4000:]}"
+        raise PageError(message)
     page = DevTools(info["webSocketDebuggerUrl"])
     page.call("Page.enable")
     page.call("Runtime.enable")
