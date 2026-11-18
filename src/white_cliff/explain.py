@@ -28,6 +28,18 @@ _DEBT = (
     "LongTermDebtNoncurrent",
     "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
 )
+_DEBT_LABELS = {
+    "LongTermDebt": "Long-term debt, including current maturities",
+    "LongTermDebtNoncurrent": "Long-term debt, excluding current portion",
+    "LongTermDebtAndCapitalLeaseObligations": (
+        "Long-term debt and finance lease obligations, excluding current portion"
+    ),
+    "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities": (
+        "Long-term debt and finance lease obligations, including current maturities"
+    ),
+}
+_CASH_CONCEPT = "CashAndCashEquivalentsAtCarryingValue"
+_CONTRACT_REVENUE = "RevenueFromContractWithCustomerExcludingAssessedTax"
 _REASON = (
     ("bare digit", "bare digit"),
     ("number word", "number word"),
@@ -415,20 +427,43 @@ def _prior(facts: list[Fact], current: Fact) -> Fact | None:
     return _prefer(same_end)
 
 
+def _revenue_term(fact: Fact) -> str:
+    if fact.concept == _CONTRACT_REVENUE:
+        return "revenue from contracts with customers"
+    return "revenue"
+
+
+def _net_debt_phrase(debt: Fact, cash: Fact) -> str | None:
+    """Label for debt minus cash, only when the subtracted fact is cash and cash equivalents."""
+    if cash.concept != _CASH_CONCEPT:
+        return None
+    debt_label = _DEBT_LABELS.get(debt.concept)
+    if debt_label is None:
+        return None
+    return f"{debt_label} minus cash and cash equivalents"
+
+
 def _lead(role: str, fact: Fact, span: str) -> str:
     if role == "shares" and fact.concept == "WeightedAverageNumberOfSharesOutstandingBasic":
         return f"The basic average share count for the {span} was"
+    if role == "shares" and fact.concept in {
+        "CommonStockSharesOutstanding",
+        "EntityCommonStockSharesOutstanding",
+    }:
+        return "Common shares outstanding at the period end was"
     if role == "shares":
         return "The share count at the period end was"
     if role == "debt":
-        return "Debt at the period end was"
+        return f"{_DEBT_LABELS[fact.concept]} was"
     if role == "cash":
-        return "Cash at the period end was"
+        return "Cash and cash equivalents was"
+    if role == "revenue" and fact.concept == _CONTRACT_REVENUE:
+        return f"Revenue from contracts with customers for the {span} was"
     names = {
         "revenue": "Revenue",
         "gross_profit": "Gross profit",
         "operating_income": "Operating income",
-        "net_income": "Net income",
+        "net_income": "Net income attributable to the company",
         "operating_cash_flow": "Operating cash flow",
     }
     return f"{names[role]} for the {span} was"
@@ -515,24 +550,35 @@ def _fact_sentence(role: str, fact: Fact) -> str:
     return f"{_lead(role, fact, _span(fact))} {{fact:{fact.id}}} [section:{section}]."
 
 
-def _calc_sentence(role: str, fact: Fact, calc) -> str:
+def _calc_sentence(
+    role: str,
+    fact: Fact,
+    calc,
+    *,
+    revenue: Fact | None = None,
+    formula: str | None = None,
+) -> str:
     section = statement_name(fact) or "Document"
     span = _span(fact)
+    shown = formula if formula is not None else calc.formula
     if role == "net_debt":
-        opening = "Net debt at the period end was"
+        opening = f"{shown} was"
     elif role == "yoy_change":
-        opening = "The year over year change in revenue was"
+        opening = f"The year over year change in {_revenue_term(fact)} was"
     else:
-        label = {
-            "gross_margin": "The gross margin",
-            "operating_margin": "The operating margin",
-            "net_margin": "The net margin",
+        numerator = {
+            "gross_margin": "gross profit",
+            "operating_margin": "operating income",
+            "net_margin": "net income attributable to the company",
         }[role]
-        opening = f"{label} for the {span} was"
+        opening = (
+            f"The {role.removesuffix('_margin')} margin "
+            f"({numerator} / {_revenue_term(revenue)}) for the {span} was"
+        )
     inputs = " and ".join(calc.input_ids)
     return (
         f"{opening} {{calc:{calc.id}}} using formula {calc.name} "
-        f"defined as {calc.formula} on inputs {inputs} [section:{section}]."
+        f"defined as {shown} on inputs {inputs} [section:{section}]."
     )
 
 
@@ -654,7 +700,7 @@ def build_blocks(
         except FormulaError:
             return
         store.add_calc(calc)
-        blocks.append(Block(text=_calc_sentence(name, part, calc)))
+        blocks.append(Block(text=_calc_sentence(name, part, calc, revenue=whole)))
 
     add_margin("gross_margin", "gross_profit")
     add_margin("operating_margin", "operating_income")
@@ -674,14 +720,15 @@ def build_blocks(
 
     debt = chosen.get("debt")
     cash = chosen.get("cash")
-    if debt is not None and cash is not None and debt.origin == cash.origin:
+    phrase = None if debt is None or cash is None else _net_debt_phrase(debt, cash)
+    if phrase is not None and debt.origin == cash.origin:
         try:
             calc = net_debt(debt, cash)
         except FormulaError:
             calc = None
         if calc is not None:
             store.add_calc(calc)
-            blocks.append(Block(text=_calc_sentence("net_debt", debt, calc)))
+            blocks.append(Block(text=_calc_sentence("net_debt", debt, calc, formula=phrase)))
 
     if price_metric:
         blocks.append(
