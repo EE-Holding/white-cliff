@@ -27,8 +27,6 @@ ONLY_SEC = "White Cliff only contacts sec.gov."
 REFUSED = "White Cliff did not accept that request."
 LOOKING = "Looking this up…"
 CLOSED = "White Cliff has closed. Open it again to keep going."
-WHAT_SEARCH = "Enter a company name or ticker and press Explain."
-WHAT_SAVE = "Enter your name and email and press Save."
 
 __all__ = [
     "BUSY",
@@ -47,6 +45,4 @@ __all__ = [
     "SEC_ODD",
     "SEC_WHY",
     "SEVERAL",
-    "WHAT_SAVE",
-    "WHAT_SEARCH",
 ]

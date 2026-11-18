@@ -18,8 +18,6 @@ from white_cliff.desktop_copy import (
     SEC_ODD,
     SEC_WHY,
     SEVERAL,
-    WHAT_SAVE,
-    WHAT_SEARCH,
 )
 from white_cliff.disclaimer import ensure_safe_output
 from white_cliff.pipeline import explain_filing, load_directory
@@ -44,8 +42,6 @@ PLAIN = (
     SEC_ODD,
     CLOSE_INTRO,
     SEVERAL,
-    WHAT_SEARCH,
-    WHAT_SAVE,
 )
 
 
@@ -139,7 +135,7 @@ def test_error_page_is_the_sentence():
     assert CANNOT_EXPLAIN in page
     assert 'class="failure"' in page
     assert 'value="NVDA"' in page
-    assert WHAT_SEARCH in page
+    assert 'class="next"' not in page
     assert "Traceback" not in page
     assert advice_reason(_visible(page)) is None
     fresh = search_page(token="abc")

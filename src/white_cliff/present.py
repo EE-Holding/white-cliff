@@ -8,19 +8,7 @@ import re
 from datetime import date
 from typing import Sequence
 
-from white_cliff.desktop_copy import (
-    BUSY,
-    CLOSED,
-    DISCLAIMER,
-    EMPTY_QUERY,
-    ENTER_BOTH,
-    LOOKING,
-    NO_INTERNET,
-    SEC_ODD,
-    SEC_WHY,
-    WHAT_SAVE,
-    WHAT_SEARCH,
-)
+from white_cliff.desktop_copy import CLOSED, DISCLAIMER, ENTER_BOTH, LOOKING, SEC_WHY
 from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import Explained
 
@@ -136,7 +124,6 @@ def _shell(inner: str) -> str:
         ".failure { background: #f4f4f6; border-radius: 16px; "
         "padding: 1.25rem 1.4rem; margin: 0 0 1.75rem; }\n"
         ".failure .notice { font-size: 21px; margin: 0; }\n"
-        ".failure .next { margin: 0.75rem 0 0; color: #3a3a3c; }\n"
         "label { display: block; margin: 0 0 0.6rem; }\n"
         "input { font: inherit; font-size: 24px; width: 100%; box-sizing: border-box; "
         "padding: 0.85rem 1rem; border: 1px solid #d2d2d7; border-radius: 12px; "
@@ -225,20 +212,13 @@ def _hidden(token: str) -> str:
     return f'<input type="hidden" name="token" value="{safe}">\n'
 
 
-_STATED = {NO_INTERNET, BUSY, SEC_ODD, EMPTY_QUERY, ENTER_BOTH}
-
-
-def _notice(sentence: str, nxt: str = "") -> str:
+def _notice(sentence: str) -> str:
     if not sentence:
         return '<p class="notice" id="working" hidden></p>\n'
-    extra = ""
-    if sentence not in _STATED and nxt:
-        extra = f'<p class="next">{html.escape(nxt)}</p>\n'
     return (
         '<div class="failure">\n'
         f'<p class="notice" id="working">{html.escape(sentence)}</p>\n'
-        + extra
-        + "</div>\n"
+        "</div>\n"
     )
 
 
@@ -263,7 +243,7 @@ def _search_form(
     return (
         '<form method="post" action="/explain">\n'
         + _hidden(token)
-        + _notice(notice, WHAT_SEARCH)
+        + _notice(notice)
         + _progress()
         + '<p><label for="query">Company name or ticker</label></p>\n'
         + f'<p><input id="query" name="query" autocomplete="off"{_value(query)}{auto}></p>\n'
@@ -282,7 +262,7 @@ def _identity_form(
     return (
         '<form method="post" action="/identity">\n'
         + _hidden(token)
-        + _notice(notice, WHAT_SAVE)
+        + _notice(notice)
         + _progress()
         + '<p><label for="name">Your name</label></p>\n'
         + f'<p><input id="name" name="name" autocomplete="name" autofocus{_value(name)}></p>\n'
