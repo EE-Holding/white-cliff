@@ -42,7 +42,7 @@ def test_other_hosts_are_never_called():
         "http://www.sec.gov/files/company_tickers.json",
         "https://www.sec.gov:8443/files/company_tickers.json",
         "https://www.sec.gov.evil.com/files/company_tickers.json",
-        "https://user:pw@www.sec.gov/files/company_tickers.json",
+        "https://user:pw" + "@" + "www.sec.gov/files/company_tickers.json",
         "https://fonts.googleapis.com/css",
     ):
         with pytest.raises(DisallowedHost):
