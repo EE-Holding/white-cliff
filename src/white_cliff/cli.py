@@ -9,6 +9,7 @@ from pathlib import Path
 from white_cliff.config import MissingUserAgent, load_user_agent
 from white_cliff.disclaimer import DISCLAIMER, OutputRefused
 from white_cliff.fetch import ACCESSION_RE, EdgarClient, FetchError, host_allowed
+from white_cliff.page import build_page
 from white_cliff.pipeline import explain_filing, load_directory, load_file
 from white_cliff.sitebuild import build_site
 
@@ -44,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     site.add_argument("--output", default="docs")
     site.add_argument("--pinned", default=None)
+
+    page = sub.add_parser(
+        "page",
+        description=DISCLAIMER,
+        help="Write one HTML file from the saved filings",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    page.add_argument("--out", required=True, help="HTML file to write")
+    page.add_argument("--pinned", default=None)
     return parser
 
 
@@ -115,6 +125,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "site":
         pinned = Path(args.pinned) if args.pinned else None
         build_site(Path(args.output), pinned)
+        return 0
+    if args.command == "page":
+        pinned = Path(args.pinned) if args.pinned else None
+        try:
+            build_page(Path(args.out), pinned)
+        except (OutputRefused, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         return 0
     parser.error("unknown command")
     return 2

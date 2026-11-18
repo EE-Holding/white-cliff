@@ -21,7 +21,10 @@ white-cliff explain pinned/filings/0000320193-26-000026
 white-cliff explain pinned/filings/0000320193-26-000026 --format html --output explanation.html
 white-cliff explain pinned/filings/0000320193-26-000026 --copy
 white-cliff site --output docs
+white-cliff page --out white-cliff.html
 ```
+
+`white-cliff page` writes one file from the saved filings. It does not look up new filings.
 
 A User-Agent with a name and a contact email is needed only for a command that downloads from sec.gov. The package does not include a contact address or a key.
 

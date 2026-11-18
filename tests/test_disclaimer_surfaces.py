@@ -61,7 +61,7 @@ def test_help_carries_the_disclaimer_without_a_user_agent(tmp_path):
     env["WHITE_CLIFF_CONFIG"] = str(tmp_path / "missing.toml")
     env["HOME"] = str(tmp_path)
     env["PYTHONPATH"] = str(ROOT / "src")
-    for args in (["--help"], ["explain", "--help"], ["site", "--help"]):
+    for args in (["--help"], ["explain", "--help"], ["site", "--help"], ["page", "--help"]):
         completed = subprocess.run(
             [sys.executable, "-m", "white_cliff", *args],
             cwd=ROOT,
