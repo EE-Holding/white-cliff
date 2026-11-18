@@ -2,7 +2,7 @@
 
 Code commit: d303e491ae28be51c052a883d2a329bae7ece8b3
 
-This file is the next commit. The branch head is that commit, and its parent is the code commit above.
+Checked head: 43cfbc7cde448c55c5fd0866c63d8e2f1dc36055
 
 ## Build
 
@@ -18,7 +18,11 @@ The command writes one self-contained HTML file. It is not part of `white-cliff 
 
 ## CI
 
-Waiting on the push of this branch. The workflow runs authorship and test.
+All four checks on 43cfbc7cde448c55c5fd0866c63d8e2f1dc36055 succeeded.
+
+Push run 44307380679: authorship 134812344540, test 134812344098.
+
+Pull request run 44307764276: authorship 134813653773, test 134813653207.
 
 ## Authorship
 
