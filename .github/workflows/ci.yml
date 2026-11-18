@@ -50,6 +50,16 @@ jobs:
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
           ditto -c -k --keepParent "$stage" "$stage.zip"
+      - name: Smoke
+        timeout-minutes: 12
+        run: python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-arm64
+          path: smoke-*.png
+          retention-days: 7
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: White Cliff for Apple silicon Mac
@@ -75,6 +85,16 @@ jobs:
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
           ditto -c -k --keepParent "$stage" "$stage.zip"
+      - name: Smoke
+        timeout-minutes: 12
+        run: python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-x86_64
+          path: smoke-*.png
+          retention-days: 7
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: White Cliff for Intel Mac
