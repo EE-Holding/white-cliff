@@ -162,10 +162,26 @@ class DevTools:
 
 
 def _window(page: DevTools) -> None:
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        {"width": 1100, "height": 2200, "deviceScaleFactor": 1, "mobile": False},
-    )
+    """Give headless Chrome a real window. Old headless rejects the metrics call."""
+    try:
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 1100, "height": 2200, "deviceScaleFactor": 1, "mobile": False},
+        )
+        return
+    except PageError:
+        pass
+    try:
+        window = page.call("Browser.getWindowForTarget")
+        page.call(
+            "Browser.setWindowBounds",
+            {
+                "windowId": window["windowId"],
+                "bounds": {"width": 1100, "height": 2200, "windowState": "normal"},
+            },
+        )
+    except PageError:
+        pass
 
 
 def _shot(page: DevTools, directory: Path, name: str) -> Path:
@@ -181,8 +197,20 @@ def _shot(page: DevTools, directory: Path, name: str) -> Path:
                 {"format": "png", "optimizeForSpeed": True},
                 timeout=8,
             )
+            data = base64.b64decode(result["data"])
+            if len(data) < 1000:
+                result = fresh.call(
+                    "Page.captureScreenshot",
+                    {
+                        "format": "png",
+                        "captureBeyondViewport": True,
+                        "clip": {"x": 0, "y": 0, "width": 1100, "height": 1600, "scale": 1},
+                    },
+                    timeout=8,
+                )
+                data = base64.b64decode(result["data"])
             path = directory / name
-            path.write_bytes(base64.b64decode(result["data"]))
+            path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
             return path
         except (PageError, TimeoutError, OSError) as exc:
@@ -226,19 +254,26 @@ def _wait_node(page: DevTools, selector: str, timeout: float) -> int:
 def _click(page: DevTools, selector: str) -> None:
     node = _wait_node(page, selector, 20)
     page.call("DOM.focus", {"nodeId": node})
-    box = page.call("DOM.getBoxModel", {"nodeId": node})["model"]["content"]
-    x = (box[0] + box[4]) / 2
-    y = (box[1] + box[5]) / 2
-    for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
-        page.call(
-            "Input.dispatchMouseEvent",
-            {"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1},
-        )
+    try:
+        box = page.call("DOM.getBoxModel", {"nodeId": node})["model"]["content"]
+        x = (box[0] + box[4]) / 2
+        y = (box[1] + box[5]) / 2
+        for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
+            page.call(
+                "Input.dispatchMouseEvent",
+                {"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1},
+            )
+    except PageError:
+        shown = json.dumps(selector)
+        _eval(page, f"document.querySelector({shown}).click()")
 
 
 def _fill(page: DevTools, selector: str, text: str) -> None:
-    _click(page, selector)
-    page.call("Input.insertText", {"text": text})
+    try:
+        _click(page, selector)
+        page.call("Input.insertText", {"text": text})
+    except PageError:
+        pass
     shown = json.dumps(selector)
     value = _eval(page, f"document.querySelector({shown}).value")
     if value != text:
