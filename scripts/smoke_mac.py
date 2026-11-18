@@ -159,15 +159,11 @@ class DevTools:
 
 
 def _shot(page: DevTools, directory: Path, name: str) -> Path:
-    metrics = page.call("Page.getLayoutMetrics")
-    size = metrics.get("cssContentSize") or metrics["contentSize"]
-    width = int(min(1400, max(800, float(size["width"]))))
-    height = int(min(4000, max(700, float(size["height"]))))
-    page.call(
-        "Emulation.setDeviceMetricsOverride",
-        {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
+    _eval(
+        page,
+        "new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); })",
     )
-    result = page.call("Page.captureScreenshot", {"format": "png"}, timeout=20)
+    result = page.call("Page.captureScreenshot", {"format": "png"}, timeout=15)
     path = directory / name
     path.write_bytes(base64.b64decode(result["data"]))
     print(f"screenshot {path}", flush=True)
@@ -256,21 +252,24 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
     stderr_path = Path(stderr_name)
     stderr_file = os.fdopen(stderr_fd, "wb")
+    command = [
+        binary,
+        "--headless=old",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--hide-scrollbars",
+        "--force-device-scale-factor=1",
+        f"--remote-debugging-port={port}",
+        "--remote-allow-origins=*",
+        f"--user-data-dir={profile}",
+        "--window-size=1100,2200",
+        "about:blank",
+    ]
     chrome = subprocess.Popen(
-        [
-            binary,
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--no-first-run",
-            "--no-default-browser-check",
-            f"--remote-debugging-port={port}",
-            "--remote-allow-origins=*",
-            f"--user-data-dir={profile}",
-            "--window-size=1100,1400",
-            "about:blank",
-        ],
+        command,
         stdout=subprocess.DEVNULL,
         stderr=stderr_file,
         start_new_session=True,
