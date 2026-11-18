@@ -18,8 +18,8 @@ from white_cliff.pipeline import explain_filing, load_directory
 ROOT = Path(__file__).resolve().parents[1]
 PINNED = ROOT / "pinned"
 SAVED_LINE = (
-    "This page uses saved copies of 9 filings from sec.gov, "
-    "saved on November 17, 2026 and November 18, 2026. "
+    "This page explains 8 saved filings from 7 companies, "
+    "copied from sec.gov on November 17, 2026 and November 18, 2026. "
     "It does not look up new filings."
 )
 APPLE_10K = "0000320193-26-000026"
@@ -47,18 +47,6 @@ _FORBIDDEN = (
     "sessionStorage",
     "document.cookie",
 )
-
-
-def _save_days() -> set[str]:
-    manifest = json.loads((PINNED / "manifest.json").read_text(encoding="utf-8"))
-    days: set[str] = set()
-    for entry in manifest["filings"]:
-        provenance = json.loads(
-            (PINNED / "filings" / entry["accession"] / "provenance.json").read_text(encoding="utf-8")
-        )
-        for item in provenance["files"]:
-            days.add(str(item["retrieved_at"])[:10])
-    return days
 
 
 def _figure_filings() -> list[str]:
@@ -162,12 +150,52 @@ def test_cover_comes_from_the_filing_and_refuses_a_gap():
         read_cover(ticked)
 
 
-def test_saved_line_uses_the_provenance_count_and_dates(page_text):
-    manifest = json.loads((PINNED / "manifest.json").read_text(encoding="utf-8"))
-    assert len(manifest["filings"]) == 9
-    assert _save_days() == {"2026-11-17", "2026-11-18"}
-    assert page_text.find(DISCLAIMER) < page_text.find(SAVED_LINE)
+def _explained_days(accessions: list[str]) -> set[str]:
+    days: set[str] = set()
+    for accession in accessions:
+        provenance = json.loads(
+            (PINNED / "filings" / accession / "provenance.json").read_text(encoding="utf-8")
+        )
+        for item in provenance["files"]:
+            days.add(str(item["retrieved_at"])[:10])
+    return days
+
+
+def test_saved_line_counts_only_the_reachable_filings(page_text):
+    sections = re.findall(r'<section\b[^>]*data-accession="([^"]+)"', page_text)
+    buttons = re.findall(
+        r'<button type="button" data-filing="([^"]+)">([^<]*)</button>',
+        page_text,
+    )
+    reached = [filing for filing, _label in buttons]
+    companies = json.loads(
+        re.search(
+            r'<script type="application/json" id="saved-companies">(.*?)</script>',
+            page_text,
+            re.S,
+        ).group(1)
+    )
+    line = re.search(
+        r"This page explains (\d+) saved filings from (\d+) companies, "
+        r"copied from sec.gov on (.+)\. It does not look up new filings\.",
+        page_text,
+    )
+    assert line is not None
+    for accession in sections:
+        block = re.search(
+            rf'<section\b[^>]*data-accession="{re.escape(accession)}"[^>]*>.*?</section>',
+            page_text,
+            re.S,
+        )
+        assert block is not None and 'class="figure"' in block.group(0)
+    assert int(line.group(1)) == len(sections)
+    assert int(line.group(2)) == len(companies)
+    assert set(reached) == set(sections)
+    assert len(reached) == len(set(reached))
+    assert APPLE_8K not in sections
+    assert _explained_days(sections) == {"2026-11-17", "2026-11-18"}
     assert SAVED_LINE in page_text
+    assert page_text.find(DISCLAIMER) < page_text.find(SAVED_LINE)
     assert page_text.find(SAVED_LINE) < page_text.find('id="company"')
 
 
@@ -194,10 +222,14 @@ def test_page_lists_every_saved_filing_that_has_figures(page_text):
     assert alphabet["filing"] == ALPHABET
     assert "goog" in alphabet["keys"]
     assert "googl" in alphabet["keys"]
-    buttons = re.findall(r'<button type="button" data-filing="([^"]+)">', page_text)
-    assert APPLE_10K in buttons
-    assert APPLE_10Q not in buttons
-    assert len(buttons) == len(data)
+    buttons = re.findall(
+        r'<button type="button" data-filing="([^"]+)">([^<]*)</button>',
+        page_text,
+    )
+    labels = {filing: label for filing, label in buttons}
+    assert labels[APPLE_10K] == "Apple Inc."
+    assert labels[APPLE_10Q] == "Apple Inc. (quarterly report)"
+    assert set(labels) == set(sections)
 
 
 def test_embedded_keys_agree_with_the_python_matcher(page_text):

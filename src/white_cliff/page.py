@@ -87,6 +87,7 @@ class _Record:
     period_end: str
     cover: Cover
     directory: Path
+    copied: tuple[str, ...]
 
 
 def normalize(text: str) -> str:
@@ -180,29 +181,29 @@ def _plain_date(day: str) -> str:
     return f"{_MONTHS[int(month) - 1]} {int(number)}, {year}"
 
 
-def save_sentence(pinned: Path) -> str:
-    """The count of saved filings and every save date in their provenance."""
-    manifest = json.loads((pinned / "manifest.json").read_text(encoding="utf-8"))
+def _copied_days(directory: Path) -> tuple[str, ...]:
+    provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))
     days: set[str] = set()
-    for entry in manifest["filings"]:
-        provenance = json.loads(
-            (pinned / "filings" / str(entry["accession"]) / "provenance.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        for item in provenance["files"]:
-            raw = str(item.get("retrieved_at", ""))
-            day = raw[:10]
-            if len(day) != 10 or day[4] != "-" or day[7] != "-":
-                raise OutputRefused("A saved filing has no save date.")
-            days.add(day)
+    for item in provenance["files"]:
+        raw = str(item.get("retrieved_at", ""))
+        day = raw[:10]
+        if len(day) != 10 or day[4] != "-" or day[7] != "-":
+            raise OutputRefused("A saved filing has no save date.")
+        days.add(day)
     if not days:
         raise OutputRefused("A saved filing has no save date.")
-    when = " and ".join(_plain_date(day) for day in sorted(days))
-    count = len(manifest["filings"])
+    return tuple(sorted(days))
+
+
+def save_sentence(records: list[_Record], companies: tuple[Company, ...]) -> str:
+    """Count the filings and companies the page explains, and their copy dates."""
+    days = sorted({day for record in records for day in record.copied})
+    if not days:
+        raise OutputRefused("A saved filing has no save date.")
+    when = " and ".join(_plain_date(day) for day in days)
     return (
-        f"This page uses saved copies of {count} filings from sec.gov, "
-        f"saved on {when}. It does not look up new filings."
+        f"This page explains {len(records)} saved filings from {len(companies)} companies, "
+        f"copied from sec.gov on {when}. It does not look up new filings."
     )
 
 
@@ -231,6 +232,7 @@ def _records(pinned: Path) -> list[_Record]:
                 period_end=filing.period_end,
                 cover=cover,
                 directory=directory,
+                copied=_copied_days(directory),
             )
         )
     return records
@@ -269,6 +271,31 @@ def companies_from(records: list[_Record]) -> tuple[Company, ...]:
 
 def companies_for(pinned: Path) -> tuple[Company, ...]:
     return companies_from(_records(pinned))
+
+
+def _extra_label(name: str, form: str) -> str:
+    kind = {"10-K": "annual report", "10-Q": "quarterly report"}.get(form)
+    if kind is None:
+        raise OutputRefused("A saved filing with figures is not an annual or quarterly report.")
+    return f"{name} ({kind})"
+
+
+def _buttons(records: list[_Record], companies: tuple[Company, ...]) -> list[tuple[str, str]]:
+    """The latest report for each company, then each earlier report with a plain label."""
+    by_accession = {record.accession: record for record in records}
+    listed: list[tuple[str, str]] = []
+    for company in companies:
+        chosen = by_accession[company.filing]
+        listed.append((company.name, company.filing))
+        others = [
+            record
+            for record in records
+            if record.cik == chosen.cik and record.accession != chosen.accession
+        ]
+        others.sort(key=lambda record: (record.period_end, record.accession), reverse=True)
+        for record in others:
+            listed.append((_extra_label(record.cover.name, record.form), record.accession))
+    return listed
 
 
 def _as_figure(match: re.Match[str]) -> str:
@@ -470,9 +497,9 @@ def render_page(pinned: Path) -> str:
             "</section>"
         )
     buttons = "\n".join(
-        f'<button type="button" data-filing="{html.escape(company.filing, quote=True)}">'
-        f"{html.escape(company.name)}</button>"
-        for company in companies
+        f'<button type="button" data-filing="{html.escape(filing, quote=True)}">'
+        f"{html.escape(label)}</button>"
+        for label, filing in _buttons(records, companies)
     )
     payload = json.dumps(
         [
@@ -489,7 +516,7 @@ def render_page(pinned: Path) -> str:
         "</head>\n"
         "<body>\n"
         f'<p class="disclaimer">{html.escape(DISCLAIMER)}</p>\n'
-        f"<p>{html.escape(save_sentence(pinned))}</p>\n"
+        f"<p>{html.escape(save_sentence(records, companies))}</p>\n"
         '<form id="find">\n'
         '<label for="company">Company name or ticker</label>\n'
         '<input id="company" type="text" autocomplete="off">\n'
