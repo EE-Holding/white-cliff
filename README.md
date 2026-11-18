@@ -12,30 +12,27 @@ Figures come from the inline XBRL tags in that report. A filing of another form,
 pip install -e ".[dev]"
 ```
 
-Set a User-Agent that includes your name and a contact email before any command other than help. The package does not include a contact address or a key.
+## Commands
+
+Explain a local filing, or write the static pages, with no User-Agent:
+
+```bash
+white-cliff explain pinned/filings/0000320193-26-000026
+white-cliff explain pinned/filings/0000320193-26-000026 --format html --output explanation.html
+white-cliff explain pinned/filings/0000320193-26-000026 --copy
+white-cliff site --output docs
+```
+
+A User-Agent with a name and a contact email is needed only for a command that downloads from sec.gov. The package does not include a contact address or a key.
 
 ```bash
 export WHITE_CLIFF_USER_AGENT="Example Name name@example.com"
+white-cliff explain 0000320193-26-000026
 ```
 
 You can also put `user_agent = "Example Name name@example.com"` in the config file named by `WHITE_CLIFF_CONFIG`.
 
-## Commands
-
-Explain an accession number, or a local filing directory that contains `provenance.json` and the raw file:
-
-```bash
-white-cliff explain 0000320193-26-000026
-white-cliff explain pinned/filings/0000320193-26-000026
-white-cliff explain pinned/filings/0000320193-26-000026 --format html --output explanation.html
-white-cliff explain pinned/filings/0000320193-26-000026 --copy
-```
-
-Write static HTML for the pinned filings. Publish the `docs` directory with GitHub Pages. No separate host is required.
-
-```bash
-white-cliff site --output docs
-```
+Publish the `docs` directory with GitHub Pages. No separate host is required.
 
 Requests to EDGAR send the User-Agent you configured. The client stays at or under ten requests per second, backs off on HTTP 403 and 429, and refuses any host other than the EDGAR hosts. It fetches only the filing you asked for.
 

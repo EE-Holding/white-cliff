@@ -58,19 +58,20 @@ def _require_user_agent() -> str:
         raise SystemExit(2)
 
 
-def _explain(args, user_agent: str) -> int:
+def _explain(args) -> int:
     target = args.target
     if target.startswith("http://") or target.startswith("https://"):
         if not host_allowed(target):
             print("That host is not an EDGAR host.", file=sys.stderr)
             return 2
+        _require_user_agent()
         print("Pass an accession number or a local filing path.", file=sys.stderr)
         return 2
     path = Path(target)
     if ACCESSION_RE.fullmatch(target):
         cache = Path(".white-cliff-cache") / target
         if not (cache / "provenance.json").is_file():
-            client = EdgarClient(user_agent)
+            client = EdgarClient(_require_user_agent())
             try:
                 client.fetch_accession(target, cache, cik=client.cik_for_accession(target))
             except FetchError as exc:
@@ -110,10 +111,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "explain":
-        user_agent = _require_user_agent()
-        return _explain(args, user_agent)
+        return _explain(args)
     if args.command == "site":
-        _require_user_agent()
         pinned = Path(args.pinned) if args.pinned else None
         build_site(Path(args.output), pinned)
         return 0
