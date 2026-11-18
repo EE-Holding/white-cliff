@@ -147,7 +147,7 @@ def test_pinned_files_match_the_raw_hash_and_the_hash_without_the_trailing_scrip
                 assert sha256(strip_edgar_script(raw)).hexdigest() == item["content_sha256"]
             assert strip_edgar_script(raw) != raw
             checked += 1
-    assert checked == 10
+    assert checked == 12
 
 
 def test_a_cik_only_in_the_query_string_is_refused() -> None:

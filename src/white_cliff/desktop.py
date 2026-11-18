@@ -23,9 +23,11 @@ from white_cliff.companies import (
     extra_submission_names,
     parse_tickers,
     resolve_company,
+    quarterly_filings,
     select_latest,
     submissions_url,
 )
+from white_cliff.compare import PriorCandidate, choose_prior_10q, day_gap, same_fiscal_year_end
 from white_cliff.desktop_copy import (
     BUSY,
     CANNOT_EXPLAIN,
@@ -52,6 +54,7 @@ from white_cliff.present import (
     result_page,
     search_page,
 )
+from white_cliff.thresholds import PRIOR_FILING_MAX, PRIOR_FILING_MIN
 from white_cliff.secclient import (
     DisallowedHost,
     RateLimiter,
@@ -208,7 +211,7 @@ class Desktop:
             return Page(200, first_run_page(token=self.token))
         try:
             if cik:
-                filing, explained, company, ticker = self._explain_cik(client, cik)
+                filing, explained, company, ticker, loaded, prior = self._explain_cik(client, cik)
             else:
                 found = self._search(client, query)
                 if isinstance(found, SeveralMatches):
@@ -225,7 +228,7 @@ class Desktop:
                     return self._fail(NO_MATCH, query)
                 if not isinstance(found, OneMatch):
                     return self._fail(NO_MATCH, query)
-                filing, explained, company, ticker = self._explain_cik(
+                filing, explained, company, ticker, loaded, prior = self._explain_cik(
                     client, found.company.cik, found.company.title
                 )
                 ticker = found.company.ticker or ticker
@@ -257,6 +260,10 @@ class Desktop:
                 company=company,
                 ticker=ticker,
                 cik=filing.cik,
+                focus=loaded.focus,
+                fiscal_year_end=loaded.fiscal_year_end,
+                prior_facts=prior.store.facts() if prior is not None else None,
+                prior_end=prior.period_end if prior is not None else None,
             ),
         )
 
@@ -284,10 +291,56 @@ class Desktop:
         directory = write_cache(self.cache, filing, body)
         loaded = load_directory(directory)
         explained = explain_filing(loaded)
+        prior = self._prior_quarter(client, data, extras, loaded)
         listed = company or str(data.get("name") or "")
         raw_tickers = data.get("tickers") or []
         ticker = str(raw_tickers[0]).strip() if raw_tickers else ""
-        return filing, explained, listed, ticker
+        return filing, explained, listed, ticker, loaded, prior
+
+    def _prior_quarter(self, client: SecClient, data: dict, extras: list, loaded):
+        """The one prior 10-Q for a second or third quarter. A failure leaves the column blank."""
+        if loaded.form != "10-Q" or loaded.focus not in {"Q2", "Q3"} or not loaded.period_end:
+            return None
+        fiscal = loaded.fiscal_year_end or str(data.get("fiscalYearEnd") or "")
+        rows = quarterly_filings(data, loaded.cik, extras)
+        candidates = []
+        loaded_by_accession = {}
+        for row in rows:
+            if row.form != "10-Q" or row.cik != loaded.cik:
+                continue
+            gap = day_gap(row.period, loaded.period_end)
+            if gap is None or gap < PRIOR_FILING_MIN or gap > PRIOR_FILING_MAX:
+                continue
+            year_end, parsed = self._load_prior(client, row)
+            loaded_by_accession[row.accession] = parsed
+            candidates.append(
+                PriorCandidate(
+                    form=row.form,
+                    period_end=row.period,
+                    fiscal_year_end=year_end,
+                    cik=row.cik,
+                    accession=row.accession,
+                )
+            )
+        chosen = choose_prior_10q(loaded.period_end, fiscal, loaded.cik, candidates)
+        if chosen is None:
+            return None
+        prior = loaded_by_accession.get(chosen.accession)
+        if prior is None:
+            return None
+        if prior.fiscal_year_end and loaded.fiscal_year_end:
+            if not same_fiscal_year_end(prior.fiscal_year_end, loaded.fiscal_year_end):
+                return None
+        return prior
+
+    def _load_prior(self, client: SecClient, row):
+        try:
+            body = client.get(row.url)
+            directory = write_cache(self.cache, row, body)
+            parsed = load_directory(directory)
+        except Exception:
+            return "", None
+        return parsed.fiscal_year_end or "", parsed
 
 
 def _form_fields(raw: bytes, content_type: str) -> dict[str, str]:

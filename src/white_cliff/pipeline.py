@@ -36,6 +36,7 @@ class Filing:
     filer_end: int | None = None
     cik: str = ""
     shares_tagged: bool = False
+    fiscal_year_end: str = ""
 
 
 @dataclass
@@ -163,6 +164,7 @@ def load_directory(path: Path) -> Filing:
             filer=parsed.filer,
             cik=agreed,
             shares_tagged=parsed.shares_tagged,
+            fiscal_year_end=parsed.fiscal_year_end,
         )
     store = FactStore()
     _absorb(store, parsed)
@@ -182,6 +184,7 @@ def load_directory(path: Path) -> Filing:
         url=str(chosen["url"]),
         cik=agreed,
         shares_tagged=parsed.shares_tagged,
+        fiscal_year_end=parsed.fiscal_year_end,
     )
 
 
@@ -214,6 +217,7 @@ def load_file(path: Path) -> Filing:
         url=url,
         cik=parsed.cik,
         shares_tagged=parsed.shares_tagged,
+        fiscal_year_end=parsed.fiscal_year_end,
     )
 
 

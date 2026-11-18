@@ -8,7 +8,10 @@ import re
 from datetime import date
 from typing import Sequence
 
+from urllib.parse import urlsplit
+
 from white_cliff.desktop_copy import CLOSED, DISCLAIMER, ENTER_BOTH, LOOKING, SEC_WHY
+from white_cliff.disclaimer import ISSUE_URL, OutputRefused
 from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import Explained
 
@@ -19,6 +22,11 @@ _DATA_LINK = re.compile(
 )
 _MONEY = re.compile(
     r"^(-?\d+(?:\.\d+)?)(?:\s+USD)?(?:\s+(millions|thousands|billions))?$",
+    re.I,
+)
+_PER_SHARE = re.compile(
+    r"^(-?\d+(?:\.\d+)?)\s+USD(?:\s*/\s*shares|\s+per\s+share)"
+    r"(?:\s+(millions|thousands|billions))?$",
     re.I,
 )
 _TAG = re.compile(r"<[^>]+>")
@@ -32,6 +40,13 @@ _SCALE = {
 def shown_amount(raw: str) -> str:
     """The filing amount, with separators and a dollar sign. No new rounding."""
     text = " ".join(html.unescape(raw).split())
+    per_share = _PER_SHARE.fullmatch(text)
+    if per_share is not None:
+        shown = f"${_commas(per_share.group(1))}"
+        scale = per_share.group(2)
+        if scale:
+            shown = f"{shown} {_SCALE[scale.lower()]}"
+        return f"{shown} per share"
     match = _MONEY.fullmatch(text)
     if match is not None:
         number, scale = match.group(1), match.group(2)
@@ -100,7 +115,7 @@ def plain_report(form: str, period: str) -> str:
 def _shell(inner: str) -> str:
     closed = html.escape(CLOSED, quote=True)
     looking = html.escape(LOOKING, quote=True)
-    return (
+    page = (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
         "<head>\n"
@@ -142,8 +157,17 @@ def _shell(inner: str) -> str:
         "a { color: #0a4b8f; }\n"
         "a.figure { color: #1d1d1f; text-decoration: none; white-space: nowrap; }\n"
         ".filing { margin-top: 1.5rem; }\n"
-        ".change { margin-top: 4rem; font-size: 16px; }\n"
+        ".change { margin-top: 4rem; font-size: 21px; }\n"
         ".change a { color: #3a3a3c; }\n"
+        "button.tap { display: inline-block; width: auto; margin: 0; "
+        "background: #ffffff; color: #1d1d1f; border: 0; border-radius: 12px; "
+        "font-size: 21px; text-align: left; padding: 0.85rem 0.4rem; }\n"
+        "a.figure { font-size: 28px; }\n"
+        ".comparisons, .explain, .quality, .marker, h2, h3 { font-size: 21px; "
+        "color: #1d1d1f; font-weight: 400; }\n"
+        ".comparisons a, .explain a, .quality a { font-size: 24px; }\n"
+        ".marker { font-weight: 600; }\n"
+        ".row { align-items: center; }\n"
         "</style>\n"
         '<div class="column">\n'
         f"{inner}\n"
@@ -199,11 +223,36 @@ def _shell(inner: str) -> str:
         "      say(closed);\n"
         "    });\n"
         "  }, 2000);\n"
+        '  document.querySelectorAll("button.tap").forEach(function (button) {\n'
+        '    button.addEventListener("click", function () {\n'
+        '      var panel = document.getElementById(button.getAttribute("aria-controls"));\n'
+        "      if (!panel) return;\n"
+        '      var open = button.getAttribute("aria-expanded") === "true";\n'
+        '      button.setAttribute("aria-expanded", open ? "false" : "true");\n'
+        "      panel.hidden = open;\n"
+        "    });\n"
+        "  });\n"
+        '  document.querySelectorAll("a.figure").forEach(function (link) {\n'
+        '    link.addEventListener("click", function (event) {\n'
+        "      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;\n"
+        '      var block = link.closest(".figure-block");\n'
+        '      var button = block ? block.querySelector("button.tap") : null;\n'
+        "      if (!button) return;\n"
+        "      event.preventDefault();\n"
+        "      button.click();\n"
+        "    });\n"
+        "  });\n"
         "})();\n"
         "</script>\n"
         "</body>\n"
         "</html>\n"
     )
+    from white_cliff.wording import page_terms
+
+    found = page_terms(page)
+    if found:
+        raise OutputRefused(found)
+    return page
 
 
 def _change_link() -> str:
@@ -402,7 +451,16 @@ def _plain_label(lead: str) -> str:
     return text.strip()
 
 
-def _rows(explained_html: str) -> str:
+def _anchor_from_href(href: str) -> str:
+    fragment = urlsplit(html.unescape(href)).fragment
+    for key in ("fact", "calc"):
+        token = key + "="
+        if token in fragment:
+            return fragment.split(token, 1)[1].split("&", 1)[0]
+    return ""
+
+
+def _rows(explained_html: str, additions=None) -> str:
     rows: list[str] = []
     for part in re.findall(r"<p\b[^>]*>.*?</p>", explained_html, flags=re.I | re.S):
         if 'class="disclaimer"' in part or "github.com" in part or "Report an error" in part:
@@ -415,13 +473,36 @@ def _rows(explained_html: str) -> str:
         href = html.escape(html.unescape(match.group(3)), quote=True)
         if not label:
             continue
+        identifier = _anchor_from_href(match.group(3))
+        before = ""
+        after = ""
+        button = ""
+        if additions is not None and identifier:
+            before = additions.before.get(identifier, "")
+            after = additions.after.get(identifier, "")
+            if after:
+                control = html.escape("explain-" + identifier, quote=True)
+                button = (
+                    f'<button type="button" class="tap" aria-expanded="false" '
+                    f'aria-controls="{control}">Explain</button>'
+                )
         rows.append(
-            '<div class="row">'
-            f'<span>{html.escape(label)}</span>'
-            f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
-            "</div>\n"
+            before
+            + '<div class="figure-block">'
+            + '<div class="row">'
+            + f'<span>{html.escape(label)}</span>'
+            + f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
+            + button
+            + "</div>\n"
+            + after
+            + "</div>\n"
         )
     return "".join(rows)
+
+
+def _report_link() -> str:
+    href = html.escape(ISSUE_URL, quote=True)
+    return f'<p class="change"><a href="{href}">Report an error</a></p>\n'
 
 
 def _company_name(
@@ -454,9 +535,25 @@ def result_page(
     company: str = "",
     ticker: str = "",
     cik: str = "",
+    focus: str | None = None,
+    fiscal_year_end: str = "",
+    prior_facts: Sequence | None = None,
+    prior_end: str | None = None,
 ) -> str:
-    del filed
+    from white_cliff.wording import build_additions
+
     name = _company_name(explained.html, company, ticker, cik)
+    additions = build_additions(
+        explained,
+        form=form,
+        focus=focus,
+        period_end=period or None,
+        fiscal_year_end=fiscal_year_end,
+        company=name or company or "this company",
+        filed=filed,
+        prior_facts=list(prior_facts) if prior_facts else None,
+        prior_end=prior_end,
+    )
     heading = f"<h1>{html.escape(name)}</h1>\n" if name else ""
     line = plain_report(form, period)
     quiet = f'<p class="quiet">{html.escape(line)}</p>\n' if line else ""
@@ -464,5 +561,14 @@ def result_page(
     if url.startswith("https://www.sec.gov/") or url.startswith("https://data.sec.gov/"):
         href = html.escape(url, quote=True)
         filing = f'<p class="filing"><a href="{href}">The filing</a></p>\n'
-    inner = heading + quiet + _rows(explained.html) + filing + _search_form(token, focus=False) + _change_link()
+    inner = (
+        heading
+        + quiet
+        + _rows(explained.html, additions)
+        + additions.quality
+        + filing
+        + _report_link()
+        + _search_form(token, focus=False)
+        + _change_link()
+    )
     return _shell(inner)

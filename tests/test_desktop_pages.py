@@ -19,7 +19,8 @@ from white_cliff.desktop_copy import (
     SEC_WHY,
     SEVERAL,
 )
-from white_cliff.disclaimer import ensure_safe_output
+from white_cliff.disclaimer import ISSUE_URL, ensure_safe_output
+from white_cliff.wording import CAUSES, FRAME, LIMIT, WHY
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.present import (
     _choice_label,
@@ -118,6 +119,9 @@ def test_pinned_explanations_match_and_keep_the_guard():
             period=filing.period_end or "",
             filed="2026-10-31",
             url=filing.url,
+            company=filing.filer,
+            focus=filing.focus,
+            fiscal_year_end=filing.fiscal_year_end,
         )
         ensure_safe_output(page)
         assert page.find(DISCLAIMER) < page.find("font-size")
@@ -130,12 +134,16 @@ def test_pinned_explanations_match_and_keep_the_guard():
         ]
         shown = [html.unescape(item) for item in re.findall(r"<data[^>]*>(.*?)</data>", explained.html)]
         assert [text for text, _href in _page_figures(page)] == [shown_amount(item) for item in shown]
-        assert advice_reason(_visible(page), filing.text) is None
-        assert "github.com" not in page
+        visible = re.sub(r"\s+", " ", html.unescape(_visible(page)))
+        for sentence in (FRAME, LIMIT, *WHY.values(), *CAUSES.values()):
+            visible = visible.replace(re.sub(r"\s+", " ", sentence), " ")
+        assert advice_reason(visible, filing.text) is None
+        assert "github.com" not in page.replace(ISSUE_URL, "")
+        assert "Report an error" in page
         assert "Traceback" not in page
         for href in re.findall(r'href="([^"]+)"', page):
             target = html.unescape(href)
-            if target.startswith("/"):
+            if target.startswith("/") or target == ISSUE_URL:
                 continue
             assert urlsplit(target).hostname in {"www.sec.gov", "data.sec.gov"}
         if filing.form in {"10-K", "10-Q"} and filing.url.startswith("https://www.sec.gov/"):

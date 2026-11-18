@@ -1,0 +1,16 @@
+{
+  "accession": "0001045810-26-000052",
+  "cik": "0001045810",
+  "filer": "NVIDIA CORP",
+  "form": "10-Q",
+  "files": [
+    {
+      "name": "nvda-20260426.htm",
+      "url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000052/nvda-20260426.htm",
+      "sha256": "705df02ed8e8c9de7fc7df965ca7cceb61b0c456b9ff34d2cdfbcea4be092ef1",
+      "content_sha256": "1b5de37b973da4a3f1cd31a09aa455c01c519ea7cc409c73de2250ad156f99e4",
+      "retrieved_at": "2026-11-18T16:32:00Z",
+      "document_type": "10-Q"
+    }
+  ]
+}

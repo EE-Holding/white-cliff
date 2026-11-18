@@ -1,0 +1,1177 @@
+"""Cleared sentence templates. Slots are filled from filing figures. No free-hand digits."""
+
+from __future__ import annotations
+
+import html
+import re
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from urllib.parse import urlsplit
+
+from white_cliff.advice import advice_reason
+from white_cliff.checks import ONE_OFF, CheckResult, run_checks
+from white_cliff.compare import Cell, columns_for, percent_change
+from white_cliff.explain import _lead, _span, statement_name
+from white_cliff.facts import Fact, format_decimal
+from white_cliff.present import shown_amount
+from white_cliff.thresholds import CASH_CONVERSION
+
+FRAME = (
+    "These checks compare the company's own reported numbers with each other. "
+    "They are not a judgement of the company and not investment advice."
+)
+LIMIT = (
+    "This check is arithmetic on the filing's own numbers. "
+    "It does not say whether the numbers are right or wrong, and it is not an audit."
+)
+WHY = {
+    "C1": (
+        "Net income includes amounts recorded before cash is received or paid, "
+        "so it is often compared with the cash the business actually brought in over the same period."
+    ),
+    "C2": "Receivables are sales not yet paid for, so their change is often compared with the change in sales.",
+    "C3": "Inventory is goods held for sale, so its change is often compared with the change in the cost of goods sold.",
+    "C4": (
+        "Items like restructuring, impairments and gains on sales can be large in one period "
+        "and absent in the next, so their size is often compared with operating income."
+    ),
+    "C6": (
+        "The diluted share count includes shares that options, convertible securities and similar "
+        "awards could add, so its change shows how much the number of shares has grown."
+    ),
+    "C7": "Margins show each figure as a share of revenue, so a change in margin shows costs moving faster or slower than sales.",
+    "C8": (
+        "The effective tax rate shows tax expense as a share of pre-tax income, "
+        "and changes in it affect net income separately from the business itself."
+    ),
+}
+CAUSES = {
+    "C1": (
+        "A gap can come from timing of customer payments, building inventory, large non-cash gains, "
+        "or tax and working-capital timing. The filing's cash flow statement and notes may explain it."
+    ),
+    "C2": (
+        "This can come from sales concentrated near the year end, changed payment terms, an acquisition, "
+        "or a change in accounting. The filing's notes may explain it."
+    ),
+    "C3": (
+        "This can come from stocking up ahead of expected sales, seasonal patterns, supply changes, "
+        "an acquisition, or a change in accounting. The filing's notes may explain it."
+    ),
+    "C4": (
+        "Such items follow events the company describes in its filing, such as a reorganisation, a sale, "
+        "or a change in the value of assets. The filing's notes may explain it."
+    ),
+    "C6": (
+        "This can come from employee share awards, convertible securities, or shares issued for an "
+        "acquisition or to raise money. The filing's notes may explain it."
+    ),
+    "C7": (
+        "This can come from changes in prices or costs, the mix of products sold, one-time items, "
+        "or an acquisition or sale. The filing's notes may explain it."
+    ),
+    "C8": (
+        "This can come from tax law changes, one-time tax items, income earned in different countries, "
+        "or settlements with tax authorities. The filing's tax note may explain it."
+    ),
+}
+HEADINGS = {
+    "C1": "Profit and operating cash flow",
+    "C2": "Receivables and revenue",
+    "C3": "Inventory and cost of sales",
+    "C4": "Items tagged as restructuring, impairment, disposal or acquisition costs",
+    "C6": "Diluted and basic shares",
+    "C7": "Gross margin and operating margin",
+    "C8": "Income tax and pre-tax income",
+}
+ITEM_LABELS = {
+    "RestructuringCharges": "restructuring charges",
+    "GoodwillImpairmentLoss": "goodwill impairment",
+    "ImpairmentOfIntangibleAssetsExcludingGoodwill": "impairment of intangible assets",
+    "AssetImpairmentCharges": "asset impairment charges",
+    "GainLossOnDispositionOfAssets": "gain or loss on disposal of assets",
+    "GainLossOnSaleOfPropertyPlantEquipment": "gain or loss on sale of property and equipment",
+    "DisposalGroupNotDiscontinuedOperationGainLossOnDisposal": "gain or loss on disposal of a business unit",
+    "GainsLossesOnExtinguishmentOfDebt": "gain or loss on paying off debt early",
+    "BusinessCombinationAcquisitionRelatedCosts": "acquisition-related costs",
+}
+DEFINITIONS = {
+    "revenue": "the amount the company recorded from sales during the period",
+    "gross_profit": "revenue minus the cost of goods or services sold",
+    "operating_income": "profit from operations before interest and income tax",
+    "net_income": "profit after expenses and income tax for the period",
+    "operating_cash_flow": "the cash the company's day-to-day business brought in or paid out during the period",
+    "debt": "the long-term debt figure, using the filing's own line",
+    "cash": "cash and cash equivalents the company reports at the period end",
+    "shares": "the number of shares the filing reports",
+    "gross_margin": "gross profit divided by revenue",
+    "operating_margin": "operating income divided by revenue",
+    "net_margin": "net income divided by revenue",
+    "yoy_change": "the change in revenue from the same period a year earlier",
+    "net_debt": "the debt figure minus cash and cash equivalents",
+    "per_share": "earnings divided by the number of shares",
+}
+TEMPLATES = frozenset(
+    {
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "E1",
+        "E2",
+        "E3",
+        "SECTION",
+        "MARKER",
+        "NUMBERS",
+        "THRESHOLD",
+        "WHY",
+        "CAUSES",
+        "LIMIT",
+        "FRAME",
+        "DECREASE",
+        "FORMULA",
+    }
+)
+_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+_BANNED = (
+    "fraud",
+    "fraudulent",
+    "manipulation",
+    "manipulated",
+    "cooked",
+    "fudged",
+    "massaged",
+    "doctored",
+    "inflated",
+    "suspicious",
+    "questionable",
+    "misleading",
+    "healthy",
+    "unhealthy",
+    "strong",
+    "weak",
+    "solid",
+    "poor",
+    "bad",
+    "good",
+    "concerning",
+    "worrying",
+    "alarming",
+    "impressive",
+    "buy",
+    "sell",
+    "hold",
+    "avoid",
+    "opportunity",
+    "bargain",
+    "cheap",
+    "expensive",
+    "overvalued",
+    "undervalued",
+    "upside",
+    "downside",
+    "better",
+    "worse",
+    "winner",
+    "leader",
+    "laggard",
+    "beats",
+    "misses",
+    "outperforms",
+    "underperforms",
+    "ranking",
+    "score",
+    "grade",
+    "rating",
+    "warning",
+    "risk",
+    "concern",
+    "aggressive",
+    "should",
+    "investors",
+    "clean",
+    "dirty",
+    "real",
+    "true",
+    "artificial",
+    "sharply",
+    "dramatically",
+    "merely",
+    "surprisingly",
+    "worth",
+)
+_BANNED_PHRASES = (
+    "red flag",
+    "earnings quality",
+    "quality of earnings",
+    "the market",
+    "window dressing",
+    "too good to be true",
+    "you should",
+    "fair value",
+    "warning sign",
+    "per share",
+)
+
+
+@dataclass(frozen=True)
+class Additions:
+    before: dict[str, str]
+    after: dict[str, str]
+    quality: str
+    plain: str
+
+
+def long_date(iso: str) -> str:
+    year, month, day = (int(part) for part in iso.split("-"))
+    return f"{_MONTHS[month - 1]} {day}, {year}"
+
+
+def period_phrase(kind: str, start: str | None, end: str) -> str:
+    when = long_date(end) if end else ""
+    if kind == "instant":
+        return f"the period ended {when}"
+    try:
+        days = (date.fromisoformat(end) - date.fromisoformat(start or end)).days
+    except ValueError:
+        days = 0
+    if 80 <= days <= 100:
+        return f"the quarter ended {when}"
+    if 170 <= days <= 200:
+        return f"the six months ended {when}"
+    if 250 <= days <= 290:
+        return f"the nine months ended {when}"
+    if 330 <= days <= 380:
+        return f"the year ended {when}"
+    return f"the period ended {when}"
+
+
+def show_measure(value: Decimal, unit: str) -> str:
+    """Every displayed measure, including a per-share amount, goes through one formatter."""
+    if unit == "percent":
+        return shown_amount(f"{value:.1f} percent")
+    if unit == "percentage points":
+        return f"{value:.1f} percentage points"
+    return shown_amount(f"{format_decimal(value)} {unit}")
+
+
+def fact_href(fact: Fact) -> str:
+    url = fact.source.url.split("#", 1)[0]
+    if not url.startswith("https://www.sec.gov/"):
+        return ""
+    return f"{url}#fact={fact.id}&start={fact.source.char_start}&end={fact.source.char_end}"
+
+
+def _filing_href(url: str) -> str:
+    base = url.split("#", 1)[0]
+    if base.startswith("https://www.sec.gov/"):
+        return base
+    return ""
+
+
+def _parts_html(template_id: str, parts: list[tuple]) -> str:
+    if template_id not in TEMPLATES:
+        raise ValueError(template_id)
+    body: list[str] = []
+    for part in parts:
+        if part[0] == "text":
+            body.append(html.escape(part[1]))
+            continue
+        display, href = part[1], part[2]
+        if not href.startswith("https://www.sec.gov/"):
+            raise ValueError("number without a filing link")
+        body.append(
+            f'<a href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
+        )
+    return f'<p data-template="{template_id}">{"".join(body)}</p>\n'
+
+
+def _plain(parts: list[tuple]) -> str:
+    words = []
+    for part in parts:
+        words.append(part[1])
+    return "".join(words)
+
+
+def label_for(role: str, fact: Fact) -> str:
+    lead = _lead(role if role in {"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "debt", "cash", "shares"} else "revenue", fact, _span(fact))
+    if role not in {"revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "debt", "cash", "shares"}:
+        names = {
+            "gross_margin": "Gross margin",
+            "operating_margin": "Operating margin",
+            "net_margin": "Net margin",
+            "yoy_change": "Revenue year over year",
+            "net_debt": "Net debt",
+            "per_share": "Earnings per share",
+        }
+        return names.get(role, role)
+    text = re.sub(r"\s+was$", "", lead)
+    text = re.sub(r"\s+for the .+$", "", text)
+    return text
+
+
+def _direction(current: Decimal, prior: Decimal) -> str:
+    if current > prior:
+        return "rose"
+    if current < prior:
+        return "fell"
+    return "was unchanged"
+
+
+def _higher(current: Decimal, prior: Decimal) -> str:
+    return "higher" if current >= prior else "lower"
+
+
+def _link_fact(fact: Fact) -> tuple:
+    return ("link", show_measure(fact.value, fact.unit), fact_href(fact))
+
+
+def _period_link(phrase: str, fact: Fact) -> tuple:
+    return ("link", phrase, _filing_href(fact.source.url))
+
+
+def _m2(figure: str, period: str) -> list[tuple]:
+    return [("text", f"{figure} for {period} is not in the filings White Cliff read, so no change is shown.")]
+
+
+def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list[list[tuple]]:
+    """Change sentences for one column. Percent only when the CTO rule allows it."""
+    if not prior.available or prior.fact is None or current.fact is None or prior.value is None or current.value is None:
+        return []
+    if prior.basis == "currency":
+        return [[("text", "The figures are in different currencies, so no change is shown.")]]
+    if prior.basis == "length":
+        return [[("text", "The periods are different lengths.")]]
+    if current.value == prior.value and measure != "margin":
+        return [[
+            ("text", f"{figure} was unchanged from "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+            ("text", " at "),
+            _link_fact(current.fact),
+            ("text", "."),
+        ]]
+    if measure == "margin":
+        delta = (current.value - prior.value).quantize(Decimal("0.1"))
+        if delta == 0:
+            return [[
+                ("text", f"{figure} was unchanged from "),
+                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+                ("text", " at "),
+                ("link", show_measure(current.value, "percent"), fact_href(current.fact)),
+                ("text", "."),
+            ]]
+        word = "higher" if delta > 0 else "lower"
+        return [[
+            ("text", "That is "),
+            ("link", show_measure(abs(delta), "percentage points"), fact_href(current.fact)),
+            ("text", f" {word} than "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+            ("text", "."),
+        ]]
+    if measure == "net_debt":
+        word = _higher(current.value, prior.value)
+        return [[
+            ("text", "That is "),
+            ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
+            ("text", f" {word} than "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+            ("text", "."),
+        ]]
+    pct = percent_change(current.value, prior.value)
+    if pct == 0:
+        return [[
+            ("text", f"{figure} was unchanged from "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+            ("text", " at "),
+            _link_fact(current.fact),
+            ("text", "."),
+        ]]
+    sign_flip = current.value != 0 and prior.value != 0 and (current.value > 0) != (prior.value > 0)
+    if pct is None:
+        reason = ""
+        if prior.value == 0:
+            reason = "the earlier figure was zero"
+        elif prior.value < 0 < current.value or (prior.value < 0 and current.value == 0):
+            reason = "the figure changed from a loss to a profit"
+        elif current.value < 0 < prior.value:
+            reason = "the figure changed from a profit to a loss"
+        lines = []
+        if reason:
+            lines.append([
+                ("text", f"{figure} was "),
+                _link_fact(current.fact),
+                ("text", " in "),
+                _period_link(period_phrase(current.kind, current.period_start, current.period_end), current.fact),
+                ("text", ", compared with "),
+                _link_fact(prior.fact),
+                ("text", " in "),
+                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+                ("text", f". A percentage change is not shown because {reason}."),
+            ])
+        else:
+            word = _higher(current.value, prior.value)
+            lines.append([
+                ("text", "That is "),
+                ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
+                ("text", f" {word} than "),
+                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+                ("text", "."),
+            ])
+        if sign_flip and not reason:
+            pass
+        return lines
+    direction = _direction(current.value, prior.value)
+    if direction == "was unchanged":
+        return [[
+            ("text", f"{figure} was unchanged from "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+            ("text", " at "),
+            _link_fact(current.fact),
+            ("text", "."),
+        ]]
+    return [[
+        ("text", f"That is {direction} "),
+        ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
+        ("text", " from "),
+        _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+        ("text", "."),
+    ]]
+
+
+def _comparison_block(role: str, fact: Fact, last: Cell | None, year: Cell | None, measure: str, form_words: str, filed: str) -> str:
+    label = label_for(role, fact)
+    current = Cell(
+        True,
+        value=fact.value,
+        unit=fact.unit,
+        period_end=fact.period.end or "",
+        period_start=fact.period.start,
+        kind=fact.period.kind,
+        fact=fact,
+    )
+    chunks = []
+    if last is None and year is None:
+        return ""
+    present = []
+    if last is not None and last.available:
+        present.append(last)
+    if year is not None and year.available:
+        present.append(year)
+    if len(present) == 2 and last is not None and year is not None and last.fact and year.fact:
+        chunks.append(_parts_html("C1", [
+            ("text", f"{label} was "),
+            _link_fact(fact),
+            ("text", " in "),
+            _period_link(period_phrase(current.kind, current.period_start, current.period_end), fact),
+            ("text", ". It was "),
+            _link_fact(last.fact),
+            ("text", " in "),
+            _period_link(period_phrase(last.kind, last.period_start, last.period_end), last.fact),
+            ("text", " and "),
+            _link_fact(year.fact),
+            ("text", " in "),
+            _period_link(period_phrase(year.kind, year.period_start, year.period_end), year.fact),
+            ("text", "."),
+        ]))
+    elif len(present) == 1:
+        only = present[0]
+        assert only.fact is not None
+        chunks.append(_parts_html("C1", [
+            ("text", f"{label} was "),
+            _link_fact(fact),
+            ("text", " in "),
+            _period_link(period_phrase(current.kind, current.period_start, current.period_end), fact),
+            ("text", ". It was "),
+            _link_fact(only.fact),
+            ("text", " in "),
+            _period_link(period_phrase(only.kind, only.period_start, only.period_end), only.fact),
+            ("text", "."),
+        ]))
+    _append_changes(chunks, label, current, last, year, measure, form_words, filed)
+    return "".join(chunks)
+
+
+def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None:
+    for line in lines:
+        template_id = "C2"
+        text = _plain(line)
+        if text.startswith(f"{label} was unchanged"):
+            template_id = "C3"
+        elif "percentage change is not shown" in text:
+            template_id = "C4"
+        elif text.startswith("The periods") or text.startswith("The figures are in different"):
+            template_id = "C6"
+        chunks.append(_parts_html(template_id, line))
+
+
+def _append_changes(chunks, label, current, last, year, measure, form_words, filed) -> None:
+    ready: list[tuple[Cell, list[tuple]]] = []
+    for column in (last, year):
+        if column is None:
+            continue
+        if not column.available:
+            if column.basis == "structural":
+                chunks.append(_parts_html("M6", [
+                    ("text", f"{label} for the prior quarter is not available for this filing."),
+                ]))
+                continue
+            chunks.append(_parts_html("M2", _m2(label, column.missing_period or "the prior period")))
+            if column.basis == "length":
+                chunks.append(_parts_html("C6", [("text", "The periods are different lengths.")]))
+            if column.basis == "currency":
+                chunks.append(_parts_html("C6", [("text", "The figures are in different currencies, so no change is shown.")]))
+            continue
+        lines = _change_parts(label, current, column, measure)
+        percent = (
+            measure in {"money", "shares", "per_share"}
+            and len(lines) == 1
+            and " percent from " in _plain(lines[0])
+            and _plain(lines[0]).startswith("That is ")
+        )
+        if percent:
+            ready.append((column, lines[0]))
+        else:
+            _emit_lines(chunks, label, lines)
+        if column.revised_from is not None and column.fact is not None and current.fact is not None:
+            when = long_date(filed) if filed else "the filing date"
+            chunks.append(_parts_html("C5", [
+                ("text", "The "),
+                _period_link(period_phrase(column.kind, column.period_start, column.period_end), column.fact),
+                ("text", f" figure is shown as restated in the {form_words} filed on "),
+                ("link", when, _filing_href(current.fact.source.url)),
+                ("text", "; the earlier filing showed "),
+                _link_fact(column.revised_from),
+                ("text", "."),
+            ]))
+    if len(ready) == 2 and current.fact is not None and current.value is not None:
+        prior, _prior_line = ready[0]
+        earlier, _year_line = ready[1]
+        assert prior.fact is not None and earlier.fact is not None and prior.value is not None and earlier.value is not None
+        first = percent_change(current.value, prior.value)
+        second = percent_change(current.value, earlier.value)
+        if first is not None and second is not None:
+            if first == 0 or second == 0:
+                for _column, line in ready:
+                    _emit_lines(chunks, label, [line])
+                return
+            chunks.append(_parts_html("C2", [
+                ("text", f"That is {_direction(current.value, prior.value)} "),
+                ("link", show_measure(abs(first), "percent"), fact_href(current.fact)),
+                ("text", " from "),
+                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
+                ("text", f", and {_direction(current.value, earlier.value)} "),
+                ("link", show_measure(abs(second), "percent"), fact_href(current.fact)),
+                ("text", " from "),
+                _period_link(period_phrase(earlier.kind, earlier.period_start, earlier.period_end), earlier.fact),
+                ("text", "."),
+            ]))
+            return
+    for _column, line in ready:
+        chunks.append(_parts_html("C2", line))
+
+
+def _explain_block(role: str, fact: Fact, company: str, statement: str, formula: str, inputs: list[tuple[str, Fact]]) -> str:
+    label = label_for(role, fact)
+    definition = DEFINITIONS.get(role, "a figure reported in the filing")
+    period = period_phrase(fact.period.kind, fact.period.start, fact.period.end or "")
+    parts = [
+        _parts_html("E1", [("text", f"{label} is {definition}.")]),
+        _parts_html("E2", [
+            ("text", f"For {company}, {label} was "),
+            _link_fact(fact),
+            ("text", " in "),
+            _period_link(period, fact),
+            ("text", f". It came from the {statement or 'filing'}."),
+        ]),
+    ]
+    if formula and inputs:
+        input_parts: list[tuple] = [("text", f"It is calculated as {formula}, using ")]
+        for index, (name, source) in enumerate(inputs):
+            if index:
+                input_parts.append(("text", " and " if index == len(inputs) - 1 else ", "))
+            input_parts.append(("text", f"{name} of "))
+            input_parts.append(_link_fact(source))
+        input_parts.append(("text", "."))
+        parts.append(_parts_html("E2", input_parts))
+    return "".join(parts)
+
+
+def _threshold(check_id: str, label: str) -> str:
+    if check_id == "C1":
+        text = f"This check marks results below {format(CASH_CONVERSION, '.2f')} times."
+    elif check_id == "C2":
+        text = "This check marks results where receivables grew at least 10 percentage points faster than revenue."
+    elif check_id == "C3":
+        text = f"This check marks results where inventory grew at least 10 percentage points faster than {label}."
+    elif check_id == "C4":
+        text = "This check marks any item equal to at least 10 percent of operating income."
+    elif check_id == "C6":
+        text = (
+            "This check marks a rise of at least 3 percent in diluted shares, "
+            "or diluted shares at least 3 percent above basic shares."
+        )
+    elif check_id == "C7":
+        text = "This check marks a change of at least 3.0 percentage points in either margin."
+    else:
+        text = "This check marks a change of at least 5.0 percentage points."
+    return f'<p data-template="THRESHOLD" data-constant="threshold">{html.escape(text)}</p>\n'
+
+
+def _marker(outcome: str, reason: str) -> str:
+    if outcome == "unusual":
+        text = "Check: unusual"
+    elif outcome == "consistent":
+        text = "Check: consistent"
+    else:
+        text = f"Check: not run: {reason}"
+    return f'<p class="marker" data-template="MARKER">{html.escape(text)}</p>\n'
+
+
+def _check_numbers(result: CheckResult) -> str:
+    facts = list(result.facts)
+    if result.check_id == "C1" and len(facts) >= 2:
+        ocf, ni = facts[0], facts[1]
+        parts: list[tuple] = [
+            ("text", "Operating cash flow was "),
+            _link_fact(ocf),
+            ("text", " and net income was "),
+            _link_fact(ni),
+            ("text", " for "),
+            _period_link(period_phrase(ocf.period.kind, ocf.period.start, ocf.period.end or ""), ocf),
+            ("text", ", so operating cash flow was "),
+            ("link", f"{result.numbers['ratio']:.1f} times", fact_href(ocf)),
+            ("text", " net income"),
+        ]
+        if "ratio_prior" in result.numbers and len(facts) >= 4:
+            prior = facts[2]
+            parts.extend([
+                ("text", " ("),
+                ("link", f"{result.numbers['ratio_prior']:.1f} times", fact_href(prior)),
+                ("text", " for "),
+                _period_link(period_phrase(prior.period.kind, prior.period.start, prior.period.end or ""), prior),
+                ("text", ")"),
+            ])
+        parts.append(("text", "."))
+        return _parts_html("NUMBERS", parts)
+    if result.check_id == "C2" and len(facts) >= 4:
+        ar_now, ar_then, rev_now, rev_then = facts[:4]
+        if result.numbers["g_ar"] == 0 or result.numbers["g_rev"] == 0:
+            lines = []
+            if result.numbers["g_ar"] == 0:
+                lines.append(_unchanged_line("Accounts receivable", ar_then, ar_now))
+            else:
+                lines.append(_parts_html("NUMBERS", [
+                    ("text", f"Accounts receivable {_rose(result.numbers['g_ar'])} "),
+                    ("link", show_measure(abs(result.numbers["g_ar"]), "percent"), fact_href(ar_now)),
+                    ("text", " from "),
+                    _period_link(period_phrase("instant", None, ar_then.period.end or ""), ar_then),
+                    ("text", " to "),
+                    _period_link(period_phrase("instant", None, ar_now.period.end or ""), ar_now),
+                    ("text", "."),
+                ]))
+            if result.numbers["g_rev"] == 0:
+                lines.append(_unchanged_line("Revenue", rev_then, rev_now))
+            else:
+                lines.append(_parts_html("NUMBERS", [
+                    ("text", f"Revenue {_rose(result.numbers['g_rev'])} "),
+                    ("link", show_measure(abs(result.numbers["g_rev"]), "percent"), fact_href(rev_now)),
+                    ("text", "."),
+                ]))
+            lines.append(_parts_html("NUMBERS", [
+                ("text", "Receivables equalled "),
+                ("link", f"{result.numbers['days_now']:.1f} days", fact_href(ar_now)),
+                ("text", " of sales, compared with "),
+                ("link", f"{result.numbers['days_then']:.1f} days", fact_href(ar_then)),
+                ("text", " a year earlier."),
+            ]))
+            return "".join(lines)
+        return _parts_html("NUMBERS", [
+            ("text", f"Accounts receivable {_rose(result.numbers['g_ar'])} "),
+            ("link", show_measure(abs(result.numbers["g_ar"]), "percent"), fact_href(ar_now)),
+            ("text", " from "),
+            _period_link(period_phrase("instant", None, ar_then.period.end or ""), ar_then),
+            ("text", " to "),
+            _period_link(period_phrase("instant", None, ar_now.period.end or ""), ar_now),
+            ("text", f", while revenue {_rose(result.numbers['g_rev'])} "),
+            ("link", show_measure(abs(result.numbers["g_rev"]), "percent"), fact_href(rev_now)),
+            ("text", ". Receivables equalled "),
+            ("link", f"{result.numbers['days_now']:.1f} days", fact_href(ar_now)),
+            ("text", " of sales, compared with "),
+            ("link", f"{result.numbers['days_then']:.1f} days", fact_href(ar_then)),
+            ("text", " a year earlier."),
+        ])
+    if result.check_id == "C3" and len(facts) >= 4:
+        inv_now, inv_then, cost_now, _cost_then = facts[:4]
+        cost_label = result.labels.get("cost", "cost of sales")
+        if result.numbers["g_inv"] == 0 or result.numbers["g_cost"] == 0:
+            lines = []
+            if result.numbers["g_inv"] == 0:
+                lines.append(_unchanged_line("Inventory", inv_then, inv_now))
+            else:
+                lines.append(_parts_html("NUMBERS", [
+                    ("text", f"Inventory {_rose(result.numbers['g_inv'])} "),
+                    ("link", show_measure(abs(result.numbers["g_inv"]), "percent"), fact_href(inv_now)),
+                    ("text", " from "),
+                    _period_link(period_phrase("instant", None, inv_then.period.end or ""), inv_then),
+                    ("text", " to "),
+                    _period_link(period_phrase("instant", None, inv_now.period.end or ""), inv_now),
+                    ("text", "."),
+                ]))
+            cost_name = cost_label[:1].upper() + cost_label[1:]
+            if result.numbers["g_cost"] == 0:
+                lines.append(_unchanged_line(cost_name, _cost_then, cost_now))
+            else:
+                lines.append(_parts_html("NUMBERS", [
+                    ("text", f"{cost_name} {_rose(result.numbers['g_cost'])} "),
+                    ("link", show_measure(abs(result.numbers["g_cost"]), "percent"), fact_href(cost_now)),
+                    ("text", "."),
+                ]))
+            return "".join(lines)
+        return _parts_html("NUMBERS", [
+            ("text", f"Inventory {_rose(result.numbers['g_inv'])} "),
+            ("link", show_measure(abs(result.numbers["g_inv"]), "percent"), fact_href(inv_now)),
+            ("text", " from "),
+            _period_link(period_phrase("instant", None, inv_then.period.end or ""), inv_then),
+            ("text", " to "),
+            _period_link(period_phrase("instant", None, inv_now.period.end or ""), inv_now),
+            ("text", f", while {cost_label} {_rose(result.numbers['g_cost'])} "),
+            ("link", show_measure(abs(result.numbers["g_cost"]), "percent"), fact_href(cost_now)),
+            ("text", "."),
+        ])
+    if result.check_id == "C4" and result.items:
+        operating = facts[-1]
+        lines = []
+        for item in result.items:
+            kind = "charge" if item.charge else "gain"
+            share = (item.share * Decimal(100)).quantize(Decimal("0.1"))
+            lines.append(_parts_html("NUMBERS", [
+                ("text", f"The filing tags {ITEM_LABELS.get(item.fact.concept, item.fact.concept)} of "),
+                _link_fact(item.fact),
+                ("text", " for "),
+                _period_link(period_phrase(item.fact.period.kind, item.fact.period.start, item.fact.period.end or ""), item.fact),
+                ("text", f", a {kind} equal to "),
+                ("link", show_measure(share, "percent"), fact_href(item.fact)),
+                ("text", " of operating income of "),
+                _link_fact(operating),
+                ("text", "."),
+            ]))
+        return "".join(lines)
+    if result.check_id == "C6" and len(facts) >= 2:
+        now, earlier = facts[0], facts[1]
+        growth = result.numbers["growth"]
+        gap = result.numbers["gap"]
+        if growth == 0:
+            lines = [_unchanged_line("The diluted share count", earlier, now)]
+            if gap > 0:
+                lines.append(_parts_html("NUMBERS", [
+                    ("text", "Diluted shares were "),
+                    ("link", show_measure(abs(gap), "percent"), fact_href(now)),
+                    ("text", " more than basic shares in "),
+                    _period_link(period_phrase(now.period.kind, now.period.start, now.period.end or ""), now),
+                    ("text", "."),
+                ]))
+            return "".join(lines)
+        share_parts: list[tuple] = [
+            ("text", f"The diluted share count {_rose(growth)} "),
+            ("link", show_measure(abs(growth), "percent"), fact_href(now)),
+            ("text", " from "),
+            _period_link(period_phrase(earlier.period.kind, earlier.period.start, earlier.period.end or ""), earlier),
+            ("text", " to "),
+            _period_link(period_phrase(now.period.kind, now.period.start, now.period.end or ""), now),
+        ]
+        if gap >= 0:
+            share_parts.extend([
+                ("text", ". Diluted shares were "),
+                ("link", show_measure(abs(gap), "percent"), fact_href(now)),
+                ("text", " more than basic shares in "),
+                _period_link(period_phrase(now.period.kind, now.period.start, now.period.end or ""), now),
+                ("text", "."),
+            ])
+        else:
+            share_parts.append(("text", "."))
+        lines = [_parts_html("NUMBERS", share_parts)]
+        if growth < 0:
+            lines.append(_parts_html("DECREASE", [
+                ("text", "The diluted share count fell "),
+                ("link", show_measure(abs(growth), "percent"), fact_href(now)),
+                ("text", "."),
+            ]))
+        return "".join(lines)
+    if result.check_id == "C7":
+        lines = []
+        if "gm_delta" in result.numbers and len(facts) >= 4:
+            lines.append(_parts_html("NUMBERS", [
+                ("text", "Gross margin was "),
+                ("link", show_measure(result.numbers["gm_now"], "percent"), fact_href(facts[2])),
+                ("text", " in "),
+                _period_link(period_phrase(facts[0].period.kind, facts[0].period.start, facts[0].period.end or ""), facts[0]),
+                ("text", " and "),
+                ("link", show_measure(result.numbers["gm_then"], "percent"), fact_href(facts[3])),
+                ("text", " in "),
+                _period_link(period_phrase(facts[1].period.kind, facts[1].period.start, facts[1].period.end or ""), facts[1]),
+                ("text", ", a change of "),
+                ("link", show_measure(abs(result.numbers["gm_delta"]).quantize(Decimal("0.1")), "percentage points"), fact_href(facts[2])),
+                ("text", "."),
+            ]))
+        if "om_delta" in result.numbers:
+            oi = facts[-2]
+            lines.append(_parts_html("NUMBERS", [
+                ("text", "Operating margin was "),
+                ("link", show_measure(result.numbers["om_now"], "percent"), fact_href(oi)),
+                ("text", " and "),
+                ("link", show_measure(result.numbers["om_then"], "percent"), fact_href(oi)),
+                ("text", ", a change of "),
+                ("link", show_measure(abs(result.numbers["om_delta"]).quantize(Decimal("0.1")), "percentage points"), fact_href(oi)),
+                ("text", "."),
+            ]))
+        return "".join(lines)
+    if result.check_id == "C8" and facts:
+        return _parts_html("NUMBERS", [
+            ("text", "Income tax was "),
+            ("link", show_measure(result.numbers["rate_now"], "percent"), fact_href(facts[0])),
+            ("text", " of pre-tax income in "),
+            _period_link(period_phrase(facts[0].period.kind, facts[0].period.start, facts[0].period.end or ""), facts[0]),
+            ("text", " and "),
+            ("link", show_measure(result.numbers["rate_then"], "percent"), fact_href(facts[1])),
+            ("text", " in "),
+            _period_link(period_phrase(facts[1].period.kind, facts[1].period.start, facts[1].period.end or ""), facts[1]),
+            ("text", ", a change of "),
+            ("link", show_measure(abs(result.numbers["delta"]).quantize(Decimal("0.1")), "percentage points"), fact_href(facts[0])),
+            ("text", "."),
+        ])
+    return ""
+
+
+def _rose(value: Decimal) -> str:
+    if value > 0:
+        return "rose"
+    if value < 0:
+        return "fell"
+    return "was unchanged"
+
+
+def _unchanged_line(figure: str, prior: Fact, current: Fact) -> str:
+    return _parts_html("C3", [
+        ("text", f"{figure} was unchanged from "),
+        _period_link(period_phrase(prior.period.kind, prior.period.start, prior.period.end or ""), prior),
+        ("text", " at "),
+        _link_fact(current),
+        ("text", "."),
+    ])
+
+
+def _check_html(result: CheckResult) -> str:
+    heading = HEADINGS[result.check_id]
+    if result.check_id == "C3" and result.labels.get("cost") == "revenue":
+        heading = "Inventory and revenue"
+    ident = result.check_id.lower()
+    if result.outcome == "not_run":
+        return (
+            f'<section class="check" data-check="{result.check_id}">\n'
+            f"<h3>{html.escape(heading)}</h3>\n"
+            f"{_marker(result.outcome, result.reason)}"
+            "</section>\n"
+        )
+    label = result.labels.get("cost", "cost of sales")
+    body = _marker(result.outcome, result.reason) + _check_numbers(result) + _threshold(result.check_id, label)
+    if result.outcome == "unusual":
+        body += (
+            f'<p data-template="WHY">{html.escape(WHY[result.check_id])}</p>\n'
+            f'<p data-template="CAUSES">{html.escape(CAUSES[result.check_id])}</p>\n'
+        )
+    body += f'<p data-template="LIMIT">{html.escape(LIMIT)}</p>\n'
+    formula = html.escape(result.formula)
+    panel = (
+        f'<div id="formula-{ident}" class="explain" hidden>\n'
+        f'<p data-template="FORMULA">Formula: {formula}.</p>\n'
+        f"{_check_numbers(result)}</div>\n"
+    )
+    return (
+        f'<section class="check" data-check="{result.check_id}">\n'
+        f'<h3><button type="button" class="tap" aria-expanded="false" aria-controls="formula-{ident}">'
+        f"{html.escape(heading)}</button></h3>\n"
+        f"{body}{panel}</section>\n"
+    )
+
+
+def quality_html(facts: list[Fact], *, form: str, period_end: str | None) -> str:
+    blocks = [_check_html(result) for result in run_checks(facts, form=form, period_end=period_end)]
+    return (
+        '<section class="quality" id="quality">\n'
+        f'<p data-template="FRAME">{html.escape(FRAME)}</p>\n'
+        + "".join(blocks)
+        + "</section>\n"
+    )
+
+
+def _role_of(explained, kind: str, identifier: str) -> tuple[str, Fact | None, list[tuple[str, Fact]]]:
+    if kind == "fact":
+        fact = explained.store.get(identifier)
+        return fact.role or "revenue", fact, []
+    calc = explained.store.get_calc(identifier)
+    inputs = []
+    names = {
+        "gross_margin": ("gross profit", "revenue"),
+        "operating_margin": ("operating income", "revenue"),
+        "net_margin": ("net income", "revenue"),
+        "yoy_change": ("revenue", "prior revenue"),
+        "net_debt": ("debt", "cash"),
+    }.get(calc.name, ("input", "input"))
+    for index, fact_id in enumerate(calc.input_ids):
+        if explained.store.has_fact(fact_id):
+            inputs.append((names[index] if index < len(names) else "input", explained.store.get(fact_id)))
+    fact = inputs[0][1] if inputs else None
+    return calc.name, fact, inputs
+
+
+def build_additions(
+    explained,
+    *,
+    form: str,
+    focus: str | None,
+    period_end: str | None,
+    fiscal_year_end: str,
+    company: str,
+    filed: str,
+    prior_facts: list[Fact] | None = None,
+    prior_end: str | None = None,
+) -> Additions:
+    facts = explained.store.facts()
+    prior_facts = prior_facts or []
+    form_words = "annual report" if form == "10-K" else "quarterly report" if form == "10-Q" else "report"
+    before: dict[str, str] = {}
+    after: dict[str, str] = {}
+    seen_statement = ""
+    plain_parts: list[str] = []
+    order = re.findall(r'data-kind="(fact|calc)" data-id="([^"]+)"', explained.html)
+    seen_ids: list[tuple[str, str]] = []
+    for kind, identifier in order:
+        if (kind, identifier) in seen_ids:
+            continue
+        seen_ids.append((kind, identifier))
+    grouped: dict[str, list[str]] = {}
+    for kind, identifier in seen_ids:
+        role, fact, inputs = _role_of(explained, kind, identifier)
+        if fact is None:
+            continue
+        statement = statement_name(fact) or "the filing"
+        grouped.setdefault(statement, []).append(label_for(role, fact))
+        if statement != seen_statement:
+            names_for: list[str] = []
+            for kind2, id2 in seen_ids:
+                role2, fact2, _inputs2 = _role_of(explained, kind2, id2)
+                if fact2 is None:
+                    continue
+                if (statement_name(fact2) or "the filing") != statement:
+                    continue
+                label2 = label_for(role2, fact2)
+                if label2 not in names_for:
+                    names_for.append(label2)
+            names = ", ".join(names_for)
+            control = "section-" + re.sub(r"[^a-z]+", "-", statement.lower())
+            before[identifier] = (
+                f'<h2><button type="button" class="tap" aria-expanded="false" aria-controls="{control}">'
+                f"{html.escape(statement)}</button></h2>\n"
+                f'<div id="{control}" class="explain" hidden>\n'
+                + _parts_html("SECTION", [
+                    ("text", f"This section shows {names} from the {statement} in {company}'s {form_words} for "),
+                    _period_link(period_phrase(fact.period.kind, fact.period.start, fact.period.end or ""), fact),
+                    ("text", "."),
+                ])
+                + "</div>\n"
+            )
+            seen_statement = statement
+        measure = "money"
+        if role in {"shares", "diluted"} or fact.unit.split()[0] == "shares":
+            measure = "shares"
+        if fact.unit.split()[0] == "USD/shares" or role == "per_share":
+            measure = "per_share"
+        if role in {"gross_margin", "operating_margin", "net_margin"}:
+            measure = "margin"
+        if role == "net_debt":
+            measure = "net_debt"
+        anchor_fact = fact
+        last = year = None
+        column_args = dict(
+            form=form,
+            focus=focus,
+            period_end=period_end,
+            fiscal_year_end=fiscal_year_end,
+            facts=facts,
+            prior_facts=prior_facts,
+            prior_end=prior_end,
+        )
+        if role == "yoy_change":
+            pass
+        elif measure == "margin" and len(inputs) == 2:
+            anchor_fact = _shown_calc(explained, identifier, inputs[0][1], "percent", role)
+            last, year = _derived_columns("margin", inputs, **column_args)
+        elif measure == "net_debt" and len(inputs) == 2:
+            anchor_fact = _shown_calc(explained, identifier, inputs[0][1], inputs[0][1].unit, "net_debt")
+            last, year = _derived_columns("net_debt", inputs, **column_args)
+        else:
+            last, year = columns_for(fact, role=role, **column_args)
+        formula = ""
+        if role == "gross_margin":
+            formula = "gross profit divided by revenue"
+        elif role == "operating_margin":
+            formula = "operating income divided by revenue"
+        elif role == "net_margin":
+            formula = "net income divided by revenue"
+        elif role == "net_debt":
+            formula = "debt minus cash"
+        elif role == "yoy_change":
+            formula = "(revenue minus prior revenue) divided by prior revenue"
+        block = ""
+        if role != "yoy_change":
+            block = _comparison_block(role, anchor_fact, last, year, measure if measure != "per_share" else "money", form_words, filed)
+        control = "explain-" + identifier
+        explanation = _explain_block(role, anchor_fact, company or "this company", statement, formula, inputs)
+        after[identifier] = (
+            f'<div class="comparisons">{block}</div>\n'
+            f'<div id="{control}" class="explain" hidden>{explanation}</div>\n'
+        )
+        plain_parts.append(re.sub(r"<[^>]+>", " ", block + explanation))
+    quality = quality_html(facts, form=form, period_end=period_end)
+    plain_parts.append(re.sub(r"<[^>]+>", " ", quality))
+    return Additions(before, after, quality, "\n".join(plain_parts))
+
+
+def _shown_calc(explained, identifier: str, source: Fact, unit: str, role: str) -> Fact:
+    return Fact(
+        id=source.id,
+        concept=source.concept,
+        label="Net debt" if role == "net_debt" else label_for(role, source),
+        value=explained.store.get_calc(identifier).value,
+        unit=unit,
+        period=source.period,
+        source=source.source,
+        role=role,
+        origin=source.origin,
+    )
+
+
+def _derived_columns(kind: str, inputs, **column_args) -> tuple[Cell | None, Cell | None]:
+    left, right = inputs[0][1], inputs[1][1]
+    left_last, left_year = columns_for(left, role=left.role or "revenue", **column_args)
+    right_last, right_year = columns_for(right, role=right.role or "revenue", **column_args)
+    return _combine(kind, left_last, right_last), _combine(kind, left_year, right_year)
+
+
+def _combine(kind: str, left: Cell | None, right: Cell | None) -> Cell | None:
+    if left is None or right is None:
+        return None
+    missing = left.missing_period or right.missing_period or "the prior period"
+    if (
+        not left.available
+        or not right.available
+        or left.fact is None
+        or right.fact is None
+        or left.value is None
+        or right.value is None
+    ):
+        return Cell(False, missing_period=missing, basis=left.basis or right.basis)
+    if left.period_end != right.period_end:
+        return Cell(False, missing_period=missing)
+    if kind == "margin":
+        from white_cliff.compare import margin_value
+
+        value = margin_value(left.value, right.value)
+        unit = "percent"
+        if value is None:
+            return Cell(False, missing_period=missing)
+    else:
+        value = left.value - right.value
+        unit = left.unit
+    shown = Fact(
+        id=left.fact.id,
+        concept=left.fact.concept,
+        label=left.fact.label,
+        value=value,
+        unit=unit,
+        period=left.fact.period,
+        source=left.fact.source,
+        role=left.fact.role,
+        origin=left.fact.origin,
+    )
+    return Cell(
+        True,
+        value=value,
+        unit=unit,
+        period_end=left.period_end,
+        period_start=left.period_start,
+        kind=left.kind,
+        fact=shown,
+    )
+
+
+def anchor_id(href: str) -> str:
+    fragment = urlsplit(href).fragment
+    for key in ("fact", "calc"):
+        if fragment.startswith(key + "="):
+            return fragment.split("=", 1)[1].split("&", 1)[0]
+    return ""
+
+
+def page_terms(text: str) -> str | None:
+    """Banned words on a rendered page. The disclaimer and the framing line are allowed."""
+    from white_cliff.disclaimer import DISCLAIMER
+
+    without_code = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
+    without_code = re.sub(r"<script\b[^>]*>.*?</script>", " ", without_code, flags=re.I | re.S)
+    visible = html.unescape(re.sub(r"<[^>]+>", " ", without_code))
+    for allowed in (DISCLAIMER, FRAME):
+        visible = visible.replace(allowed, " ")
+    return banned_term(visible)
+
+
+def banned_term(text: str) -> str | None:
+    tokens = re.findall(r"[a-z0-9']+", text.lower())
+    token_set = set(tokens)
+    for word in _BANNED:
+        if word in token_set:
+            return word
+    folded = " ".join(tokens)
+    for phrase in _BANNED_PHRASES:
+        if phrase == "per share":
+            continue
+        if phrase in folded:
+            return phrase
+    return None
+
+
+def text_is_clear(text: str, filing_text: str = "") -> str | None:
+    """Advice guard plus both banned lists. The one cleared ordinary-causes line is exact."""
+    cleaned = text
+    for sentence in CAUSES.values():
+        cleaned = cleaned.replace(sentence, " ")
+    listed = banned_term(cleaned)
+    if listed:
+        return listed
+    return advice_reason(cleaned, filing_text)
+
+
+# Imported names kept for the item list contract.
+_ = ONE_OFF

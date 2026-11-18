@@ -284,3 +284,52 @@ def select_latest(
                     document=document,
                 )
     return best
+
+
+def quarterly_filings(
+    payload: dict,
+    cik: str,
+    extra_pages: Sequence[dict] | None = None,
+) -> tuple[PeriodicFiling, ...]:
+    """Every inline 10-Q and 10-Q/A. Amendments stay visible so the caller can refuse them."""
+    pages = []
+    first = _recent_map(payload) if isinstance(payload, dict) else {}
+    if first:
+        pages.append(first)
+    for extra in extra_pages or []:
+        if isinstance(extra, dict):
+            page = _recent_map(extra)
+            if page:
+                pages.append(page)
+    digits = "".join(char for char in str(cik) if char.isdigit()).zfill(10)
+    found: list[PeriodicFiling] = []
+    for recent in pages:
+        forms = recent.get("form") or []
+        dates = recent.get("filingDate") or []
+        periods = recent.get("reportDate") or []
+        accessions = recent.get("accessionNumber") or []
+        documents = recent.get("primaryDocument") or []
+        if not isinstance(forms, list):
+            continue
+        inline = recent.get("isInlineXBRL")
+        for index, form in enumerate(forms):
+            if form not in {"10-Q", "10-Q/A"} or not _inline_ok(inline, index):
+                continue
+            if index >= len(dates) or index >= len(accessions) or index >= len(documents):
+                continue
+            accession = str(accessions[index])
+            document = str(documents[index])
+            if _ACCESSION.fullmatch(accession) is None or _SAFE_NAME.fullmatch(document) is None:
+                continue
+            period = str(periods[index]) if index < len(periods) else ""
+            found.append(
+                PeriodicFiling(
+                    form=str(form),
+                    filed=str(dates[index]),
+                    period=period,
+                    accession=accession,
+                    cik=digits,
+                    document=document,
+                )
+            )
+    return tuple(found)

@@ -1157,3 +1157,288 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
             stderr_file.close()
         server.shutdown()
         server.server_close()
+
+
+class _NvidiaTransport:
+    """Serves NVIDIA's own 10-Qs. An Apple document is never returned for this CIK."""
+
+    def __init__(self):
+        self.calls = []
+        root = ROOT / "pinned" / "filings"
+        self.documents = {
+            "000104581026000075/nvda-20260726.htm": (
+                root / "0001045810-26-000075" / "nvda-20260726.htm"
+            ).read_bytes(),
+            "000104581026000052/nvda-20260426.htm": (
+                root / "0001045810-26-000052" / "nvda-20260426.htm"
+            ).read_bytes(),
+        }
+        self.submissions = json.dumps(
+            {
+                "cik": "0001045810",
+                "name": "NVIDIA CORP",
+                "fiscalYearEnd": "0131",
+                "tickers": ["NVDA"],
+                "filings": {
+                    "recent": {
+                        "form": ["10-Q", "10-Q"],
+                        "filingDate": ["2026-08-26", "2026-05-20"],
+                        "reportDate": ["2026-07-26", "2026-04-26"],
+                        "accessionNumber": ["0001045810-26-000075", "0001045810-26-000052"],
+                        "primaryDocument": ["nvda-20260726.htm", "nvda-20260426.htm"],
+                        "acceptanceDateTime": [
+                            "2026-08-26T16:00:00.000Z",
+                            "2026-05-20T16:00:00.000Z",
+                        ],
+                        "isInlineXBRL": ["1", "1"],
+                    }
+                },
+            }
+        ).encode("utf-8")
+        self.tickers = json.dumps(
+            {"0": {"cik_str": 1045810, "ticker": "NVDA", "title": "NVIDIA CORP"}}
+        ).encode("utf-8")
+
+    def __call__(self, url, user_agent):
+        host = url.split("/", 3)[2]
+        assert host in {"www.sec.gov", "data.sec.gov"}
+        assert "320193" not in url and "aapl" not in url
+        self.calls.append((url, user_agent))
+        if url.endswith("/files/company_tickers.json"):
+            return 200, self.tickers, {}
+        if url.endswith("/submissions/CIK0001045810.json"):
+            return 200, self.submissions, {}
+        for suffix, body in self.documents.items():
+            if url.endswith(suffix):
+                return 200, body, {}
+        raise AssertionError(url)
+
+
+def _quarter_html(period_end, start, fiscal_year_end, revenue, focus):
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+      xmlns:us-gaap="http://fasb.org/us-gaap/2026"
+      xmlns:dei="http://xbrl.sec.gov/dei/2026">
+<body>
+<xbrli:context id="c-q">
+  <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000001</xbrli:identifier></xbrli:entity>
+  <xbrli:period><xbrli:startDate>{start}</xbrli:startDate><xbrli:endDate>{period_end}</xbrli:endDate></xbrli:period>
+</xbrli:context>
+<xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
+<ix:nonNumeric name="dei:DocumentType" contextRef="c-q">10-Q</ix:nonNumeric>
+<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-q">Example Co</ix:nonNumeric>
+<ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="c-q">{focus}</ix:nonNumeric>
+<ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-q">{period_end}</ix:nonNumeric>
+<ix:nonNumeric name="dei:EntityCentralIndexKey" contextRef="c-q">0000000001</ix:nonNumeric>
+<ix:nonNumeric name="dei:CurrentFiscalYearEndDate" contextRef="c-q">{fiscal_year_end}</ix:nonNumeric>
+<ix:nonFraction name="us-gaap:Revenues" contextRef="c-q" unitRef="usd" decimals="0">{revenue}</ix:nonFraction>
+</body>
+</html>
+""".encode("utf-8")
+
+
+class _CalendarTransport:
+    def __init__(self):
+        self.calls = []
+        self.current = _quarter_html("2026-07-26", "2026-04-27", "--01-31", "888001", "Q2")
+        self.prior = _quarter_html("2026-04-26", "2026-01-26", "--06-30", "777001", "Q1")
+        self.submissions = json.dumps(
+            {
+                "cik": "0000000001",
+                "name": "Example Co",
+                "fiscalYearEnd": "0131",
+                "tickers": ["EX"],
+                "filings": {
+                    "recent": {
+                        "form": ["10-Q", "10-Q"],
+                        "filingDate": ["2026-08-20", "2026-05-20"],
+                        "reportDate": ["2026-07-26", "2026-04-26"],
+                        "accessionNumber": ["0000000001-26-000002", "0000000001-26-000001"],
+                        "primaryDocument": ["current.htm", "prior.htm"],
+                        "acceptanceDateTime": [
+                            "2026-08-20T16:00:00.000Z",
+                            "2026-05-20T16:00:00.000Z",
+                        ],
+                        "isInlineXBRL": ["1", "1"],
+                    }
+                },
+            }
+        ).encode("utf-8")
+        self.tickers = json.dumps(
+            {"0": {"cik_str": 1, "ticker": "EX", "title": "Example Co"}}
+        ).encode("utf-8")
+
+    def __call__(self, url, user_agent):
+        host = url.split("/", 3)[2]
+        assert host in {"www.sec.gov", "data.sec.gov"}
+        self.calls.append(url)
+        if url.endswith("/files/company_tickers.json"):
+            return 200, self.tickers, {}
+        if url.endswith("/submissions/CIK0000000001.json"):
+            return 200, self.submissions, {}
+        if url.endswith("/current.htm"):
+            return 200, self.current, {}
+        if url.endswith("/prior.htm"):
+            return 200, self.prior, {}
+        raise AssertionError(url)
+
+
+def test_a_prior_quarter_from_before_a_fiscal_year_change_is_not_used(monkeypatch, tmp_path):
+    from white_cliff import desktop as desktop_module
+
+    seen = []
+    real = desktop_module.choose_prior_10q
+
+    def spy(current_end, current_fy, current_cik, candidates):
+        seen.extend(candidates)
+        return real(current_end, current_fy, current_cik, candidates)
+
+    monkeypatch.setattr(desktop_module, "choose_prior_10q", spy)
+    app = _app(monkeypatch, tmp_path, _CalendarTransport())
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    page = app.handle("POST", "/explain", {"query": "EX"})
+    assert seen and seen[0].fiscal_year_end == "--06-30"
+    assert "777,001" not in page.body
+    assert "$888,001" in page.body
+    assert "Revenue for the prior quarter is not in the filings White Cliff read, so no change is shown." in page.body
+
+
+def test_nvidia_lookup_reads_the_nvidia_filing(monkeypatch, tmp_path):
+    transport = _NvidiaTransport()
+    app = _app(monkeypatch, tmp_path, transport)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    page = app.handle("POST", "/explain", {"query": "NVDA"})
+    assert "$96,221 million" in page.body
+    assert "These checks compare the company" in page.body
+    assert "320193" not in page.body
+    assert "aapl-" not in page.body
+    assert any("/1045810/" in url for url, _user_agent in transport.calls)
+    assert any(url.endswith("nvda-20260426.htm") for url, _user_agent in transport.calls)
+
+
+def _chrome_page(binary: str, profile: Path, stderr_path: Path):
+    debug = socket.socket()
+    debug.bind(("127.0.0.1", 0))
+    debug_port = debug.getsockname()[1]
+    debug.close()
+    stderr_file = open(stderr_path, "wb")
+    chrome = subprocess.Popen(
+        [
+            binary,
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--window-size=1280,900",
+            f"--remote-debugging-port={debug_port}",
+            "--remote-allow-origins=*",
+            f"--user-data-dir={profile}",
+            "about:blank",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=stderr_file,
+    )
+    info = None
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if chrome.poll() is not None:
+            stderr_file.close()
+            raise AssertionError(
+                f"chrome exited {chrome.returncode}: {_stderr_text(stderr_path)}"
+            )
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{debug_port}/json/list", timeout=0.5
+            ) as response:
+                tabs = json.loads(response.read().decode("utf-8"))
+            if tabs and tabs[0].get("webSocketDebuggerUrl"):
+                info = tabs[0]
+                break
+        except (OSError, json.JSONDecodeError):
+            time.sleep(0.1)
+    if not info or not info.get("webSocketDebuggerUrl"):
+        if not stderr_file.closed:
+            stderr_file.close()
+        detail = _stderr_text(stderr_path)
+        message = "chrome did not open a debugging port within 30 seconds"
+        if detail:
+            message = f"{message}: {detail}"
+        chrome.kill()
+        raise AssertionError(message)
+    return chrome, stderr_file, _DevTools(info["webSocketDebuggerUrl"])
+
+
+def test_chrome_nvidia_result_has_figures_and_an_open_explanation(monkeypatch, tmp_path):
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    app = _app(monkeypatch, tmp_path, _NvidiaTransport())
+    server = _serve(app)
+    stderr_path = tmp_path / "chrome-nvda-stderr.txt"
+    chrome, stderr_file, page = _chrome_page(binary, tmp_path / "chrome-nvda", stderr_path)
+    try:
+        port = server.server_address[1]
+        page.call("Page.enable")
+        page.call("Runtime.enable")
+        page.call("Page.navigate", {"url": f"http://127.0.0.1:{port}/"})
+        _eval(
+            page,
+            """
+            new Promise(function (resolve) {
+              var ready = setInterval(function () {
+                var form = document.querySelector('form[action="/identity"]');
+                if (!form || !document.querySelector("#name")) return;
+                clearInterval(ready);
+                document.querySelector("#name").value = "Example Person";
+                document.querySelector("#email").value = "person@example.com";
+                form.requestSubmit();
+                resolve("saved");
+              }, 50);
+            })
+            """,
+        )
+        _wait_text(page, "Company name or ticker")
+        _eval(
+            page,
+            """
+            new Promise(function (resolve) {
+              var form = document.querySelector('form[action="/explain"]');
+              document.querySelector("#query").value = "NVDA";
+              form.requestSubmit();
+              resolve("sent");
+            })
+            """,
+        )
+        result = _wait_text(page, "$96,221 million", rounds=200)
+        assert "These checks compare the company" in result
+        assert "Apple" not in result
+        _eval(
+            page,
+            """
+            new Promise(function (resolve) {
+              var button = Array.from(document.querySelectorAll("button.tap")).find(function (item) {
+                return item.textContent === "Explain";
+              });
+              button.click();
+              resolve(button.getAttribute("aria-expanded"));
+            })
+            """,
+        )
+        opened = _wait_text(page, "the amount the company recorded from sales")
+        assert "These checks compare the company" in opened
+        shot = page.call(
+            "Page.captureScreenshot",
+            {"format": "png", "captureBeyondViewport": True, "fromSurface": True},
+        )
+        image = base64.b64decode(shot["data"])
+        assert image.startswith(b"\x89PNG")
+    finally:
+        page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
+        server.shutdown()
+        server.server_close()

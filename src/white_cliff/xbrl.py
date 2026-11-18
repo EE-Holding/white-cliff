@@ -39,6 +39,30 @@ for _role, _concepts in {
         "EntityCommonStockSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
     ),
+    "diluted": ("WeightedAverageNumberOfDilutedSharesOutstanding",),
+    "receivables": ("AccountsReceivableNetCurrent",),
+    "inventory": ("InventoryNet",),
+    "cost": ("CostOfGoodsAndServicesSold", "CostOfRevenue"),
+    "tax": ("IncomeTaxExpenseBenefit",),
+    "pretax": (
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    ),
+    "one_off": (
+        "RestructuringCharges",
+        "GoodwillImpairmentLoss",
+        "ImpairmentOfIntangibleAssetsExcludingGoodwill",
+        "AssetImpairmentCharges",
+        "GainLossOnDispositionOfAssets",
+        "GainLossOnSaleOfPropertyPlantEquipment",
+        "DisposalGroupNotDiscontinuedOperationGainLossOnDisposal",
+        "GainsLossesOnExtinguishmentOfDebt",
+        "BusinessCombinationAcquisitionRelatedCosts",
+    ),
+    "per_share": (
+        "EarningsPerShareBasic",
+        "EarningsPerShareDiluted",
+    ),
 }.items():
     for _concept in _concepts:
         _ROLES.setdefault(_concept, _role)
@@ -52,7 +76,16 @@ _SECTION = {
     "debt": "Balance sheet",
     "cash": "Balance sheet",
     "shares": "Equity",
+    "diluted": "Equity",
+    "receivables": "Balance sheet",
+    "inventory": "Balance sheet",
+    "cost": "Income statement",
+    "tax": "Income statement",
+    "pretax": "Income statement",
+    "one_off": "Income statement",
+    "per_share": "Income statement",
 }
+_SHARE_ROLES = frozenset({"shares", "diluted"})
 
 _PLAIN_NUMBER = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
 _DOT_DECIMAL = re.compile(r"^(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?$")
@@ -88,6 +121,7 @@ _DEI = frozenset(
         "DocumentFiscalPeriodFocus",
         "DocumentPeriodEndDate",
         "EntityCentralIndexKey",
+        "CurrentFiscalYearEndDate",
     }
 )
 _DIRECT_TEXT = frozenset({"identifier", "startDate", "endDate", "instant"})
@@ -136,7 +170,7 @@ def _concealed(frame: dict, ancestors: list[dict]) -> bool:
     return False
 
 
-MONEY_ROLES = frozenset(role for role in _ROLES.values() if role != "shares")
+MONEY_ROLES = frozenset(role for role in _ROLES.values() if role not in _SHARE_ROLES and role != "per_share")
 
 
 @dataclass
@@ -151,6 +185,7 @@ class ParsedFacts:
     filer_end: int | None = None
     cik: str = ""
     shares_tagged: bool = False
+    fiscal_year_end: str = ""
 
 
 @dataclass
@@ -378,6 +413,12 @@ class _Scope:
         if not self._frames:
             return
         frame = self._frames.pop()
+        if frame["keep"] and frame["local"] == "nonNumeric" and frame["chunks"]:
+            nested = "".join(frame["chunks"])
+            for parent in reversed(self._frames):
+                if parent["keep"] and parent["local"] == "nonNumeric":
+                    parent["chunks"].append(nested)
+                    break
         if local == "measure" and self._unit is not None:
             self._unit["measures"].append(self._resolve("".join(self._buf).strip()))
             self._buf = []
@@ -562,13 +603,29 @@ def _unit_label(
     if not unit_ref or unit_ref in duplicates or unit_ref not in units:
         return None
     bound = units[unit_ref]
-    if bound.divide or len(bound.measures) != 1:
+    if bound.divide:
+        if role != "per_share" or len(bound.measures) != 2:
+            return None
+        numerator, denominator = bound.measures
+        if numerator is None or denominator is None:
+            return None
+        num_uri, num_local = numerator
+        den_uri, den_local = denominator
+        if (
+            num_uri == _ISO_NS
+            and num_local == "USD"
+            and den_uri == _INSTANCE_NS
+            and den_local == "shares"
+        ):
+            return "USD/shares"
+        return None
+    if len(bound.measures) != 1:
         return None
     measure = bound.measures[0]
     if measure is None:
         return None
     uri, local = measure
-    if role == "shares":
+    if role in _SHARE_ROLES:
         if uri == _INSTANCE_NS and local == "shares":
             return "shares"
         return None
@@ -584,8 +641,10 @@ def _unit_with_scale(unit: str, scale: str | None) -> str | None:
     if scale not in _ALLOWED_SCALE:
         return None
     word = _SCALE_WORD.get(scale)
-    if word is None or unit not in {"USD", "shares"}:
+    if word is None or unit not in {"USD", "shares", "USD/shares"}:
         return None
+    if unit == "USD/shares":
+        return f"USD/shares {word}"
     return f"{unit} {word}"
 
 
@@ -657,6 +716,40 @@ def _cover_date(text: str, transform: str) -> str | None:
 
 def _iso_date(value: str) -> str | None:
     return _strict_date(value)
+
+
+def _fy_stamp(value: str) -> str:
+    """Month and day of the fiscal year end, as --MM-DD."""
+    text = value.replace("\u00a0", " ").strip()
+    dashed = re.fullmatch(r"--(\d{2})-(\d{2})", text)
+    if dashed:
+        return f"--{dashed.group(1)}-{dashed.group(2)}"
+    slash = re.fullmatch(r"(\d{1,2})/(\d{1,2})", text)
+    if slash:
+        month, day = int(slash.group(1)), int(slash.group(2))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"--{month:02d}-{day:02d}"
+    named = re.fullmatch(
+        r"(January|February|March|April|May|June|July|August|September|"
+        r"October|November|December)[ ]+([1-9]|0[1-9]|[12][0-9]|3[01])",
+        text,
+    )
+    if named:
+        return f"--{_MONTHS[named.group(1)]:02d}-{int(named.group(2)):02d}"
+    return text
+
+
+def _fiscal_year_end(scope: _Scope) -> str:
+    found: list[str] = []
+    for hit in scope.dei:
+        if hit.concept != "CurrentFiscalYearEndDate":
+            continue
+        value = _dei_value(hit, scope.contexts).strip()
+        if value:
+            found.append(value)
+    if len(set(found)) != 1:
+        return ""
+    return _fy_stamp(found[0])
 
 
 def _dei_value(hit: _Hit, contexts: dict[str, _Context]) -> str:
@@ -794,6 +887,7 @@ def parse_inline(
         filer_end=None if bounds is None else bounds[1],
         cik=_cik_text(filer_number),
         shares_tagged="shares" in scope.seen_roles,
+        fiscal_year_end=_fiscal_year_end(scope),
     )
 
 

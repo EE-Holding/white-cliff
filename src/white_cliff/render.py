@@ -57,6 +57,15 @@ def _shown(value, unit: str) -> str:
     return format_decimal(value)
 
 
+def _measure_label(value, unit: str) -> str:
+    """Visible amount. A USD-per-share unit keeps the words per share."""
+    if unit == "USD/shares" or unit.startswith("USD/shares "):
+        from white_cliff.present import shown_amount
+
+        return shown_amount(f"{format_decimal(value)} {unit}")
+    return f"{_shown(value, unit)} {unit}"
+
+
 def _escape_text(raw: str, mode: str) -> str:
     if mode == "html":
         return html.escape(raw, quote=False)
@@ -151,7 +160,7 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
     kind, identifier = match.group(1), match.group(2)
     if kind == "fact":
         fact = store.get(identifier)
-        label = f"{_shown(fact.value, fact.unit)} {fact.unit}"
+        label = _measure_label(fact.value, fact.unit)
         href = _filing_href(
             fact.source.url,
             fact.id,
@@ -172,7 +181,7 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
         return _markdown_chip(label, href, title)
     calc = store.get_calc(identifier)
     source_fact = store.get(calc.input_ids[0])
-    label = f"{_shown(calc.value, calc.unit)} {calc.unit}"
+    label = _measure_label(calc.value, calc.unit)
     href = _filing_href(
         source_fact.source.url,
         calc.id,
