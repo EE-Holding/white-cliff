@@ -28,6 +28,10 @@ EMPTY_QUERY = "Enter a company name or ticker."
 ONLY_SEC = "White Cliff only contacts sec.gov."
 REFUSED = "White Cliff did not accept that request."
 LOOKING = "Looking this up…"
+FINDING = "Finding the company"
+FILING_LIST = "Getting the filing list"
+READING = "Reading the filing"
+READING_PRIOR = "Reading the filing and the earlier quarter"
 CLOSED = "White Cliff has closed. Open it again to keep going."
 
 __all__ = [
@@ -38,7 +42,11 @@ __all__ = [
     "EMPTY_QUERY",
     "CLOSED",
     "ENTER_BOTH",
+    "FILING_LIST",
+    "FINDING",
     "LOOKING",
+    "READING",
+    "READING_PRIOR",
     "NO_10KQ",
     "NO_INTERNET",
     "NO_MATCH",

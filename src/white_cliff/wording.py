@@ -249,14 +249,18 @@ def long_date(iso: str) -> str:
     return f"{_MONTHS[month - 1]} {day}, {year}"
 
 
+def _period_days(start: str | None, end: str) -> int:
+    try:
+        return (date.fromisoformat(end) - date.fromisoformat(start or end)).days
+    except ValueError:
+        return 0
+
+
 def period_phrase(kind: str, start: str | None, end: str) -> str:
     when = long_date(end) if end else ""
     if kind == "instant":
         return f"the period ended {when}"
-    try:
-        days = (date.fromisoformat(end) - date.fromisoformat(start or end)).days
-    except ValueError:
-        days = 0
+    days = _period_days(start, end)
     if 80 <= days <= 100:
         return f"the quarter ended {when}"
     if 170 <= days <= 200:
@@ -266,6 +270,25 @@ def period_phrase(kind: str, start: str | None, end: str) -> str:
     if 330 <= days <= 380:
         return f"the year ended {when}"
     return f"the period ended {when}"
+
+
+def column_header(kind: str, start: str | None, end: str) -> str:
+    """The column name. The date is the period end, written as the filing states it."""
+    when = long_date(end) if end else ""
+    if not when:
+        return ""
+    if kind == "instant":
+        return when
+    days = _period_days(start, end)
+    if 80 <= days <= 100:
+        return f"Three months ended {when}"
+    if 170 <= days <= 200:
+        return f"Six months ended {when}"
+    if 250 <= days <= 290:
+        return f"Nine months ended {when}"
+    if 330 <= days <= 380:
+        return f"Year ended {when}"
+    return when
 
 
 def show_measure(value: Decimal, unit: str) -> str:
@@ -510,7 +533,22 @@ def _comparison_block(role: str, fact: Fact, last: Cell | None, year: Cell | Non
             ("text", "."),
         ]))
     _append_changes(chunks, label, current, last, year, measure, form_words, filed)
-    return "".join(chunks)
+    heads = _column_heads(current, last, year)
+    return heads + "".join(chunks)
+
+
+def _column_heads(current: Cell, last: Cell | None, year: Cell | None) -> str:
+    labels: list[str] = []
+    for cell in (current, last, year):
+        if cell is None or not cell.available or not cell.period_end:
+            continue
+        label = column_header(cell.kind, cell.period_start, cell.period_end)
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        return ""
+    spans = "".join(f'<span class="column-head">{html.escape(label)}</span>' for label in labels)
+    return f'<p class="column-heads">{spans}</p>\n'
 
 
 def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None:

@@ -10,7 +10,17 @@ from typing import Sequence
 
 from urllib.parse import urlsplit
 
-from white_cliff.desktop_copy import CLOSED, DISCLAIMER, ENTER_BOTH, LOOKING, SEC_WHY
+from white_cliff.desktop_copy import (
+    CLOSED,
+    DISCLAIMER,
+    ENTER_BOTH,
+    FILING_LIST,
+    FINDING,
+    LOOKING,
+    READING,
+    READING_PRIOR,
+    SEC_WHY,
+)
 from white_cliff.disclaimer import ISSUE_URL, OutputRefused
 from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import Explained
@@ -115,6 +125,10 @@ def plain_report(form: str, period: str) -> str:
 def _shell(inner: str) -> str:
     closed = html.escape(CLOSED, quote=True)
     looking = html.escape(LOOKING, quote=True)
+    finding = html.escape(FINDING, quote=True)
+    filing_list = html.escape(FILING_LIST, quote=True)
+    reading = html.escape(READING, quote=True)
+    reading_prior = html.escape(READING_PRIOR, quote=True)
     page = (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -151,7 +165,10 @@ def _shell(inner: str) -> str:
         "background: #ffffff; color: #1d1d1f; border: 1px solid #d2d2d7; "
         "margin: 0.6rem 0; }\n"
         ".progress { height: 2px; background: #e6e6e8; margin: 0.8rem 0 0; overflow: hidden; }\n"
-        ".progress span { display: block; height: 100%; width: 40%; background: #0a4b8f; }\n"
+        ".progress span { display: block; height: 100%; width: 0; background: #0a4b8f; "
+        "transition: width 0.4s ease; }\n"
+        ".column-heads { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; "
+        "margin: 0.4rem 0 0.2rem; color: #3a3a3c; font-size: 18px; }\n"
         ".row { display: flex; justify-content: space-between; gap: 1.5rem; "
         "padding: 0.9rem 0; border-bottom: 1px solid #e6e6e8; }\n"
         "a { color: #0a4b8f; }\n"
@@ -176,11 +193,25 @@ def _shell(inner: str) -> str:
         "(function () {\n"
         f'  var closed = "{closed}";\n'
         f'  var looking = "{looking}";\n'
+        f'  var finding = "{finding}";\n'
+        f'  var filingList = "{filing_list}";\n'
+        f'  var reading = "{reading}";\n'
+        f'  var readingPrior = "{reading_prior}";\n'
         "  function say(text) {\n"
         '    var note = document.getElementById("working");\n'
         "    if (!note) return;\n"
         "    note.hidden = false;\n"
         "    note.textContent = text;\n"
+        "  }\n"
+        "  function move(text) {\n"
+        '    var bar = document.getElementById("progress");\n'
+        '    var span = bar ? bar.querySelector("span") : null;\n'
+        "    if (!span) return;\n"
+        '    var width = "8%";\n'
+        "    if (text === finding) width = \"34%\";\n"
+        "    if (text === filingList) width = \"67%\";\n"
+        "    if (text === reading || text === readingPrior) width = \"92%\";\n"
+        "    span.style.width = width;\n"
         "  }\n"
         '  document.querySelectorAll("form").forEach(function (form) {\n'
         '    form.addEventListener("submit", function (event) {\n'
@@ -189,7 +220,22 @@ def _shell(inner: str) -> str:
         "      if (button) button.disabled = true;\n"
         '      var bar = document.getElementById("progress");\n'
         "      if (bar) bar.hidden = false;\n"
-        "      say(looking);\n"
+        '      var action = form.getAttribute("action") || "";\n'
+        "      var step = looking;\n"
+        '      if (action === "/explain") step = finding;\n'
+        '      if (action === "/pick") step = filingList;\n'
+        "      say(step);\n"
+        "      move(step);\n"
+        "      var poll = setInterval(function () {\n"
+        '        fetch("/progress", {cache: "no-store", credentials: "same-origin"})\n'
+        "          .then(function (response) { return response.text(); })\n"
+        "          .then(function (text) {\n"
+        "            if (!text) return;\n"
+        "            say(text);\n"
+        "            move(text);\n"
+        "          })\n"
+        "          .catch(function () {});\n"
+        "      }, 200);\n"
         "      var data = new FormData(form);\n"
         "      if (event.submitter && event.submitter.name) {\n"
         "        data.set(event.submitter.name, event.submitter.value);\n"
@@ -202,6 +248,7 @@ def _shell(inner: str) -> str:
         '        redirect: "manual",\n'
         '        cache: "no-store"\n'
         "      }).then(function (response) {\n"
+        "        clearInterval(poll);\n"
         '        if (response.type === "opaqueredirect" || response.status === 303 || response.status === 302) {\n'
         '          window.location.assign("/");\n'
         "          return;\n"
@@ -212,6 +259,7 @@ def _shell(inner: str) -> str:
         "          document.close();\n"
         "        });\n"
         "      }).catch(function () {\n"
+        "        clearInterval(poll);\n"
         "        if (button) button.disabled = false;\n"
         "        if (bar) bar.hidden = true;\n"
         "        say(closed);\n"

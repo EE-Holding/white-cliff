@@ -322,6 +322,58 @@ def test_an_amount_only_change_says_it_was_higher_or_lower():
     assert "That is" not in debt and "That is" not in margin
 
 
+def _column_heads(html_text: str) -> list[str]:
+    return re.findall(r'class="column-head">([^<]*)', html_text)
+
+
+def test_column_headers_name_the_period_and_do_not_call_a_year_to_date_a_quarter():
+    current = load_directory(PINNED / "0001045810-26-000075")
+    prior = load_directory(PINNED / "0001045810-26-000052")
+    nvidia = result_page(
+        explain_filing(current),
+        form=current.form,
+        period=current.period_end or "",
+        filed="2026-08-26",
+        url=current.url,
+        company=current.filer,
+        focus=current.focus,
+        fiscal_year_end=current.fiscal_year_end,
+        prior_facts=prior.store.facts(),
+        prior_end=prior.period_end,
+    )
+    heads = _column_heads(nvidia)
+    assert "Three months ended July 26, 2026" in heads
+    assert "Three months ended April 26, 2026" in heads
+    assert "Three months ended July 27, 2025" in heads
+    assert "Six months ended July 26, 2026" in heads
+    assert "Six months ended July 27, 2025" in heads
+    assert all("quarter" not in head.lower() for head in heads)
+
+    apple_filing = load_directory(PINNED / "0000320193-26-000026")
+    apple = result_page(
+        explain_filing(apple_filing),
+        form=apple_filing.form,
+        period=apple_filing.period_end or "",
+        filed="2026-10-31",
+        url=apple_filing.url,
+        company=apple_filing.filer,
+        focus=apple_filing.focus,
+        fiscal_year_end=apple_filing.fiscal_year_end,
+    )
+    apple_heads = _column_heads(apple)
+    assert "Year ended September 26, 2026" in apple_heads
+    assert all("quarter" not in head.lower() for head in apple_heads)
+
+    nine_now = _quarter("90", "ninenow", "2025-10-27", "2026-07-26")
+    nine_then = _quarter("80", "ninethen", "2024-10-28", "2025-07-27")
+    nine_heads = _column_heads(_change_block(nine_now, None, _column(nine_then)))
+    assert nine_heads == [
+        "Nine months ended July 26, 2026",
+        "Nine months ended July 27, 2025",
+    ]
+    assert all("quarter" not in head.lower() for head in nine_heads)
+
+
 def test_rendered_pages_do_not_say_that_is_rose_or_percent_percent():
     current = load_directory(PINNED / "0001045810-26-000075")
     prior = load_directory(PINNED / "0001045810-26-000052")

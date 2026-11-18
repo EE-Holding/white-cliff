@@ -1324,6 +1324,83 @@ def test_a_prior_quarter_from_before_a_fiscal_year_change_is_not_used(monkeypatc
     assert "Revenue for the prior quarter is not in the filings White Cliff read, so no change is shown." in page.body
 
 
+class _FirstQuarterTransport:
+    def __init__(self):
+        self.calls = []
+        self.current = _quarter_html("2026-04-26", "2026-01-27", "--01-31", "100", "Q1")
+        self.submissions = json.dumps(
+            {
+                "cik": "0000000001",
+                "name": "Example Co",
+                "fiscalYearEnd": "0131",
+                "tickers": ["EX"],
+                "filings": {
+                    "recent": {
+                        "form": ["10-Q"],
+                        "filingDate": ["2026-05-20"],
+                        "reportDate": ["2026-04-26"],
+                        "accessionNumber": ["0000000001-26-000001"],
+                        "primaryDocument": ["current.htm"],
+                        "acceptanceDateTime": ["2026-05-20T16:00:00.000Z"],
+                        "isInlineXBRL": ["1"],
+                    }
+                },
+            }
+        ).encode("utf-8")
+        self.tickers = json.dumps(
+            {"0": {"cik_str": 1, "ticker": "EX", "title": "Example Co"}}
+        ).encode("utf-8")
+
+    def __call__(self, url, user_agent):
+        host = url.split("/", 3)[2]
+        assert host in {"www.sec.gov", "data.sec.gov"}
+        self.calls.append(url)
+        if url.endswith("/files/company_tickers.json"):
+            return 200, self.tickers, {}
+        if url.endswith("/submissions/CIK0000000001.json"):
+            return 200, self.submissions, {}
+        if url.endswith("/current.htm"):
+            return 200, self.current, {}
+        raise AssertionError(url)
+
+
+def test_step_labels_name_an_earlier_quarter_only_when_it_is_fetched(monkeypatch, tmp_path):
+    nvidia = _NvidiaTransport()
+    app = _app(monkeypatch, tmp_path, nvidia)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    app.handle("POST", "/explain", {"query": "NVDA"})
+    assert app.steps == [
+        "Finding the company",
+        "Getting the filing list",
+        "Reading the filing and the earlier quarter",
+    ]
+    progress = app.handle("GET", "/progress", {})
+    assert progress.body == "Reading the filing and the earlier quarter"
+    assert progress.content_type.startswith("text/plain")
+    assert any(url.endswith("nvda-20260426.htm") for url, _user_agent in nvidia.calls)
+
+    annual = _app(monkeypatch, tmp_path, _Transport())
+    annual.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    annual.handle("POST", "/explain", {"query": "AAPL"})
+    assert annual.steps == [
+        "Finding the company",
+        "Getting the filing list",
+        "Reading the filing",
+    ]
+    assert "Reading the filing and the earlier quarter" not in annual.steps
+
+    first = _FirstQuarterTransport()
+    quarter = _app(monkeypatch, tmp_path, first)
+    quarter.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    quarter.handle("POST", "/explain", {"query": "EX"})
+    assert quarter.steps == [
+        "Finding the company",
+        "Getting the filing list",
+        "Reading the filing",
+    ]
+    assert not any(url.endswith("prior.htm") for url in first.calls)
+
+
 def test_nvidia_lookup_reads_the_nvidia_filing(monkeypatch, tmp_path):
     transport = _NvidiaTransport()
     app = _app(monkeypatch, tmp_path, transport)

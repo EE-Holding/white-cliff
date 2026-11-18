@@ -34,10 +34,14 @@ from white_cliff.desktop_copy import (
     CLOSE_INTRO,
     EMPTY_QUERY,
     ENTER_BOTH,
+    FILING_LIST,
+    FINDING,
     NO_10KQ,
     NO_INTERNET,
     NO_MATCH,
     ONLY_SEC,
+    READING,
+    READING_PRIOR,
     REFUSED,
     SEC_CERT,
     SEC_ODD,
@@ -82,6 +86,7 @@ class Page:
     status: int
     body: str
     location: str = ""
+    content_type: str = "text/html; charset=utf-8"
 
 
 def should_quit(
@@ -143,6 +148,8 @@ class Desktop:
         self.last_seen: float | None = None
         self.token = secrets.token_urlsafe(32)
         self.limiter = RateLimiter(sleep=sleep, clock=clock)
+        self.step = ""
+        self.steps: list[str] = []
 
     @classmethod
     def create(cls, transport=None, sleep=time.sleep, clock=time.monotonic):
@@ -153,6 +160,8 @@ class Desktop:
         path = path.split("?", 1)[0] or "/"
         if path == "/stay":
             return Page(204, "")
+        if method == "GET" and path == "/progress":
+            return Page(200, self.step, content_type="text/plain; charset=utf-8")
         if method == "POST" and path == "/identity":
             return self._save(form)
         if method == "POST" and path == "/identity/erase":
@@ -209,14 +218,24 @@ class Desktop:
             limiter=self.limiter,
         )
 
+    def _step(self, label: str) -> None:
+        if self.steps and self.steps[-1] == READING and label == READING_PRIOR:
+            self.steps[-1] = label
+        elif not self.steps or self.steps[-1] != label:
+            self.steps.append(label)
+        self.step = label
+
     def _lookup(self, query: str, cik: str | None) -> Page:
         client = self._client()
         if client is None:
             return Page(200, first_run_page(token=self.token))
+        self.steps = []
         try:
             if cik:
+                self._step(FILING_LIST)
                 filing, explained, company, ticker, loaded, prior = self._explain_cik(client, cik)
             else:
+                self._step(FINDING)
                 found = self._search(client, query)
                 if isinstance(found, SeveralMatches):
                     return Page(
@@ -232,6 +251,7 @@ class Desktop:
                     return self._fail(NO_MATCH, query)
                 if not isinstance(found, OneMatch):
                     return self._fail(NO_MATCH, query)
+                self._step(FILING_LIST)
                 filing, explained, company, ticker, loaded, prior = self._explain_cik(
                     client, found.company.cik, found.company.title
                 )
@@ -295,15 +315,30 @@ class Desktop:
         filing = select_latest(data, cik, extras)
         if filing is None:
             raise NoPeriodic()
+        self._step(READING)
         body = client.get(filing.url)
         directory = write_cache(self.cache, filing, body)
         loaded = load_directory(directory)
         explained = explain_filing(loaded)
+        if self._fetches_earlier(data, extras, loaded):
+            self._step(READING_PRIOR)
         prior = self._prior_quarter(client, data, extras, loaded)
         listed = company or str(data.get("name") or "")
         raw_tickers = data.get("tickers") or []
         ticker = str(raw_tickers[0]).strip() if raw_tickers else ""
         return filing, explained, listed, ticker, loaded, prior
+
+    def _fetches_earlier(self, data: dict, extras: list, loaded) -> bool:
+        """True only when this lookup will download an earlier 10-Q."""
+        if loaded.form != "10-Q" or loaded.focus not in {"Q2", "Q3"} or not loaded.period_end:
+            return False
+        for row in quarterly_filings(data, loaded.cik, extras):
+            if row.form != "10-Q" or row.cik != loaded.cik:
+                continue
+            gap = day_gap(row.period, loaded.period_end)
+            if gap is not None and PRIOR_FILING_MIN <= gap <= PRIOR_FILING_MAX:
+                return True
+        return False
 
     def _prior_quarter(self, client: SecClient, data: dict, extras: list, loaded):
         """The one prior 10-Q for a second or third quarter. A failure leaves the column blank."""
@@ -427,12 +462,12 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return _same(form.get("token", ""), self.desktop.token)
 
-    def _send(self, status: int, body: bytes, location: str = "") -> None:
+    def _send(self, status: int, body: bytes, location: str = "", content_type: str = "text/html; charset=utf-8") -> None:
         self.send_response(status)
         if location:
             self.send_header("Location", location)
         if body:
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Frame-Options", "DENY")
@@ -459,7 +494,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, error_page(REFUSED, token=self.desktop.token).encode("utf-8"))
             return
         path = urllib.parse.urlsplit(self.path).path
-        if method == "GET" and _host_name(host) == "localhost" and path != "/stay":
+        if method == "GET" and _host_name(host) == "localhost" and path not in {"/stay", "/progress"}:
             self._send(302, b"", location=_loopback_origin(self._port()) + self.path)
             return
         try:
@@ -481,7 +516,7 @@ class _Handler(BaseHTTPRequestHandler):
                 200,
                 error_page(CANNOT_EXPLAIN, token=self.desktop.token, query=form.get("query", "")),
             )
-        self._send(page.status, page.body.encode("utf-8"), page.location)
+        self._send(page.status, page.body.encode("utf-8"), page.location, page.content_type)
 
 
 def make_server(desktop: Desktop) -> ThreadingHTTPServer:
