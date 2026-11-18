@@ -62,8 +62,9 @@ _MONTHS = {
     "december": 12,
 }
 
+_SCALE_WORD = re.compile(r"\b(thousands|millions|billions)\b", re.I)
 _SCALE_CAPTION = re.compile(
-    r"\([^)]{0,200}?in\s+(?:millions|thousands)\b[^)]{0,200}\)",
+    r"\([^)]{0,200}?in\s+(?:billions|millions|thousands)\b[^)]{0,200}\)",
     re.I,
 )
 _DATE = re.compile(
@@ -353,57 +354,15 @@ def _value_in_column(placed: list[tuple[int, str, int, int, int]], column: dict[
 
 
 def _has_scale(text: str) -> bool:
-    lowered = text.lower()
-    return "in millions" in lowered or "in thousands" in lowered
+    return _SCALE_WORD.search(text) is not None
 
 
-_SHARE_THOUSANDS = re.compile(
-    r"shares?\s+in\s+thousands"
-    r"|share\s+amounts?\s+in\s+thousands"
-    r"|number\s+of\s+shares,?\s+which\s+are\s+reflected\s+in\s+thousands"
-    r"|shares?(?:\s+\w+){0,6}\s+in\s+thousands",
-    re.I,
-)
-_PLAIN_SHARE_EXCEPTION = re.compile(
-    r"except\s+(?:the\s+)?(?:number\s+of\s+shares|shares(?:\s+data)?|share(?:\s+data)?)\b(?!\s+[A-Za-z])",
-    re.I,
-)
-
-
-def _share_unit(scale_text: str) -> str | None:
-    """Share counts use an explicit share clause, otherwise the caption's one scale."""
-    if _SHARE_THOUSANDS.search(scale_text):
-        return "shares thousands"
-    if _PLAIN_SHARE_EXCEPTION.search(scale_text):
-        return "shares"
-    lowered = scale_text.lower()
-    millions = "in millions" in lowered
-    thousands = "in thousands" in lowered
-    if millions and thousands:
+def _dollar_unit(scale_text: str) -> str | None:
+    """One scale word, including "dollars in X" or "amounts in X" when X is that word."""
+    words = {match.group(1).lower() for match in _SCALE_WORD.finditer(scale_text)}
+    if len(words) != 1:
         return None
-    if millions:
-        return "shares millions"
-    if thousands:
-        return "shares thousands"
-    return None
-
-
-def _unit_for(role: str, scale_text: str) -> str | None:
-    lowered = scale_text.lower()
-    millions = "in millions" in lowered
-    thousands = "in thousands" in lowered
-    shares_clause = "share" in lowered and "in thousands" in lowered
-    if role == "shares":
-        return _share_unit(scale_text)
-    if millions and thousands and not shares_clause:
-        return None
-    if millions and thousands and shares_clause:
-        return "USD millions"
-    if millions:
-        return "USD millions"
-    if thousands:
-        return "USD thousands"
-    return None
+    return f"USD {next(iter(words))}"
 
 
 def _table_kind(rows: list[list[_Cell]]) -> str:
@@ -507,7 +466,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                 continue
             normalized = _norm_label(label)
             role = _role_for(normalized)
-            if not role:
+            if not role or role == "shares":
                 continue
             if chosen is None:
                 numbers = []
@@ -524,7 +483,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                 value = _value_in_column(placed, chosen)
             if value is None:
                 continue
-            unit = _unit_for(role, scale_text)
+            unit = _dollar_unit(scale_text)
             if unit is None:
                 continue
             column = chosen if chosen is not None else chosen_here

@@ -176,6 +176,109 @@ def test_pinned_raw_files_match_provenance_hashes():
     assert checked >= len(manifest["filings"])
 
 
+def test_johnson_chip_points_at_the_name_in_the_filing():
+    import html as html_lib
+
+    accession = "0000200406-26-000016"
+    directory = PINNED / "filings" / accession
+    filing = load_directory(directory)
+    explained = explain_filing(filing)
+    match = re.search(r'class="registrant-chip"[^>]*href="([^"]+)"', explained.html)
+    assert match, explained.html[:500]
+    href = html_lib.unescape(match.group(1))
+    fragment = urlsplit(href).fragment
+    parts = dict(piece.split("=", 1) for piece in fragment.split("&"))
+    start, end = int(parts["registrant"]), int(parts["end"])
+    raw_name = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))["files"][0]["name"]
+    raw = (directory / raw_name).read_text(encoding="utf-8")
+    assert html_lib.unescape(raw[start:end]) == "Johnson & Johnson"
+    assert "the filer" not in explained.html.split("registrant-chip", 1)[0]
+
+
+def test_index_uses_the_filing_name_and_only_a_real_sic(tmp_path: Path):
+    import json as json_lib
+    from hashlib import sha256
+
+    from tests.support import MINI_XML
+    from white_cliff.sitebuild import build_site
+
+    pinned = tmp_path / "pinned"
+    filings = pinned / "filings"
+
+    def add(accession: str, filer: str, sic: dict) -> None:
+        directory = filings / accession
+        directory.mkdir(parents=True)
+        data = MINI_XML.encode("utf-8")
+        (directory / "instance.xml").write_bytes(data)
+        provenance = {
+            "filer": filer,
+            "form": "10-K",
+            "files": [
+                {
+                    "name": "instance.xml",
+                    "url": "https://www.sec.gov/Archives/edgar/data/1/instance.xml",
+                    "sha256": sha256(data).hexdigest(),
+                    "retrieved_at": "2026-11-18T00:13:08Z",
+                }
+            ],
+        }
+        (directory / "provenance.json").write_text(json_lib.dumps(provenance), encoding="utf-8")
+        return {
+            "accession": accession,
+            "cik": "0000000001",
+            "filer": filer,
+            "form": "10-K",
+            "sic": sic,
+        }
+
+    manifest = {
+        "target_count": 30,
+        "filings": [
+            add(
+                "0000000001-26-000001",
+                "Manifest Only Name",
+                {
+                    "code": "3571",
+                    "description": "Electronic Computers",
+                    "source": "https://data.sec.gov/submissions/CIK0000000001.json",
+                    "retrieved_at": "2026-11-18T00:13:08Z",
+                },
+            ),
+            add(
+                "0000000001-26-000002",
+                "Manifest Only Name",
+                {
+                    "code": "3571",
+                    "description": "Strong Buy Recommendations",
+                    "source": "",
+                    "retrieved_at": "2026-11-18T00:13:08Z",
+                },
+            ),
+            add(
+                "0000000001-26-000003",
+                "Manifest Only Name",
+                {
+                    "code": "3571",
+                    "description": "Market-Cap Leaders",
+                    "source": "https://example.com/sectors.json",
+                    "retrieved_at": "2026-11-18T00:13:08Z",
+                },
+            ),
+        ],
+    }
+    (pinned / "manifest.json").write_text(json_lib.dumps(manifest), encoding="utf-8")
+    site = build_site(tmp_path / "site", pinned)
+    index = (site / "index.html").read_text(encoding="utf-8")
+    assert "Example Co" in index
+    assert "Manifest Only Name" not in index
+    assert "Electronic Computers" in index
+    assert "Strong Buy Recommendations" not in index
+    assert "Market-Cap Leaders" not in index
+    assert "example.com" not in index
+    assert 'class="registrant-chip"' in index
+    assert "#registrant=" in index
+
+
 def test_bare_digit_fails_review():
     from white_cliff.facts import FactStore
 

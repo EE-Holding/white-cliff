@@ -23,6 +23,7 @@ from white_cliff.xbrl import ParsedFacts, is_instance_document, parse_inline, pa
 class Filing:
     store: FactStore
     filer: str
+    document_filer: str
     form: str
     focus: str | None
     period_end: str | None
@@ -70,6 +71,7 @@ def load_directory(path: Path) -> Filing:
     provenance = json.loads((path / "provenance.json").read_text(encoding="utf-8"))
     store = FactStore()
     filer = provenance.get("filer", "")
+    document_filer = ""
     form = provenance.get("form", "")
     focus = None
     period_end = None
@@ -89,6 +91,7 @@ def load_directory(path: Path) -> Filing:
         parsed = _parse_text(text, item["name"], item["url"], digest)
         _absorb(store, parsed)
         filer = parsed.filer or filer
+        document_filer = parsed.filer or document_filer
         form = parsed.form or form
         focus = parsed.focus or focus
         period_end = parsed.period_end or period_end
@@ -98,6 +101,7 @@ def load_directory(path: Path) -> Filing:
     return Filing(
         store=store,
         filer=filer,
+        document_filer=document_filer,
         form=form,
         focus=focus,
         period_end=period_end,
@@ -125,6 +129,7 @@ def load_file(path: Path) -> Filing:
     return Filing(
         store=store,
         filer=parsed.filer,
+        document_filer=parsed.filer,
         form=parsed.form,
         focus=parsed.focus,
         period_end=parsed.period_end,

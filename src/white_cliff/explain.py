@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -54,6 +56,51 @@ _REASON = (
 
 
 _NAME_EXTRA = set(" ., &'()-/")
+
+
+_ENTITY = re.compile(r"&(?:#x[0-9A-Fa-f]+|#\d+|[A-Za-z][A-Za-z0-9]+);")
+
+
+def registrant_span(name: str, filing_text: str) -> tuple[int, int] | None:
+    """Raw offsets of the name after HTML entities in the filing are decoded."""
+    shown = acceptable_name(name)
+    if shown is None or not filing_text:
+        return None
+    parts: list[str] = []
+    chunks: list[tuple[int, int, int, int]] = []
+    decoded_len = 0
+    pos = 0
+
+    def add(piece: str, raw_start: int, raw_end: int) -> None:
+        nonlocal decoded_len
+        if not piece:
+            return
+        parts.append(piece)
+        chunks.append((decoded_len, raw_start, raw_end, len(piece)))
+        decoded_len += len(piece)
+
+    for match in _ENTITY.finditer(filing_text):
+        if match.start() > pos:
+            add(filing_text[pos:match.start()], pos, match.start())
+        add(html.unescape(match.group(0)), match.start(), match.end())
+        pos = match.end()
+    if pos < len(filing_text):
+        add(filing_text[pos:], pos, len(filing_text))
+    found = "".join(parts).find(shown)
+    if found < 0:
+        return None
+    end_at = found + len(shown)
+    raw_start = raw_end = None
+    for dec_start, start, end, size in chunks:
+        dec_end = dec_start + size
+        if raw_start is None and dec_start <= found < dec_end:
+            raw_start = start if size != end - start else start + (found - dec_start)
+        if dec_start < end_at <= dec_end:
+            raw_end = end if size != end - start else start + (end_at - dec_start)
+            break
+    if raw_start is None or raw_end is None:
+        return None
+    return raw_start, raw_end
 
 
 def acceptable_name(name: str) -> str | None:
@@ -293,8 +340,8 @@ def build_blocks(
     filing_url: str,
 ) -> list[Block]:
     facts = store.facts()
-    shown_name = acceptable_name(filer)
-    if shown_name is None:
+    span = registrant_span(filer, filing_text)
+    if span is None:
         cover = Block(
             text=(
                 f"This explanation covers the filer in {_form_words(form)} "
@@ -302,15 +349,13 @@ def build_blocks(
             )
         )
     else:
-        found = filing_text.find(shown_name)
-        start = found if found >= 0 else -1
-        end = found + len(shown_name) if found >= 0 else -1
+        start, end = span
         cover = Block(
             text=(
                 f"This explanation covers {{registrant}} in {_form_words(form)} "
                 "[section:Cover]."
             ),
-            registrant=(shown_name, filing_url, start, end),
+            registrant=(acceptable_name(filer) or filer, filing_url, start, end),
         )
     blocks: list[Block] = [cover]
     if filing_url and not filing_url.startswith("https://www.sec.gov/"):
@@ -356,11 +401,13 @@ def build_blocks(
             focus,
             period_end,
         )
-    if share is None:
-        share = _table(facts, "shares", table_kinds["shares"])
-    if share is not None:
+    if share is not None and share.origin != "table":
         chosen["shares"] = share
         blocks.append(Block(text=_fact_sentence("shares", share)))
+    else:
+        blocks.append(
+            Block(text="The filing doesn't tag the share count [section:Equity].")
+        )
 
     def add_margin(name: str, part_role: str) -> None:
         part = chosen.get(part_role)

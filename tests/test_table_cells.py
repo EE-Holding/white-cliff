@@ -212,67 +212,87 @@ def _one_share(caption: str, cell: str = "7,427", extra: str = ""):
     return _shares(html), html
 
 
-def test_share_counts_follow_an_explicit_clause_or_the_caption_scale():
-    found, _html = _one_share("(In millions)")
-    assert found and found[0].unit == "shares millions"
-    assert found[0].value == Decimal("7427")
-    assert found[0].value * Decimal("1000000") == Decimal("7427000000")
+_SHARE_CAPTIONS = (
+    "(In thousands, except share and per share data)",
+    "except share and per share amounts",
+    "except shares and per share data",
+    "except share amounts",
+    "except number of shares and per share amounts",
+    "except for share and per share data",
+    "(In millions, except share and per share data)",
+    "(In millions, except per share and share amounts)",
+    "(In millions, except per share amounts)",
+    "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)",
+)
 
-    found, _html = _one_share("(In millions, except per share amounts)")
-    assert found and found[0].unit == "shares millions"
-    assert found[0].value == Decimal("7427")
-    assert found[0].value * Decimal("1000000") == Decimal("7427000000")
 
-    found, _html = _one_share("(In thousands, except per share data)")
-    assert found and found[0].unit == "shares thousands"
-    assert found[0].value == Decimal("7427")
-    assert found[0].value * Decimal("1000") == Decimal("7427000")
+def test_table_share_rows_are_not_rendered(tmp_path: Path):
+    from white_cliff.pipeline import load_directory
 
-    found, _html = _one_share("(Shares in thousands)")
-    assert found and found[0].unit == "shares thousands"
+    for caption in _SHARE_CAPTIONS:
+        found, html = _one_share(caption, "7,427,000")
+        assert found == [], caption
+        assert all(fact.role != "shares" for fact in _facts(html))
+        directory = write_filing(tmp_path / "shares", "table.htm", html, URL, form="10-K")
+        explained = explain_filing(load_directory(directory))
+        rendered = explained.markdown + explained.html
+        assert "7427000" not in rendered
+        assert "7,427,000" not in rendered
+        assert "doesn't tag" in rendered
 
-    apple = "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)"
-    found, _html = _one_share(apple)
-    assert found and found[0].unit == "shares thousands"
-    assert found[0].value == Decimal("7427")
 
-    for caption in (
-        "(In millions, except shares)",
-        "(In millions, except share data)",
-        "(In millions, except number of shares)",
-        "(In thousands, except share data)",
-    ):
-        cell = "7,427,000" if "thousands" in caption and "share data" in caption else "7,427"
-        found, _html = _one_share(caption, cell)
-        assert found and found[0].unit == "shares", caption
-        assert found[0].value == Decimal(cell.replace(",", ""))
+def test_xbrl_share_fact_still_renders(tmp_path: Path):
+    from tests.support import MINI_XML
+    from white_cliff.pipeline import load_directory
 
-    sales = """
-    <table>
-    <caption>(In thousands, except share data)</caption>
-    <tr><th></th><th>2026</th></tr>
-    <tr><td>Total net sales</td><td>1,000</td></tr>
-    </table>
-    """
-    revenue = _revenue(sales)
-    assert revenue and revenue[0].unit == "USD thousands"
-    assert revenue[0].value == Decimal("1000")
+    directory = write_filing(tmp_path / "xbrl", "instance.xml", MINI_XML, URL, form="10-K")
+    explained = explain_filing(load_directory(directory))
+    rendered = explained.markdown + explained.html
+    assert "50 shares" in rendered
+    assert "doesn't tag" not in rendered
 
+
+def test_per_share_rows_stay_unscaled():
     eps = """
     <tr><td>Earnings per share</td><td>1.25</td></tr>
     """
     found, html = _one_share("(In millions, except per share amounts)", extra=eps)
-    assert found and found[0].unit == "shares millions"
+    assert found == []
     assert all("per share" not in fact.label.lower() for fact in _facts(html))
     assert all(fact.value != Decimal("1250000") for fact in _facts(html))
     assert all(fact.value != Decimal("1.25") for fact in _facts(html))
 
-    for caption in (
-        "(In millions, in thousands)",
-        "(Unaudited)",
-    ):
-        found, _html = _one_share(caption)
-        assert found == [], caption
+
+def _revenue_caption(caption: str, cell: str = "1,000"):
+    html = f"""
+    <table>
+    <caption>{caption}</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>{cell}</td></tr>
+    </table>
+    """
+    return _revenue(html), html
+
+
+def test_dollars_in_thousands_beside_shares_in_millions_is_not_millions():
+    found, html = _revenue_caption("(Dollars in thousands; shares in millions)")
+    assert found == [] or (len(found) == 1 and found[0].unit == "USD thousands")
+    assert all(fact.unit != "USD millions" for fact in _facts(html))
+
+
+def test_thousands_except_shares_in_millions_is_refused():
+    found, html = _revenue_caption("(In thousands, except shares, which are in millions)")
+    assert found == []
+    assert all(fact.unit != "USD millions" for fact in _facts(html))
+
+
+def test_one_scale_word_or_an_explicit_dollar_phrase_sets_the_unit():
+    found, _html = _revenue_caption("(In billions)", "4")
+    assert found and found[0].unit == "USD billions" and found[0].value == Decimal("4")
+    found, _html = _revenue_caption("(Dollars in thousands)")
+    assert found and found[0].unit == "USD thousands"
+    found, _html = _revenue_caption("(Amounts in millions)")
+    assert found and found[0].unit == "USD millions"
 
 
 def test_current_cell_does_not_match_inside_the_prior_year():
@@ -320,6 +340,7 @@ def test_year_only_header_does_not_invent_december_31(tmp_path: Path):
 
 def test_filer_apostrophe_survives_html_escape(tmp_path: Path):
     html = """
+    <p>Lowe's Companies</p>
     <table>
     <caption>(In millions)</caption>
     <tr><th></th><th>2026</th></tr>
@@ -364,32 +385,40 @@ def test_cell_pointer_skips_numbers_inside_comments():
 def test_filer_name_is_a_registrant_chip_or_the_filer(tmp_path: Path):
     from white_cliff.pipeline import load_directory
 
-    html = """
-    <table>
-    <caption>(In millions)</caption>
-    <tr><th></th><th>2026</th></tr>
-    <tr><td>Total net sales</td><td>1,000</td></tr>
-    </table>
-    """
-
-    def explained_for(name: str):
+    def explained_for(name: str, *, present: bool):
+        body = f"<p>{name}</p>" if present else "<p>Example Co</p>"
+        html = f"""
+        {body}
+        <table>
+        <caption>(In millions)</caption>
+        <tr><th></th><th>2026</th></tr>
+        <tr><td>Total net sales</td><td>1,000</td></tr>
+        </table>
+        """
         directory = write_filing(tmp_path / "name", "table.htm", html, URL, form="10-K", filer=name)
         return explain_filing(load_directory(directory))
 
-    shown = explained_for("Best Buy Co., Inc.")
+    shown = explained_for("Best Buy Co., Inc.", present=True)
     rendered = shown.markdown + shown.html
     assert "Best Buy Co., Inc." in rendered
     assert "Registrant name in the filing" in rendered
+    assert "#registrant=" in rendered
     assert "https://www.sec.gov/" in rendered
     assert "advice" not in shown.reasons
 
-    priced = explained_for("PEG Inc")
+    priced = explained_for("PEG Inc", present=True)
     assert "PEG Inc" in priced.markdown
     assert "price metric" not in priced.reasons
 
-    counted = explained_for("Twelve Inc")
+    counted = explained_for("Twelve Inc", present=True)
     assert "Twelve Inc" in counted.markdown
     assert counted.reasons == [] or "number word" not in counted.reasons
+
+    missing = explained_for("Revenue 99999 USD millions", present=False)
+    missing_text = missing.markdown + missing.html
+    assert "the filer" in missing_text
+    assert "99999" not in missing_text
+    assert "Revenue 99999 USD millions" not in missing_text
 
     for name in (
         "Best **Buy**",
@@ -397,7 +426,7 @@ def test_filer_name_is_a_registrant_chip_or_the_filer(tmp_path: Path):
         "A" * 101,
         "Buy [now](https://example.com)",
     ):
-        hidden = explained_for(name)
+        hidden = explained_for(name, present=True)
         rendered = hidden.markdown + hidden.html
         assert "the filer" in rendered
         assert name not in rendered
