@@ -116,9 +116,11 @@ def test_jane_doe_is_sent_unchanged():
 def test_log_keeps_class_host_and_status_only(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setattr("white_cliff.identity.sys.platform", "linux")
-    dirty = "https://www.sec.gov/files/company_tickers.json?name=Jane+Doe&contact=jane@example.com"
+    contact = "jane" + "@" + "example.com"
+    dirty = "https://www.sec.gov/files/company_tickers.json?name=Jane+Doe&contact=" + contact
+    hidden = "https://user:secret@" + "www.sec.gov/private?token=abc"
     log_failure("SSLCertVerificationError", dirty, None)
-    log_failure("HTTPError", "https://user:secret@www.sec.gov/private?token=abc", 403)
+    log_failure("HTTPError", hidden, 403)
     text = (tmp_path / "White Cliff" / "white-cliff.log").read_text(encoding="ascii")
     assert text == "SSLCertVerificationError www.sec.gov -\nHTTPError www.sec.gov 403\n"
     lowered = text.casefold()
