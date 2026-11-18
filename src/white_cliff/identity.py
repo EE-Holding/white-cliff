@@ -1,0 +1,97 @@
+"""The user's name and email, stored only in the per-user app data file."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from white_cliff.config import valid_user_agent
+
+APP_DIR_NAME = "White Cliff"
+
+
+@dataclass(frozen=True)
+class Identity:
+    name: str
+    email: str
+
+    @property
+    def user_agent(self) -> str:
+        return f"{self.name} {self.email}"
+
+
+def app_data_dir() -> Path:
+    """The operating system's per-user folder for this program."""
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(base) / APP_DIR_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / APP_DIR_NAME
+
+
+def cache_dir() -> Path:
+    """A cache of sec.gov files. It is not the identity file."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / APP_DIR_NAME / "Cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / APP_DIR_NAME
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / APP_DIR_NAME
+
+
+def _checked(name: str, email: str) -> Identity | None:
+    raw_name = str(name)
+    raw_email = str(email)
+    if any(ord(char) < 32 for char in raw_name + raw_email):
+        return None
+    cleaned_name = " ".join(raw_name.split())
+    cleaned_email = raw_email.strip()
+    if not cleaned_name or not cleaned_email:
+        return None
+    if any(char in cleaned_email for char in " <>"):
+        return None
+    if len(cleaned_name) > 120 or len(cleaned_email) > 120:
+        return None
+    identity = Identity(cleaned_name, cleaned_email)
+    if not valid_user_agent(identity.user_agent):
+        return None
+    return identity
+
+
+def load_identity(path: Path) -> Identity | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _checked(data.get("name", ""), data.get("email", ""))
+
+
+def save_identity(path: Path, name: str, email: str) -> Identity | None:
+    identity = _checked(name, email)
+    if identity is None:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"name": identity.name, "email": identity.email}, indent=2) + "\n"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+    os.chmod(path, 0o600)
+    return identity
+
+
+def erase_identity(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return

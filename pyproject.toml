@@ -13,6 +13,7 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 white-cliff = "white_cliff.cli:main"
+white-cliff-desktop = "white_cliff.desktop_main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -22,7 +23,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-white_cliff = ["data/*.txt"]
+white_cliff = ["data/*.txt", "data/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

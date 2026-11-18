@@ -28,3 +28,76 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Check authorship
         run: python3 scripts/check_authorship.py --range 6397b468a59a725d727a9b7abf5b3756655fa76f..HEAD
+
+  # macos-14 was removed from GitHub Actions on 2026-11-02.
+  # Apple silicon builds run on macos-15. Intel builds run on macos-15-intel.
+  package-apple-silicon:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
+            --collect-submodules white_cliff --collect-data white_cliff \
+            scripts/desktop_entry.py
+          stage="White Cliff for Apple silicon Mac"
+          mkdir -p "$stage"
+          cp -R "dist/White Cliff.app" "$stage/"
+          cp docs/how-to-open.md "$stage/how-to-open.md"
+          ditto -c -k --keepParent "$stage" "$stage.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: White Cliff for Apple silicon Mac
+          path: White Cliff for Apple silicon Mac.zip
+          retention-days: 7
+
+  package-intel-mac:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
+            --collect-submodules white_cliff --collect-data white_cliff \
+            scripts/desktop_entry.py
+          stage="White Cliff for Intel Mac"
+          mkdir -p "$stage"
+          cp -R "dist/White Cliff.app" "$stage/"
+          cp docs/how-to-open.md "$stage/how-to-open.md"
+          ditto -c -k --keepParent "$stage" "$stage.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: White Cliff for Intel Mac
+          path: White Cliff for Intel Mac.zip
+          retention-days: 7
+
+  package-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name "White Cliff" --collect-submodules white_cliff --collect-data white_cliff scripts/desktop_entry.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: White Cliff for Windows
+          path: |
+            dist/White Cliff.exe
+            docs/how-to-open.md
+          retention-days: 7

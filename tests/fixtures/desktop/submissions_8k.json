@@ -1,0 +1,13 @@
+{
+  "cik": "0001000002",
+  "name": "Only Eight K Inc.",
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0001000002-26-000001"],
+      "filingDate": ["2026-03-01"],
+      "reportDate": ["2026-03-01"],
+      "form": ["8-K"],
+      "primaryDocument": ["eight.htm"]
+    }
+  }
+}
