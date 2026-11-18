@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from pathlib import Path
 
-from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, ensure_safe_output
+from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, OutputRefused, ensure_safe_output
 from white_cliff.explain import acceptable_name, registrant_span
 from white_cliff.pipeline import explain_filing, load_directory
-from white_cliff.sic import accepted_sector
+from white_cliff.review import audit_rendered
+from white_cliff.sic import sector_html
 
 
 def pinned_dir() -> Path:
@@ -37,6 +39,15 @@ def _form_words(form: str) -> str:
     }.get(form, "filing")
 
 
+def check_index(text: str) -> str:
+    """Refuse an index the rendered-page audit does not accept."""
+    ensure_safe_output(text)
+    problem = audit_rendered(text)
+    if problem:
+        raise OutputRefused(problem)
+    return text
+
+
 def build_site(output: Path, pinned: Path | None = None) -> Path:
     source = pinned or pinned_dir()
     manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
@@ -60,14 +71,19 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
             )
         else:
             filer_html = "the filer"
-        sector = accepted_sector(entry.get("sic"), str(entry.get("cik", "")))
-        sector_html = html.escape(sector, quote=False) if sector else ""
+        sic = entry.get("sic") if isinstance(entry.get("sic"), dict) else {}
+        submissions = str(sic.get("source", "")) if isinstance(sic, dict) else ""
+        code = str(sic.get("code", "")) if isinstance(sic, dict) else ""
+        cik = re.sub(r"\D", "", str(entry.get("cik", ""))).zfill(10)
+        sector = ""
+        if len(cik) == 10 and submissions == f"https://data.sec.gov/submissions/CIK{cik}.json":
+            sector = sector_html(code, submissions)
         items.append(
             "<li><a href=\"{href}\">{form_words}</a> {filer} {sector}</li>".format(
                 href=html.escape(page_name, quote=True),
                 form_words=html.escape(form_words),
                 filer=filer_html,
-                sector=sector_html,
+                sector=sector,
             )
         )
     index = (
@@ -88,7 +104,7 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
         "</body>\n"
         "</html>\n"
     )
-    ensure_safe_output(index)
+    check_index(index)
     (output / "index.html").write_text(index, encoding="utf-8")
     (output / ".nojekyll").write_text("", encoding="utf-8")
     return output

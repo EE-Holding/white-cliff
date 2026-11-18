@@ -92,17 +92,30 @@ def audit_rendered(text: str) -> str | None:
     """Re-check prose after chips and the disclaimer are removed."""
     from white_cliff.disclaimer import DISCLAIMER
 
+    from white_cliff.sic import exact_sector_label
+
     body = text.replace(DISCLAIMER, " ", 1)
-    body = re.sub(r"\[[^\]]*\]\([^)]*\)", " ", body)
     body = re.sub(r"<data\b[^>]*>.*?</data>", " ", body, flags=re.I | re.S)
-    body = re.sub(r"<a\b[^>]*>.*?</a>", " ", body, flags=re.I | re.S)
-    body = re.sub(r"<[^>]+>", " ", body)
-    if bare_digits(body):
+    body = re.sub(r'<a class="registrant-chip"[^>]*>.*?</a>', " ", body, flags=re.I | re.S)
+    body = re.sub(r'<a class="source-chip"[^>]*>.*?</a>', " ", body, flags=re.I | re.S)
+    body = re.sub(r'\[[^\]]*\]\([^)]*"Registrant name in the filing"\)', " ", body)
+
+    def _sector(match: re.Match[str]) -> str:
+        return " " if exact_sector_label(match.group(1)) else match.group(1)
+
+    body = re.sub(r'<a class="sector-chip"[^>]*>(.*?)</a>', _sector, body, flags=re.I | re.S)
+    prose = re.sub(r"\[([^\]]*)\]\([^)]*\)", r" \1 ", body)
+    prose = re.sub(r"<a\b[^>]*>(.*?)</a>", r" \1 ", prose, flags=re.I | re.S)
+    prose = re.sub(r"<[^>]+>", " ", prose)
+    counted = re.sub(r"\[[^\]]*\]\([^)]*\)", " ", body)
+    counted = re.sub(r"<a\b[^>]*>.*?</a>", " ", counted, flags=re.I | re.S)
+    counted = re.sub(r"<[^>]+>", " ", counted)
+    if bare_digits(counted):
         return "bare digit"
-    if number_words(body):
+    if number_words(counted):
         return "number word"
-    if advice_reason(body):
+    if advice_reason(prose):
         return "advice"
-    if price_metric_reason(body):
+    if price_metric_reason(counted):
         return "price metric"
     return None

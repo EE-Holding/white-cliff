@@ -51,6 +51,7 @@ class Fact:
     decimals: int | None = None
     table_kind: str = ""
     span_hint: str = ""
+    header: str = ""
 
 
 @dataclass(frozen=True)

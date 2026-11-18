@@ -248,9 +248,19 @@ def test_index_uses_the_filing_name_and_only_a_real_sic(tmp_path: Path):
                 "0000000001-26-000002",
                 "Manifest Only Name",
                 {
-                    "code": "3571",
+                    "code": "6211",
                     "description": "Strong Buy Recommendations",
-                    "source": "",
+                    "source": "https://data.sec.gov/submissions/CIK0000000001.json",
+                    "retrieved_at": "2026-11-18T00:13:08Z",
+                },
+            ),
+            add(
+                "0000000001-26-000004",
+                "Manifest Only Name",
+                {
+                    "code": "6282",
+                    "description": "Investment Advice",
+                    "source": "https://data.sec.gov/submissions/CIK0000000001.json",
                     "retrieved_at": "2026-11-18T00:13:08Z",
                 },
             ),
@@ -271,12 +281,52 @@ def test_index_uses_the_filing_name_and_only_a_real_sic(tmp_path: Path):
     index = (site / "index.html").read_text(encoding="utf-8")
     assert "Example Co" in index
     assert "Manifest Only Name" not in index
-    assert "Electronic Computers" in index
+    assert "SEC industry (SIC 3571): ELECTRONIC COMPUTERS" in index
+    assert "Electronic Computers" not in index
+    assert "SEC industry (SIC 6211): SECURITY BROKERS, DEALERS &amp; FLOTATION COMPANIES" in index
     assert "Strong Buy Recommendations" not in index
+    assert "SEC industry (SIC 6282): INVESTMENT ADVICE" in index
+    assert "Investment Advice" not in index
     assert "Market-Cap Leaders" not in index
     assert "example.com" not in index
+    assert "https://data.sec.gov/submissions/CIK0000000001.json" in index
     assert 'class="registrant-chip"' in index
     assert "#registrant=" in index
+
+
+def test_apple_exhibit_chip_names_the_cash_flow_year():
+    directory = PINNED / "filings" / "0000320193-26-000024"
+    filing = load_directory(directory)
+    explained = explain_filing(filing)
+    page = explained.html
+    assert "132175 USD millions" in page
+    assert "Cash flows, twelve months ended September 26, 2026" in page
+    chip = re.search(
+        r"132175 USD millions</data>\s*<a class=\"source-chip\"[^>]*>([^<]*)</a>",
+        page,
+    )
+    assert chip, page
+    assert chip.group(1) == "Cash flows, twelve months ended September 26, 2026"
+    assert "Income statement" not in chip.group(1)
+
+
+def test_sector_label_is_exempt_only_in_its_form():
+    import pytest
+
+    from white_cliff.disclaimer import DISCLAIMER, OutputRefused
+    from white_cliff.review import audit_rendered
+    from white_cliff.sic import sector_html
+    from white_cliff.sitebuild import check_index
+
+    assert sector_html("6282", "https://data.sec.gov/submissions/CIK0000000001.json", labelled=False) == ""
+    labelled = sector_html("6282", "https://data.sec.gov/submissions/CIK0000000001.json")
+    assert labelled.startswith('<a class="sector-chip"')
+    assert "SEC industry (SIC 6282): INVESTMENT ADVICE" in labelled
+    assert audit_rendered(DISCLAIMER + labelled) is None
+    assert audit_rendered(DISCLAIMER + " Investment Advice") == "advice"
+    assert audit_rendered(DISCLAIMER + ' <a href="https://example.com/note">Investment Advice</a>') == "advice"
+    with pytest.raises(OutputRefused):
+        check_index(DISCLAIMER + "\n<p>You should buy this stock.</p>\n")
 
 
 def test_bare_digit_fails_review():

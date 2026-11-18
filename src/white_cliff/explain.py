@@ -27,21 +27,6 @@ _DEBT = (
     "LongTermDebtNoncurrent",
     "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
 )
-_SECTION = {
-    "revenue": "Income statement",
-    "gross_profit": "Income statement",
-    "operating_income": "Income statement",
-    "net_income": "Income statement",
-    "gross_margin": "Income statement",
-    "operating_margin": "Income statement",
-    "net_margin": "Income statement",
-    "yoy_change": "Income statement",
-    "operating_cash_flow": "Cash flows",
-    "debt": "Balance sheet",
-    "cash": "Balance sheet",
-    "net_debt": "Balance sheet",
-    "shares": "Equity",
-}
 _REASON = (
     ("bare digit", "bare digit"),
     ("number word", "number word"),
@@ -280,13 +265,89 @@ def _lead(role: str, fact: Fact, span: str) -> str:
     return f"{names[role]} for the {span} was"
 
 
+_LONG_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def statement_name(fact: Fact) -> str:
+    """The statement this fact was read from, or nothing when that is not known."""
+    if fact.origin == "table":
+        return {
+            "income": "Income statement",
+            "balance": "Balance sheet",
+            "cashflow": "Cash flows",
+        }.get(fact.table_kind, "")
+    if fact.source.section in {"Income statement", "Balance sheet", "Cash flows", "Equity"}:
+        return fact.source.section
+    return ""
+
+
+def _long_date(iso: str) -> str | None:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", iso or ""):
+        return None
+    year, month, day = iso.split("-")
+    return f"{_LONG_MONTHS[int(month) - 1]} {int(day)}, {year}"
+
+
+def _period_phrase(fact: Fact) -> str | None:
+    date = _long_date(fact.period.end or "")
+    if date is None:
+        return None
+    if fact.origin == "table" and fact.span_hint == "period end":
+        return f"period end {date}"
+    header = (fact.header or "").lower()
+    if "twelve months" in header:
+        return f"twelve months ended {date}"
+    if "three month" in header:
+        return f"three months ended {date}"
+    if "nine months" in header:
+        return f"nine months ended {date}"
+    if "six months" in header:
+        return f"six months ended {date}"
+    if "fiscal year" in header:
+        return f"fiscal year ended {date}"
+    if "year ended" in header:
+        return f"year ended {date}"
+    span = fact.span_hint or (_span(fact) if fact.origin != "table" else "")
+    if span == "fiscal year":
+        return f"fiscal year ended {date}"
+    if span == "quarter":
+        return f"three months ended {date}"
+    if span == "year to date":
+        return f"year to date ended {date}"
+    if span == "period end":
+        return f"period end {date}"
+    return None
+
+
+def statement_chip(fact: Fact) -> str | None:
+    """Statement and period together, or nothing when either one is unknown."""
+    name = statement_name(fact)
+    phrase = _period_phrase(fact)
+    if not name or not phrase:
+        return None
+    return f"{name}, {phrase}"
+
+
 def _fact_sentence(role: str, fact: Fact) -> str:
-    section = _SECTION[role]
+    section = statement_name(fact) or "Document"
     return f"{_lead(role, fact, _span(fact))} {{fact:{fact.id}}} [section:{section}]."
 
 
 def _calc_sentence(role: str, fact: Fact, calc) -> str:
-    section = _SECTION[role]
+    section = statement_name(fact) or "Document"
     span = _span(fact)
     if role == "net_debt":
         opening = "Net debt at the period end was"

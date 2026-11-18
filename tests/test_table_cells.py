@@ -286,13 +286,59 @@ def test_thousands_except_shares_in_millions_is_refused():
     assert all(fact.unit != "USD millions" for fact in _facts(html))
 
 
-def test_one_scale_word_or_an_explicit_dollar_phrase_sets_the_unit():
-    found, _html = _revenue_caption("(In billions)", "4")
-    assert found and found[0].unit == "USD billions" and found[0].value == Decimal("4")
-    found, _html = _revenue_caption("(Dollars in thousands)")
-    assert found and found[0].unit == "USD thousands"
-    found, _html = _revenue_caption("(Amounts in millions)")
-    assert found and found[0].unit == "USD millions"
+_ALLOWED = (
+    ("(In millions)", "USD millions"),
+    ("(In thousands)", "USD thousands"),
+    ("(In billions)", "USD billions"),
+    ("(Dollars in millions)", "USD millions"),
+    ("(Dollars in thousands)", "USD thousands"),
+    ("(In millions of dollars)", "USD millions"),
+    ("(In thousands of dollars)", "USD thousands"),
+    ("(In billions of dollars)", "USD billions"),
+)
+
+
+def test_allowed_captions_set_the_usd_scale():
+    for caption, unit in _ALLOWED:
+        found, _html = _revenue_caption(caption, "4" if "billions" in caption.lower() else "1,000")
+        assert found and found[0].unit == unit, caption
+        for suffix in (", except per share data", ", except per share amounts"):
+            variant = caption[:-1] + suffix + ")"
+            found, _html = _revenue_caption(variant, "4" if "billions" in caption.lower() else "1,000")
+            assert found and found[0].unit == unit, variant
+
+
+def test_share_currency_and_mixed_captions_are_refused():
+    refused = (
+        "(Shares in thousands)",
+        "(In thousands of shares)",
+        "(Number of shares in thousands)",
+        "(Shares in millions)",
+        "(Millions of euros)",
+        "(In millions of euros, except per share data)",
+        "(In thousands, except shares)",
+        "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)",
+    )
+    for caption in refused:
+        found, html = _revenue_caption(caption)
+        assert found == [], caption
+        assert all(not fact.unit.startswith("USD") for fact in _facts(html))
+
+
+def test_billions_caption_renders(tmp_path: Path):
+    from white_cliff.pipeline import load_directory
+
+    html = """
+    <table>
+    <caption>(In billions)</caption>
+    <tr><th></th><th>September 26, 2026</th></tr>
+    <tr><td>Total net sales</td><td>4</td></tr>
+    </table>
+    """
+    directory = write_filing(tmp_path / "billions", "table.htm", html, URL, form="10-K")
+    explained = explain_filing(load_directory(directory))
+    assert "4 USD billions" in explained.markdown
+    assert "4 USD billions" in explained.html
 
 
 def test_current_cell_does_not_match_inside_the_prior_year():

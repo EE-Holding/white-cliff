@@ -7,7 +7,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 
 from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, OutputRefused, ensure_safe_output
-from white_cliff.explain import Block
+from white_cliff.explain import Block, statement_chip
 from white_cliff.facts import FactStore, format_decimal
 from white_cliff.quotes import Quote
 
@@ -127,14 +127,17 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
             fact.source.url,
             _fragment(fact.id, fact.source.char_start, fact.source.char_end),
         )
-        title = fact.source.section
+        title = statement_chip(fact)
+        data = f'<data data-kind="fact" data-id="{fact.id}">{html.escape(label, quote=False)}</data>'
         if mode == "html":
+            if not title:
+                return data
             return (
-                f'<data data-kind="fact" data-id="{fact.id}">{html.escape(label, quote=False)}</data> '
+                f"{data} "
                 f'<a class="source-chip" data-id="{fact.id}" '
                 f'href="{html.escape(href, quote=True)}">{html.escape(title, quote=False)}</a>'
             )
-        return _markdown_chip(label, href, title)
+        return _markdown_chip(label, href, title or "source")
     calc = store.get_calc(identifier)
     source_fact = store.get(calc.input_ids[0])
     label = f"{_shown(calc.value, calc.unit)} {calc.unit}"
@@ -142,14 +145,17 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
         source_fact.source.url,
         _fragment(calc.id, source_fact.source.char_start, source_fact.source.char_end),
     )
-    title = source_fact.source.section
+    title = statement_chip(source_fact)
+    data = f'<data data-kind="calc" data-id="{calc.id}">{html.escape(label, quote=False)}</data>'
     if mode == "html":
+        if not title:
+            return data
         return (
-            f'<data data-kind="calc" data-id="{calc.id}">{html.escape(label, quote=False)}</data> '
+            f"{data} "
             f'<a class="source-chip" data-id="{calc.id}" '
             f'href="{html.escape(href, quote=True)}">{html.escape(title, quote=False)}</a>'
         )
-    return _markdown_chip(label, href, title)
+    return _markdown_chip(label, href, title or "source")
 
 
 def render_markdown(blocks: list[Block], store: FactStore) -> str:

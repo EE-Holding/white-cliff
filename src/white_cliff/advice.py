@@ -19,6 +19,7 @@ _ADVICE_WORDS = {
     "buy",
     "sell",
     "hold",
+    "advice",
     "cheap",
     "expensive",
     "undervalued",

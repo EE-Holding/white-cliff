@@ -29,17 +29,6 @@ _LABEL_ROLES: tuple[tuple[str, str], ...] = (
     ("shares outstanding", "shares"),
 )
 
-_SECTION = {
-    "revenue": "Income statement",
-    "gross_profit": "Income statement",
-    "operating_income": "Income statement",
-    "net_income": "Income statement",
-    "operating_cash_flow": "Cash flows",
-    "debt": "Balance sheet",
-    "cash": "Balance sheet",
-    "shares": "Equity",
-}
-
 _TABLE_NAME = {
     "income": "Income statement",
     "balance": "Balance sheet",
@@ -62,11 +51,17 @@ _MONTHS = {
     "december": 12,
 }
 
-_SCALE_WORD = re.compile(r"\b(thousands|millions|billions)\b", re.I)
-_SCALE_CAPTION = re.compile(
-    r"\([^)]{0,200}?in\s+(?:billions|millions|thousands)\b[^)]{0,200}\)",
-    re.I,
-)
+_USD_INNER = {
+    "in millions": "USD millions",
+    "in thousands": "USD thousands",
+    "in billions": "USD billions",
+    "dollars in millions": "USD millions",
+    "dollars in thousands": "USD thousands",
+    "in millions of dollars": "USD millions",
+    "in thousands of dollars": "USD thousands",
+    "in billions of dollars": "USD billions",
+}
+_PER_SHARE = (", except per share data", ", except per share amounts")
 _DATE = re.compile(
     r"(January|February|March|April|May|June|July|August|September|"
     r"October|November|December)\s+(\d{1,2}),?\s*(\d{4})",
@@ -162,7 +157,7 @@ class _Tables(HTMLParser):
         self._outside = []
         if not text:
             return
-        if _SCALE_CAPTION.fullmatch(text):
+        if allowed_unit(text):
             self._lead_scale = text
         else:
             self._lead_scale = ""
@@ -279,7 +274,7 @@ def _span_name(text: str) -> str:
 
 
 def _header_columns(rows: list[list[_Cell]]) -> list[dict[str, object]]:
-    span_ranges: list[tuple[int, int, str]] = []
+    span_ranges: list[tuple[int, int, str, str]] = []
     dates: list[tuple[int, int, str, str]] = []
     for row in rows:
         placed = _place(row)
@@ -289,7 +284,7 @@ def _header_columns(rows: list[list[_Cell]]) -> list[dict[str, object]]:
         for pos, text, colspan, _start, _end in placed:
             named = _span_name(text)
             if named:
-                span_ranges.append((pos, pos + colspan, named))
+                span_ranges.append((pos, pos + colspan, named, text.strip()))
             end = _full_end(text)
             year = _year_key(text)
             if end or year:
@@ -297,10 +292,14 @@ def _header_columns(rows: list[list[_Cell]]) -> list[dict[str, object]]:
     columns: list[dict[str, object]] = []
     for pos, colspan, end, year in dates:
         named = ""
-        for start, stop, span in span_ranges:
+        header = ""
+        for start, stop, span, text in span_ranges:
             if start <= pos < stop:
                 named = span
-        columns.append({"pos": pos, "width": colspan, "end": end, "year": year, "span": named})
+                header = text
+        columns.append(
+            {"pos": pos, "width": colspan, "end": end, "year": year, "span": named, "header": header}
+        )
     return columns
 
 
@@ -353,16 +352,32 @@ def _value_in_column(placed: list[tuple[int, str, int, int, int]], column: dict[
     return number
 
 
-def _has_scale(text: str) -> bool:
-    return _SCALE_WORD.search(text) is not None
-
-
-def _dollar_unit(scale_text: str) -> str | None:
-    """One scale word, including "dollars in X" or "amounts in X" when X is that word."""
-    words = {match.group(1).lower() for match in _SCALE_WORD.finditer(scale_text)}
-    if len(words) != 1:
+def allowed_unit(text: str) -> str | None:
+    """USD scale only when the caption is one allow-listed form."""
+    cleaned = text.strip().casefold()
+    if len(cleaned) < 2 or not cleaned.startswith("(") or not cleaned.endswith(")"):
         return None
-    return f"USD {next(iter(words))}"
+    inner = cleaned[1:-1].strip()
+    for suffix in _PER_SHARE:
+        if inner.endswith(suffix):
+            inner = inner[: -len(suffix)].strip()
+            break
+    else:
+        if "except" in inner:
+            return None
+    return _USD_INNER.get(inner)
+
+
+def _scale_caption(caption: str, lead: str, rows: list[list[_Cell]]) -> str:
+    if caption.strip():
+        return caption.strip()
+    for row in rows[:4]:
+        for cell in row:
+            if allowed_unit(cell.text):
+                return cell.text.strip()
+    if allowed_unit(lead):
+        return lead.strip()
+    return ""
 
 
 def _table_kind(rows: list[list[_Cell]]) -> str:
@@ -448,10 +463,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
         kind = _table_kind(rows)
         columns = _header_columns(rows)
         chosen = _current_column(columns)
-        header_text = " ".join(cell.text for row in rows[:4] for cell in row)
-        scale_text = f"{caption} {header_text}"
-        if not _has_scale(scale_text) and _SCALE_CAPTION.fullmatch(lead.strip()):
-            scale_text = f"{lead} {scale_text}"
+        scale_text = _scale_caption(caption, lead, rows)
         for row in rows:
             placed = _place(row)
             label = ""
@@ -483,7 +495,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                 value = _value_in_column(placed, chosen)
             if value is None:
                 continue
-            unit = _dollar_unit(scale_text)
+            unit = allowed_unit(scale_text)
             if unit is None:
                 continue
             column = chosen if chosen is not None else chosen_here
@@ -520,10 +532,10 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                     period=period,
                     source=SourcePointer(
                         document=document,
-                        section=_SECTION[role],
+                        section=_TABLE_NAME.get(kind, ""),
                         url=url,
                         sha256=sha256,
-                        table=_TABLE_NAME[kind],
+                        table=_TABLE_NAME.get(kind, ""),
                         row=label,
                         column="current",
                         char_start=start,
@@ -534,6 +546,7 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                     kind="shares" if role == "shares" else "amount",
                     table_kind=kind,
                     span_hint=span if not instant else "period end",
+                    header=str(column.get("header") or ""),
                 )
             )
     return facts, price_metric
