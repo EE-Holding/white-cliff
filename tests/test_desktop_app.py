@@ -1,12 +1,19 @@
 """First run, erase, and a lookup that never leaves sec.gov."""
 
+import base64
 import html
 import http.client
 import json
 import os
 import re
+import shutil
+import socket
+import struct
+import subprocess
 import threading
+import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -829,3 +836,300 @@ def test_failures_keep_the_typed_query(monkeypatch, tmp_path):
     fresh = app.handle("GET", "/", {})
     assert 'class="failure"' not in fresh.body
     assert 'id="query" name="query" autocomplete="off" autofocus' in fresh.body
+
+
+def test_a_multipart_post_is_accepted(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    server = _serve(app)
+    try:
+        port = server.server_address[1]
+        token = _token(port)
+        boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="token"\r\n\r\n'
+            f"{token}\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="query"\r\n\r\n'
+            "AAPL\r\n"
+            f"--{boundary}--\r\n"
+        ).encode("utf-8")
+        code, _fields, payload = _exchange(
+            port,
+            "POST",
+            "/explain",
+            body,
+            {
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Origin": f"http://127.0.0.1:{port}",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        assert code == 200
+        assert b"Annual report" in payload
+        assert REFUSED.encode("utf-8") not in payload
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _chrome_binary() -> str | None:
+    for candidate in (
+        os.environ.get("CHROME", ""),
+        "/opt/google/chrome/chrome",
+        "/usr/bin/google-chrome",
+        shutil.which("google-chrome") or "",
+        shutil.which("google-chrome-stable") or "",
+    ):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
+
+
+class _DevTools:
+    def __init__(self, ws_url: str) -> None:
+        parsed = urllib.parse.urlsplit(ws_url)
+        self.sock = socket.create_connection((parsed.hostname, parsed.port or 80), timeout=10)
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        host = f"{parsed.hostname}:{parsed.port}"
+        self.sock.sendall(
+            (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode("ascii")
+        )
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        if b" 101 " not in data.split(b"\r\n", 1)[0]:
+            raise AssertionError(data[:200])
+        self._buf = data.split(b"\r\n\r\n", 1)[1]
+        self._next = 0
+
+    def call(self, method: str, params: dict | None = None, timeout: float = 15):
+        self._next += 1
+        ident = self._next
+        payload = json.dumps({"id": ident, "method": method, "params": params or {}}).encode()
+        self._send(payload)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            message = self._read(deadline)
+            if message is None:
+                break
+            data = json.loads(message)
+            if data.get("id") == ident:
+                if "error" in data:
+                    raise AssertionError(data["error"])
+                return data.get("result", {})
+        raise AssertionError(method)
+
+    def close(self) -> None:
+        self.sock.close()
+
+    def _send(self, payload: bytes) -> None:
+        mask = os.urandom(4)
+        header = bytearray([0x81])
+        size = len(payload)
+        if size < 126:
+            header.append(0x80 | size)
+        else:
+            header.append(0x80 | 126)
+            header.extend(struct.pack(">H", size))
+        header.extend(mask)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(bytes(header) + masked)
+
+    def _fill(self, deadline: float) -> None:
+        self.sock.settimeout(max(0.1, deadline - time.time()))
+        chunk = self.sock.recv(65536)
+        if not chunk:
+            raise AssertionError("devtools closed")
+        self._buf += chunk
+
+    def _read(self, deadline: float):
+        while len(self._buf) < 2:
+            self._fill(deadline)
+        first, second = self._buf[0], self._buf[1]
+        opcode = first & 0x0F
+        masked = second & 0x80
+        length = second & 0x7F
+        offset = 2
+        if length == 126:
+            while len(self._buf) < 4:
+                self._fill(deadline)
+            length = struct.unpack(">H", self._buf[2:4])[0]
+            offset = 4
+        elif length == 127:
+            while len(self._buf) < 10:
+                self._fill(deadline)
+            length = struct.unpack(">Q", self._buf[2:10])[0]
+            offset = 10
+        extra = 4 if masked else 0
+        while len(self._buf) < offset + extra + length:
+            self._fill(deadline)
+        if masked:
+            mask = self._buf[offset : offset + 4]
+            start = offset + 4
+            payload = bytes(
+                byte ^ mask[index % 4]
+                for index, byte in enumerate(self._buf[start : start + length])
+            )
+        else:
+            start = offset
+            payload = self._buf[start : start + length]
+        self._buf = self._buf[start + length :]
+        if opcode == 0x8:
+            raise AssertionError("devtools closed")
+        if opcode != 0x1:
+            return self._read(deadline)
+        return payload.decode("utf-8")
+
+
+def _eval(page: _DevTools, expression: str):
+    result = page.call(
+        "Runtime.evaluate",
+        {"expression": expression, "returnByValue": True, "awaitPromise": True},
+    )
+    remote = result.get("result", {})
+    if remote.get("subtype") == "error" or "exceptionDetails" in result:
+        raise AssertionError(result.get("exceptionDetails") or remote)
+    return remote.get("value")
+
+
+def _wait_text(page: _DevTools, needle: str, rounds: int = 80) -> str:
+    seen = ""
+    for _ in range(rounds):
+        seen = _eval(page, "document.body ? document.body.innerText : ''") or ""
+        if needle in seen and "did not accept" not in seen:
+            return seen
+        time.sleep(0.1)
+    raise AssertionError(seen[:800])
+
+
+def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    app = _app(monkeypatch, tmp_path)
+    server = _serve(app)
+    debug = socket.socket()
+    debug.bind(("127.0.0.1", 0))
+    debug_port = debug.getsockname()[1]
+    debug.close()
+    profile = tmp_path / "chrome"
+    chrome = subprocess.Popen(
+        [
+            binary,
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            f"--remote-debugging-port={debug_port}",
+            "--remote-allow-origins=*",
+            f"--user-data-dir={profile}",
+            "about:blank",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    page = None
+    try:
+        port = server.server_address[1]
+        info = None
+        for _ in range(50):
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{debug_port}/json/list", timeout=0.5
+                ) as response:
+                    tabs = json.loads(response.read().decode("utf-8"))
+                if tabs:
+                    info = tabs[0]
+                    break
+            except (OSError, json.JSONDecodeError):
+                time.sleep(0.1)
+        assert info and info.get("webSocketDebuggerUrl")
+        page = _DevTools(info["webSocketDebuggerUrl"])
+        page.call("Page.enable")
+        page.call("Runtime.enable")
+        page.call("Page.navigate", {"url": f"http://127.0.0.1:{port}/"})
+        _eval(
+            page,
+            """
+            new Promise(function (resolve) {
+              var ready = setInterval(function () {
+                var form = document.querySelector('form[action="/identity"]');
+                if (!form || !document.querySelector("#name")) return;
+                clearInterval(ready);
+                document.querySelector("#name").value = "Example Person";
+                document.querySelector("#email").value = "person@example.com";
+                form.requestSubmit();
+                resolve("saved");
+              }, 50);
+            })
+            """,
+        )
+        _wait_text(page, "Company name or ticker")
+        _eval(
+            page,
+            """
+            new Promise(function (resolve) {
+              var form = document.querySelector('form[action="/explain"]');
+              document.querySelector("#query").value = "Apple";
+              form.requestSubmit();
+              resolve("sent");
+            })
+            """,
+        )
+        choices = _wait_text(page, "Apple Inc.")
+        assert "Pick one" in choices
+        _eval(
+            page,
+            """
+            new Promise(function (resolve) {
+              var button = Array.from(document.querySelectorAll("button.choice")).find(function (item) {
+                return item.textContent === "Apple Inc.";
+              });
+              button.form.requestSubmit(button);
+              resolve("picked");
+            })
+            """,
+        )
+        result = _wait_text(page, "$478,834 million")
+        assert "14,532,259 thousand shares" in result
+        assert "48.8 percent" in result
+        assert "did not accept" not in result
+        try:
+            _eval(page, "document.querySelector('a[href=\"/identity\"]').click(); 'open'")
+        except AssertionError as exc:
+            if "navigated" not in str(exc):
+                raise
+        _wait_text(page, "Erase")
+        try:
+            _eval(
+                page,
+                "document.querySelector('form[action=\"/identity/erase\"]').requestSubmit(); 'erased'",
+            )
+        except AssertionError as exc:
+            if "navigated" not in str(exc):
+                raise
+        fresh = _wait_text(page, "Your name")
+        assert "Annual report" not in fresh
+        assert not (app_data_dir() / "identity.json").exists()
+    finally:
+        if page is not None:
+            page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        server.shutdown()
+        server.server_close()

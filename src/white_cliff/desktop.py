@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import email
 import hashlib
 import json
 import secrets
 import time
 import urllib.parse
+from email import policy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -206,7 +208,7 @@ class Desktop:
             return Page(200, first_run_page(token=self.token))
         try:
             if cik:
-                filing, explained, company = self._explain_cik(client, cik)
+                filing, explained, company, ticker = self._explain_cik(client, cik)
             else:
                 found = self._search(client, query)
                 if isinstance(found, SeveralMatches):
@@ -223,9 +225,10 @@ class Desktop:
                     return self._fail(NO_MATCH, query)
                 if not isinstance(found, OneMatch):
                     return self._fail(NO_MATCH, query)
-                filing, explained, company = self._explain_cik(
+                filing, explained, company, ticker = self._explain_cik(
                     client, found.company.cik, found.company.title
                 )
+                ticker = found.company.ticker or ticker
         except EmptyQuery:
             return self._fail(EMPTY_QUERY, query)
         except SecUnreachable:
@@ -252,6 +255,8 @@ class Desktop:
                 url=filing.url,
                 token=self.token,
                 company=company,
+                ticker=ticker,
+                cik=filing.cik,
             ),
         )
 
@@ -280,7 +285,29 @@ class Desktop:
         loaded = load_directory(directory)
         explained = explain_filing(loaded)
         listed = company or str(data.get("name") or "")
-        return filing, explained, listed
+        raw_tickers = data.get("tickers") or []
+        ticker = str(raw_tickers[0]).strip() if raw_tickers else ""
+        return filing, explained, listed, ticker
+
+
+def _form_fields(raw: bytes, content_type: str) -> dict[str, str]:
+    kind = content_type.split(";", 1)[0].strip().casefold()
+    if kind == "multipart/form-data":
+        header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+        message = email.message_from_bytes(header + raw, policy=policy.default)
+        form: dict[str, str] = {}
+        if message.is_multipart():
+            for part in message.iter_parts():
+                name = part.get_param("name", header="content-disposition")
+                if not name:
+                    continue
+                content = part.get_content()
+                if isinstance(content, bytes):
+                    content = content.decode("utf-8", "replace")
+                form[str(name)] = str(content).strip("\r\n")
+        return form
+    parsed = urllib.parse.parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True)
+    return {key: values[-1] for key, values in parsed.items()}
 
 
 def _same(left: str, right: str) -> bool:
@@ -382,8 +409,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(400, error_page(REFUSED, token=self.desktop.token).encode("utf-8"))
             return
         raw = self.rfile.read(length) if length else b""
-        parsed = urllib.parse.parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True)
-        form = {key: values[-1] for key, values in parsed.items()}
+        form = _form_fields(raw, self.headers.get("Content-Type", ""))
         if method == "POST" and not self._post_allowed(form):
             self._send(403, self._refused_page(path, form).encode("utf-8"))
             return

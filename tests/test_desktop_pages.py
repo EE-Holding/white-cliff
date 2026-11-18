@@ -21,7 +21,15 @@ from white_cliff.desktop_copy import (
 )
 from white_cliff.disclaimer import ensure_safe_output
 from white_cliff.pipeline import explain_filing, load_directory
-from white_cliff.present import error_page, plain_report, result_page, search_page, shown_amount
+from white_cliff.present import (
+    _choice_label,
+    _company_name,
+    error_page,
+    plain_report,
+    result_page,
+    search_page,
+    shown_amount,
+)
 from white_cliff.render import markdown_figure_ids
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +73,26 @@ def _page_figures(page: str) -> list[tuple[str, str]]:
     for match in re.finditer(r'<a class="figure" href="([^"]*)">(.*?)</a>', page, flags=re.S):
         pairs.append((html.unescape(match.group(2)), html.unescape(match.group(1))))
     return pairs
+
+
+def test_shown_amounts_keep_each_units_scale():
+    assert shown_amount("478834 USD millions") == "$478,834 million"
+    assert shown_amount("82.3 USD billions") == "$82.3 billion"
+    assert shown_amount("1.64 USD") == "$1.64"
+    assert "million" not in shown_amount("1.64 USD")
+    shares = shown_amount("14532259 shares thousands")
+    assert shares == "14,532,259 thousand shares"
+    assert "$" not in shares
+    assert "million" not in shares
+    counted = shown_amount("4179 shares millions")
+    assert counted == "4,179 million shares"
+    assert "$" not in counted
+    for raw in ("8.7 percent", "-5.0 percent", "75.0 percent"):
+        shown = shown_amount(raw)
+        assert shown == raw
+        assert "$" not in shown
+        assert "million" not in shown
+        assert "thousand" not in shown
 
 
 def test_why_sentence_is_exact():
@@ -142,3 +170,29 @@ def test_error_page_is_the_sentence():
     assert 'class="failure"' not in fresh
     assert ".submit(" not in page
     assert "requestSubmit" not in page
+
+
+class _Named:
+    def __init__(self, title: str, ticker: str, cik: str) -> None:
+        self.title = title
+        self.ticker = ticker
+        self.cik = cik
+
+
+def test_rating_words_fall_back_to_ticker_and_cik():
+    strong = _Named("Strong Buy Holdings Inc", "SBH", "0000000001")
+    berkshire = _Named("Berkshire Hathaway Holdings", "BRK", "0001067983")
+    best = _Named("BEST BUY CO INC", "BBY", "0000764478")
+    target = _Named("TARGET CORP", "TGT", "0000027419")
+    assert _choice_label(strong) == "SBH 0000000001"
+    assert "Strong Buy" not in _choice_label(strong)
+    assert _choice_label(berkshire) == "Berkshire Hathaway Holdings"
+    assert _choice_label(best) == "BBY 0000764478"
+    assert _choice_label(target) == "TGT 0000027419"
+    assert _company_name("", "Strong Buy Holdings Inc", "SBH", "0000000001") == "SBH 0000000001"
+    assert (
+        _company_name("", "Berkshire Hathaway Holdings", "BRK", "0001067983")
+        == "Berkshire Hathaway Holdings"
+    )
+    assert _company_name("", "BEST BUY CO INC", "BBY", "0000764478") == "BBY 0000764478"
+    assert _company_name("", "TARGET CORP", "TGT", "0000027419") == "TGT 0000027419"

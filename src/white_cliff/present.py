@@ -166,9 +166,14 @@ def _shell(inner: str) -> str:
         '      var bar = document.getElementById("progress");\n'
         "      if (bar) bar.hidden = false;\n"
         "      say(looking);\n"
+        "      var data = new FormData(form);\n"
+        "      if (event.submitter && event.submitter.name) {\n"
+        "        data.set(event.submitter.name, event.submitter.value);\n"
+        "      }\n"
         "      fetch(form.action, {\n"
         '        method: "POST",\n'
-        "        body: new FormData(form),\n"
+        '        headers: {"Content-Type": "application/x-www-form-urlencoded"},\n'
+        "        body: new URLSearchParams(data),\n"
         '        credentials: "same-origin",\n'
         '        redirect: "manual",\n'
         '        cache: "no-store"\n'
@@ -317,15 +322,54 @@ def error_page(sentence: str, token: str = "", query: str = "") -> str:
     return _shell(_search_form(token, notice=sentence, query=query) + _change_link())
 
 
+_RATING_WORDS = (
+    "strong buy",
+    "outperform",
+    "underperform",
+    "undervalued",
+    "overvalued",
+    "overweight",
+    "underweight",
+    "recommended",
+    "recommend",
+    "downside",
+    "upside",
+    "target",
+    "sell",
+    "hold",
+    "buy",
+)
+
+
+def _rating_name(name: str) -> bool:
+    folded = " ".join(name.casefold().split())
+    for phrase in _RATING_WORDS:
+        if re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", folded):
+            return True
+    return False
+
+
+def _plain_company(name: str) -> str | None:
+    cleaned = " ".join(name.split())
+    if not cleaned or _rating_name(cleaned):
+        return None
+    return acceptable_name(cleaned)
+
+
+def _ticker_cik(ticker: str, cik: str) -> str:
+    shown = acceptable_name(f"{ticker} {cik}".strip())
+    if shown:
+        return shown
+    return acceptable_name(cik.strip()) or ""
+
+
 def _choice_label(company: object) -> str:
     title = str(getattr(company, "title", "") or "")
     ticker = str(getattr(company, "ticker", "") or "")
     cik = str(getattr(company, "cik", "") or "")
-    shown = acceptable_name(title)
+    shown = _plain_company(title)
     if shown is None:
-        shown = acceptable_name(f"{ticker} {cik}")
-    if shown is None:
-        shown = acceptable_name(cik)
+        shown = _ticker_cik(ticker, cik) or None
     if shown is None:
         return "A company on the SEC list"
     return shown
@@ -380,14 +424,23 @@ def _rows(explained_html: str) -> str:
     return "".join(rows)
 
 
-def _company_name(explained_html: str, company: str) -> str:
-    chosen = acceptable_name(company.strip()) if company else None
-    if chosen:
-        return chosen
+def _company_name(
+    explained_html: str,
+    company: str,
+    ticker: str = "",
+    cik: str = "",
+) -> str:
+    if company:
+        chosen = _plain_company(company)
+        if chosen:
+            return chosen
     match = re.search(r'<a class="registrant-chip"[^>]*>(.*?)</a>', explained_html, re.S)
-    if match is None:
-        return ""
-    return acceptable_name(html.unescape(_TAG.sub("", match.group(1))).strip()) or ""
+    if match is not None:
+        chip = html.unescape(_TAG.sub("", match.group(1))).strip()
+        chosen = _plain_company(chip)
+        if chosen:
+            return chosen
+    return _ticker_cik(ticker, cik)
 
 
 def result_page(
@@ -399,9 +452,11 @@ def result_page(
     url: str,
     token: str = "",
     company: str = "",
+    ticker: str = "",
+    cik: str = "",
 ) -> str:
     del filed
-    name = _company_name(explained.html, company)
+    name = _company_name(explained.html, company, ticker, cik)
     heading = f"<h1>{html.escape(name)}</h1>\n" if name else ""
     line = plain_report(form, period)
     quiet = f'<p class="quiet">{html.escape(line)}</p>\n' if line else ""
