@@ -149,6 +149,17 @@ def test_pinned_explanations_match_and_keep_the_guard():
             target = html.unescape(href)
             if target.startswith("/") or target == ISSUE_URL:
                 continue
+            if target.startswith("#"):
+                note_id = target[1:]
+                assert re.fullmatch(r"pct-[0-9a-f]+", note_id)
+                note = re.search(rf'<p class="pct-note" id="{note_id}">(.*?)</p>', page, flags=re.S)
+                assert note is not None
+                note_links = re.findall(r'href="([^"]+)"', note.group(1))
+                assert len(note_links) == 2
+                assert all(
+                    html.unescape(item).startswith("https://www.sec.gov/") for item in note_links
+                )
+                continue
             assert urlsplit(target).hostname in {"www.sec.gov", "data.sec.gov"}
         if filing.form in {"10-K", "10-Q"} and filing.url.startswith("https://www.sec.gov/"):
             line = plain_report(filing.form, filing.period_end or "")

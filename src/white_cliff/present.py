@@ -156,6 +156,7 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "font-size: 21px; line-height: 32px; }\n"
         ".disclaimer, .column { max-width: 640px; margin-left: auto; margin-right: auto; "
         "padding-left: 24px; padding-right: 24px; }\n"
+        "body.result .disclaimer, body.result .column { max-width: 680px; }\n"
         ".disclaimer { margin-top: 48px; margin-bottom: 0; color: var(--ink-2); "
         "font-size: 18px; line-height: 27px; }\n"
         ".column { padding-top: 32px; padding-bottom: 64px; "
@@ -213,19 +214,31 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; "
         "text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }\n"
         "a.figure:hover, a.figure:focus-visible { text-decoration-color: var(--accent); }\n"
-        ".row.stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }\n"
-        ".row.stack a.figure { text-align: left; }\n"
-        ".this-period { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }\n"
-        ".earlier { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; margin-top: 8px; }\n"
+        ".label { margin: 0; font-size: 21px; line-height: 30px; color: var(--ink); }\n"
+        ".fig { margin: 4px 0 0; }\n"
         ".caption { margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; "
-        "color: var(--ink-3); }\n"
-        ".prior-value, .prior p { margin: 0; font-size: 18px; line-height: 27px; color: var(--ink-2); "
+        "color: #555559; }\n"
+        ".earlier { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto 1fr; "
+        "column-gap: 32px; margin-top: 12px; }\n"
+        ".earlier .c1 { grid-column: 1; }\n"
+        ".earlier .c2 { grid-column: 2; }\n"
+        ".earlier .h { grid-row: 1; margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; "
+        "color: #3a3a3c; text-wrap: balance; }\n"
+        ".earlier .d { grid-row: 2; margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; "
+        "color: #555559; text-wrap: balance; }\n"
+        ".earlier .v { grid-row: 3; margin: 4px 0 0; align-self: start; }\n"
+        ".earlier .na { grid-row: 2 / span 2; margin: 0; font-size: 18px; line-height: 27px; "
+        "color: #3a3a3c; align-self: start; }\n"
+        "a.prior-value { font-size: 21px; line-height: 30px; color: #3a3a3c; font-weight: 400; "
+        "font-variant-numeric: tabular-nums; white-space: nowrap; text-decoration: underline; "
+        "text-decoration-color: #86868b; text-underline-offset: 4px; }\n"
+        ".change-line { margin: 12px 0 0; font-size: 18px; line-height: 27px; color: #3a3a3c; "
         "font-weight: 400; }\n"
-        "a.prior-value { font-size: 21px; line-height: 30px; color: var(--ink-2); "
-        "font-variant-numeric: tabular-nums; text-decoration: underline; "
-        "text-decoration-color: var(--line); text-underline-offset: 4px; }\n"
-        ".change-line { margin: 4px 0 0; font-size: 18px; line-height: 27px; color: var(--ink-2); "
-        "font-weight: 400; }\n"
+        ".change-line a { color: #0a4b8f; text-decoration: underline; text-underline-offset: 3px; "
+        "white-space: nowrap; }\n"
+        ".pct-note { display: none; margin: 8px 0 0; font-size: 18px; line-height: 27px; }\n"
+        ".pct-note:target { display: block; }\n"
+        ".pct-note a + a { margin-left: 16px; }\n"
         ".filing { margin-top: 24px; }\n"
         ".filing a, .change a { display: inline-block; min-height: 44px; padding: 8px 0; "
         "line-height: 28px; font-size: 21px; }\n"
@@ -258,7 +271,10 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "  .disclaimer, .column { padding-left: 20px; padding-right: 20px; }\n"
         "  h1 { font-size: 32px; line-height: 38px; }\n"
         "  .row { grid-template-columns: 1fr; }\n"
-        "  .earlier { grid-template-columns: 1fr; row-gap: 8px; }\n"
+        "  .earlier { grid-template-columns: 1fr; grid-template-rows: none; }\n"
+        "  .earlier .h, .earlier .d, .earlier .v, .earlier .na { grid-column: 1; grid-row: auto; }\n"
+        "  .earlier .h.c2 { margin-top: 16px; }\n"
+        "  .earlier .v { margin-top: 0; }\n"
         "  a.figure { text-align: left; margin-top: 4px; }\n"
         "}\n"
         "@media (prefers-reduced-motion: reduce) {\n"
@@ -747,19 +763,13 @@ def _rows(explained_html: str, additions=None) -> str:
                     f'aria-controls="{control}">Explain</button>'
                 )
         earlier, rest = _split_earlier(after)
-        caption = ""
         if earlier:
             caption, rest = _leading_caption(rest)
-            shown = (
-                f'<div class="this-period">{caption}'
-                f'<a class="figure" href="{href}">{html.escape(amount)}</a></div>'
-            )
             row = (
-                '<div class="row stack">'
-                f"<span>{html.escape(label)}</span>"
-                f"{shown}"
-                "</div>\n"
-                f'<div class="earlier">{earlier}</div>\n'
+                f'<p class="label">{html.escape(label)}</p>\n'
+                + caption
+                + f'<p class="fig"><a class="figure" href="{href}">{html.escape(amount)}</a></p>\n'
+                + f'<div class="earlier">{earlier}</div>\n'
             )
         else:
             row = (

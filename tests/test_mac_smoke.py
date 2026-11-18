@@ -49,6 +49,8 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert "smoke-{ARCH}-5-reduced.png" in driver
     assert "smoke-{ARCH}-6-result-640.png" in driver
     assert "smoke-{ARCH}-7-result-420.png" in driver
+    assert "smoke-{ARCH}-8-result-1100.png" in driver
+    assert "getBoundingClientRect" in driver
     assert "prefers-reduced-motion" in driver
     assert "Page.navigate" in driver
     assert "_reduced_steps" in driver
@@ -113,12 +115,15 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
         f"smoke-{driver.ARCH}-5-reduced.png",
         f"smoke-{driver.ARCH}-6-result-640.png",
         f"smoke-{driver.ARCH}-7-result-420.png",
+        f"smoke-{driver.ARCH}-8-result-1100.png",
     ):
         assert (tmp_path / name).stat().st_size > 1000
     wide = (tmp_path / f"smoke-{driver.ARCH}-6-result-640.png").read_bytes()
     narrow = (tmp_path / f"smoke-{driver.ARCH}-7-result-420.png").read_bytes()
+    desktop = (tmp_path / f"smoke-{driver.ARCH}-8-result-1100.png").read_bytes()
     assert struct.unpack(">I", wide[16:20])[0] == 640
     assert struct.unpack(">I", narrow[16:20])[0] == 420
+    assert struct.unpack(">I", desktop[16:20])[0] == 1100
     result = (tmp_path / f"smoke-{driver.ARCH}-3-nvda.png").read_bytes()
     reduced = (tmp_path / f"smoke-{driver.ARCH}-5-reduced.png").read_bytes()
     assert reduced != result

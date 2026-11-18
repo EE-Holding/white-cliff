@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 from dataclasses import dataclass
@@ -318,9 +319,15 @@ def _parts_html(template_id: str, parts: list[tuple], class_name: str = "") -> s
     if template_id not in TEMPLATES:
         raise ValueError(template_id)
     body: list[str] = []
+    notes: list[str] = []
     for part in parts:
         if part[0] == "text":
             body.append(html.escape(part[1]))
+            continue
+        if part[0] == "percent":
+            display, current_href, prior_href, current_shown, prior_shown = part[1:6]
+            notes.append(_percent_note(display, current_href, prior_href, current_shown, prior_shown, len(notes)))
+            body.append(notes[-1][0])
             continue
         display, href = part[1], part[2]
         if not href.startswith("https://www.sec.gov/"):
@@ -329,7 +336,32 @@ def _parts_html(template_id: str, parts: list[tuple], class_name: str = "") -> s
             f'<a href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
         )
     class_attr = f' class="{class_name}"' if class_name else ""
-    return f'<p{class_attr} data-template="{template_id}">{"".join(body)}</p>\n'
+    note_html = "".join(note[1] for note in notes)
+    return f'<p{class_attr} data-template="{template_id}">{"".join(body)}</p>\n' + note_html
+
+
+def _percent_note(
+    display: str,
+    current_href: str,
+    prior_href: str,
+    current_shown: str,
+    prior_shown: str,
+    index: int,
+) -> tuple[str, str]:
+    """The percent opens one note that links this figure and the earlier figure."""
+    for href in (current_href, prior_href):
+        if not href.startswith("https://www.sec.gov/"):
+            raise ValueError("number without a filing link")
+    digest = hashlib.sha256(f"{index}|{current_href}|{prior_href}|{display}".encode()).hexdigest()[:16]
+    note_id = "pct-" + digest
+    link = f'<a class="pct" href="#{note_id}">{html.escape(display)}</a>'
+    note = (
+        f'<p class="pct-note" id="{note_id}">'
+        f'<a href="{html.escape(current_href, quote=True)}">{html.escape(current_shown)}</a>'
+        f'<a href="{html.escape(prior_href, quote=True)}">{html.escape(prior_shown)}</a>'
+        f"</p>\n"
+    )
+    return link, note
 
 
 def _plain(parts: list[tuple]) -> str:
@@ -484,7 +516,16 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
     ]]
 
 
-def _comparison_block(role: str, fact: Fact, last: Cell | None, year: Cell | None, measure: str, form_words: str, filed: str) -> str:
+def _comparison_block(
+    role: str,
+    fact: Fact,
+    last: Cell | None,
+    year: Cell | None,
+    measure: str,
+    form_words: str,
+    filed: str,
+    form: str = "",
+) -> str:
     label = label_for(role, fact)
     current = Cell(
         True,
@@ -503,26 +544,52 @@ def _comparison_block(role: str, fact: Fact, last: Cell | None, year: Cell | Non
     named = ""
     if current_caption.startswith(("Six months ended", "Nine months ended")):
         named = f'<p class="caption">{html.escape(current_caption)}</p>\n'
-    return named + _prior_grid(label, last, year) + "".join(chunks)
+    return named + _prior_grid(label, last, year, fact, form) + "".join(chunks)
 
 
-def _prior_grid(label: str, last: Cell | None, year: Cell | None) -> str:
-    cells = _prior_cell(label, last) + _prior_cell(label, year)
+def _right_head(cell: Cell | None, current: Fact, form: str) -> str:
+    kind = current.period.kind
+    start = current.period.start
+    end = current.period.end or ""
+    if cell is not None and cell.period_end:
+        kind = cell.kind or kind
+        start = cell.period_start
+        end = cell.period_end
+    header = column_header(kind, start, end)
+    if header.startswith("Six months ended"):
+        return "Same six months a year earlier"
+    if header.startswith("Nine months ended"):
+        return "Same nine months a year earlier"
+    if header.startswith("Year ended") or form == "10-K":
+        return "Prior year"
+    return "Same quarter a year earlier"
+
+
+def _prior_grid(label: str, last: Cell | None, year: Cell | None, current: Fact, form: str) -> str:
+    cells = ""
+    if last is not None:
+        cells += _prior_cell(label, last, "c1", current, form)
+    if year is not None:
+        cells += _prior_cell(label, year, "c2", current, form)
     if not cells:
         return ""
     return f'<div class="earlier">{cells}</div>\n'
 
 
-def _prior_cell(label: str, cell: Cell | None) -> str:
-    if cell is None:
-        return ""
+def _prior_cell(label: str, cell: Cell, column: str, current: Fact, form: str) -> str:
+    head = "Prior quarter" if column == "c1" else _right_head(cell, current, form)
     if not cell.available or cell.fact is None:
         if cell.basis == "structural":
             text = f"{label} for the prior quarter is not available for this filing."
-            return f'<div class="prior"><p data-template="M6">{html.escape(text)}</p></div>'
-        period = cell.missing_period or "the prior period"
-        text = f"{label} for {period} is not in the filings White Cliff read, so no change is shown."
-        return f'<div class="prior"><p data-template="M2">{html.escape(text)}</p></div>'
+            template = "M6"
+        else:
+            period = cell.missing_period or "the prior period"
+            text = f"{label} for {period} is not in the filings White Cliff read, so no change is shown."
+            template = "M2"
+        return (
+            f'<p class="h {column}">{html.escape(head)}</p>'
+            f'<p class="na {column}" data-template="{template}">{html.escape(text)}</p>'
+        )
     caption = column_header(cell.kind, cell.period_start, cell.period_end)
     value = html.escape(show_measure(cell.fact.value, cell.fact.unit))
     href = fact_href(cell.fact)
@@ -530,8 +597,8 @@ def _prior_cell(label: str, cell: Cell | None) -> str:
         shown = f'<a class="prior-value" href="{html.escape(href, quote=True)}">{value}</a>'
     else:
         shown = f'<span class="prior-value">{value}</span>'
-    cap = f'<p class="caption">{html.escape(caption)}</p>' if caption else ""
-    return f'<div class="prior">{cap}{shown}</div>'
+    date = f'<p class="d {column}">{html.escape(caption)}</p>' if caption else ""
+    return f'<p class="h {column}">{html.escape(head)}</p>{date}<p class="v {column}">{shown}</p>'
 
 
 def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None:
@@ -560,19 +627,25 @@ def _percent_clause(current: Cell, prior: Cell, measure: str) -> tuple[str, list
         or prior.basis in {"currency", "length"}
     ):
         return None
-    period = _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact)
+    phrase = period_phrase(prior.kind, prior.period_start, prior.period_end)
     if current.value == prior.value:
-        return "unchanged", [("text", "was unchanged from "), period]
+        return "unchanged", [("text", "was unchanged from " + phrase)]
     pct = percent_change(current.value, prior.value)
     if pct is None:
         return None
     if pct == 0 or _direction(current.value, prior.value) == "was unchanged":
-        return "unchanged", [("text", "was unchanged from "), period]
+        return "unchanged", [("text", "was unchanged from " + phrase)]
     return "change", [
         ("text", f"{_direction(current.value, prior.value)} "),
-        ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
-        ("text", " from "),
-        period,
+        (
+            "percent",
+            show_measure(abs(pct), "percent"),
+            fact_href(current.fact),
+            fact_href(prior.fact),
+            show_measure(current.fact.value, current.fact.unit),
+            show_measure(prior.fact.value, prior.fact.unit),
+        ),
+        ("text", " from " + phrase),
     ]
 
 
@@ -1075,7 +1148,16 @@ def build_additions(
             formula = "(revenue minus prior revenue) divided by prior revenue"
         block = ""
         if role != "yoy_change":
-            block = _comparison_block(role, anchor_fact, last, year, measure if measure != "per_share" else "money", form_words, filed)
+            block = _comparison_block(
+                role,
+                anchor_fact,
+                last,
+                year,
+                measure if measure != "per_share" else "money",
+                form_words,
+                filed,
+                form=form,
+            )
         control = "explain-" + identifier
         explanation = _explain_block(role, anchor_fact, company or "this company", statement, formula, inputs)
         after[identifier] = (
