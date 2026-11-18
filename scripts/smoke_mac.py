@@ -295,20 +295,29 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
 
 
 def _grab(page: DevTools, directory: Path, name: str) -> Path:
-    """Photograph the page on the connection already in use, before it can change."""
-    page.call("Page.enable")
-    result = page.call(
-        "Page.captureScreenshot",
-        {"format": "png", "optimizeForSpeed": True},
-        timeout=8,
-    )
-    data = base64.b64decode(result["data"])
-    if len(data) < 1000:
-        raise PageError(f"{name} was empty")
-    path = directory / name
-    path.write_bytes(data)
-    print(f"screenshot {path}", flush=True)
-    return path
+    """Photograph the page as it is. A new connection, and no window change, so it stays fast."""
+    last: Exception | None = None
+    for _ in range(2):
+        fresh = DevTools(page.ws_url)
+        try:
+            fresh.call("Page.enable")
+            result = fresh.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=20,
+            )
+            data = base64.b64decode(result["data"])
+            if len(data) < 1000:
+                raise PageError(f"{name} was empty")
+            path = directory / name
+            path.write_bytes(data)
+            print(f"screenshot {path}", flush=True)
+            return path
+        except (PageError, TimeoutError, OSError) as exc:
+            last = exc
+        finally:
+            fresh.close()
+    raise PageError(last)
 
 
 def _loading(page: DevTools) -> bool:
