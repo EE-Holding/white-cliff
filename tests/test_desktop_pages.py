@@ -15,7 +15,9 @@ from white_cliff.desktop_copy import (
     NO_10KQ,
     NO_INTERNET,
     NO_MATCH,
+    SEC_CERT,
     SEC_ODD,
+    SEC_REFUSED,
     SEC_WHY,
     SEVERAL,
 )
@@ -45,6 +47,8 @@ PLAIN = (
     NO_INTERNET,
     NO_MATCH,
     NO_10KQ,
+    SEC_CERT,
+    SEC_REFUSED,
     BUSY,
     CANNOT_EXPLAIN,
     ENTER_BOTH,

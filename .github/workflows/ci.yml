@@ -43,16 +43,31 @@ jobs:
       - name: Build
         run: |
           python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
-            --collect-submodules white_cliff --collect-data white_cliff \
+            --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi \
             scripts/desktop_entry.py
           stage="White Cliff for Apple silicon Mac"
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
           ditto -c -k --keepParent "$stage" "$stage.zip"
+      - name: Show the old certificate failure
+        run: |
+          saved_file="${SSL_CERT_FILE-}"
+          saved_dir="${SSL_CERT_DIR-}"
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 -c 'import ssl; print(ssl.get_default_verify_paths())'
+          python3 scripts/prove_old_tls.py "$saved_file" "$saved_dir"
       - name: Smoke
         timeout-minutes: 12
-        run: python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
+        run: |
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -78,16 +93,31 @@ jobs:
       - name: Build
         run: |
           python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
-            --collect-submodules white_cliff --collect-data white_cliff \
+            --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi \
             scripts/desktop_entry.py
           stage="White Cliff for Intel Mac"
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
           ditto -c -k --keepParent "$stage" "$stage.zip"
+      - name: Show the old certificate failure
+        run: |
+          saved_file="${SSL_CERT_FILE-}"
+          saved_dir="${SSL_CERT_DIR-}"
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 -c 'import ssl; print(ssl.get_default_verify_paths())'
+          python3 scripts/prove_old_tls.py "$saved_file" "$saved_dir"
       - name: Smoke
         timeout-minutes: 12
-        run: python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
+        run: |
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -113,7 +143,7 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name "White Cliff" --collect-submodules white_cliff --collect-data white_cliff scripts/desktop_entry.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name "White Cliff" --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi scripts/desktop_entry.py
       - uses: actions/upload-artifact@v4
         with:
           name: White Cliff for Windows

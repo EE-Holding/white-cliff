@@ -39,7 +39,9 @@ from white_cliff.desktop_copy import (
     NO_MATCH,
     ONLY_SEC,
     REFUSED,
+    SEC_CERT,
     SEC_ODD,
+    SEC_REFUSED,
     SEVERAL,
 )
 from white_cliff.disclaimer import OutputRefused
@@ -60,7 +62,9 @@ from white_cliff.secclient import (
     RateLimiter,
     SecBusy,
     SecClient,
+    SecRefused,
     SecStatus,
+    SecTLS,
     SecUnreachable,
 )
 
@@ -234,8 +238,12 @@ class Desktop:
                 ticker = found.company.ticker or ticker
         except EmptyQuery:
             return self._fail(EMPTY_QUERY, query)
+        except SecTLS:
+            return self._fail(SEC_CERT, query)
         except SecUnreachable:
             return self._fail(NO_INTERNET, query)
+        except SecRefused:
+            return self._fail(SEC_REFUSED, query)
         except SecBusy:
             return self._fail(BUSY, query)
         except NoPeriodic:

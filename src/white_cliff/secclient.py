@@ -9,7 +9,8 @@ import urllib.parse
 import urllib.request
 
 from white_cliff.config import MissingUserAgent, valid_user_agent
-from white_cliff.desktop_copy import BUSY, NO_INTERNET, ONLY_SEC, SEC_ODD
+from white_cliff.desktop_copy import BUSY, NO_INTERNET, ONLY_SEC, SEC_CERT, SEC_ODD, SEC_REFUSED
+from white_cliff.tls import failure_kind, https_opener, is_tls_error, log_failure
 
 ALLOWED_HOSTS = frozenset({"www.sec.gov", "data.sec.gov"})
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
@@ -29,6 +30,16 @@ class SecBusy(Exception):
 class SecUnreachable(Exception):
     def __init__(self) -> None:
         super().__init__(NO_INTERNET)
+
+
+class SecTLS(Exception):
+    def __init__(self) -> None:
+        super().__init__(SEC_CERT)
+
+
+class SecRefused(Exception):
+    def __init__(self) -> None:
+        super().__init__(SEC_REFUSED)
 
 
 class SecStatus(Exception):
@@ -61,7 +72,7 @@ def _default_transport(url: str, user_agent: str) -> tuple[int, bytes, dict[str,
             "Accept": "application/json,text/html,application/xml,*/*",
         },
     )
-    opener = urllib.request.build_opener(_RefuseRedirect)
+    opener = https_opener(_RefuseRedirect)
     try:
         with opener.open(request, timeout=60) as response:
             return response.status, response.read(), dict(response.headers.items())
@@ -160,10 +171,14 @@ class SecClient:
             raise DisallowedHost()
         delay = 1.0
         waited = 0.0
+        last_status: int | None = None
         for _ in range(6):
             try:
                 status, body, headers = self._request(url)
-            except (OSError, TimeoutError):
+            except (OSError, TimeoutError) as exc:
+                log_failure(failure_kind(exc), url, None)
+                if is_tls_error(exc):
+                    raise SecTLS() from None
                 raise SecUnreachable() from None
             if status in _REDIRECTS:
                 location = _header(headers, "Location")
@@ -172,6 +187,7 @@ class SecClient:
                     raise DisallowedHost()
                 return self.get(target, hops + 1)
             if status in (403, 429):
+                last_status = status
                 pause = delay
                 retry_after = _header(headers, "Retry-After")
                 if retry_after:
@@ -185,6 +201,10 @@ class SecClient:
                 delay *= 2
                 continue
             if status != 200:
+                log_failure("HTTPError", url, status)
                 raise SecStatus(status)
             return body
+        if last_status == 403:
+            log_failure("HTTPError", url, 403)
+            raise SecRefused()
         raise SecBusy()

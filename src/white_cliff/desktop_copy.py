@@ -14,6 +14,8 @@ SEC_WHY = (
 NO_INTERNET = (
     "White Cliff could not reach sec.gov. Check your internet connection and try again."
 )
+SEC_CERT = "White Cliff could not confirm the connection to sec.gov. Try again."
+SEC_REFUSED = "sec.gov did not accept the name and email. Check them and try again."
 NO_MATCH = "No company on the SEC list matches that."
 CLOSE_INTRO = "No exact match. These names are on the SEC list."
 SEVERAL = "Several companies on the SEC list match. Pick one."
@@ -40,6 +42,8 @@ __all__ = [
     "NO_10KQ",
     "NO_INTERNET",
     "NO_MATCH",
+    "SEC_CERT",
+    "SEC_REFUSED",
     "ONLY_SEC",
     "REFUSED",
     "SEC_ODD",

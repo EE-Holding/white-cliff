@@ -19,6 +19,7 @@ from pathlib import Path
 
 from white_cliff.config import valid_user_agent
 from white_cliff.config import MissingUserAgent
+from white_cliff.tls import https_opener
 
 ALLOWED_HOSTS = frozenset({"www.sec.gov", "data.sec.gov", "efts.sec.gov"})
 ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
@@ -125,7 +126,7 @@ def _default_transport(url: str, user_agent: str) -> tuple[int, bytes, dict[str,
             "Accept": "application/json,text/html,application/xml,*/*",
         },
     )
-    opener = urllib.request.build_opener(_RefuseRedirect)
+    opener = https_opener(_RefuseRedirect)
     try:
         with opener.open(request, timeout=60) as response:
             return response.status, response.read(), dict(response.headers.items())
