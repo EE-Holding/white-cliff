@@ -323,6 +323,8 @@ def test_sector_label_is_exempt_only_in_its_form():
     assert labelled.startswith('<a class="sector-chip"')
     assert "SEC industry (SIC 6282): INVESTMENT ADVICE" in labelled
     assert audit_rendered(DISCLAIMER + labelled) is None
+    altered = labelled.replace("INVESTMENT ADVICE", "Investment Advice")
+    assert audit_rendered(DISCLAIMER + altered) is not None
     assert audit_rendered(DISCLAIMER + " Investment Advice") == "advice"
     assert audit_rendered(DISCLAIMER + ' <a href="https://example.com/note">Investment Advice</a>') == "advice"
     with pytest.raises(OutputRefused):

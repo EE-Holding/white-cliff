@@ -3,6 +3,8 @@
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from white_cliff.facts import Period
 from white_cliff.formulas import FormulaError, margin, same_period
 from white_cliff.pipeline import explain_filing
@@ -298,31 +300,40 @@ _ALLOWED = (
 )
 
 
-def test_allowed_captions_set_the_usd_scale():
+def _allowed_cases():
+    cases = []
     for caption, unit in _ALLOWED:
-        found, _html = _revenue_caption(caption, "4" if "billions" in caption.lower() else "1,000")
-        assert found and found[0].unit == unit, caption
+        cases.append((caption, unit))
         for suffix in (", except per share data", ", except per share amounts"):
-            variant = caption[:-1] + suffix + ")"
-            found, _html = _revenue_caption(variant, "4" if "billions" in caption.lower() else "1,000")
-            assert found and found[0].unit == unit, variant
+            cases.append((caption[:-1] + suffix + ")", unit))
+    return cases
 
 
-def test_share_currency_and_mixed_captions_are_refused():
-    refused = (
-        "(Shares in thousands)",
-        "(In thousands of shares)",
-        "(Number of shares in thousands)",
-        "(Shares in millions)",
-        "(Millions of euros)",
-        "(In millions of euros, except per share data)",
-        "(In thousands, except shares)",
-        "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)",
-    )
-    for caption in refused:
-        found, html = _revenue_caption(caption)
-        assert found == [], caption
-        assert all(not fact.unit.startswith("USD") for fact in _facts(html))
+@pytest.mark.parametrize("caption,unit", _allowed_cases())
+def test_allowed_caption_sets_the_usd_scale(caption, unit):
+    cell = "4" if "billions" in caption.lower() else "1,000"
+    found, _html = _revenue_caption(caption, cell)
+    assert found and found[0].unit == unit
+    assert found[0].value == Decimal(cell.replace(",", ""))
+
+
+_REFUSED = (
+    "(Shares in thousands)",
+    "(In thousands of shares)",
+    "(Number of shares in thousands)",
+    "(Shares in millions)",
+    "(Millions of euros)",
+    "(In millions of euros, except per share data)",
+    "(In thousands, except shares)",
+    "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)",
+)
+
+
+@pytest.mark.parametrize("caption", _REFUSED)
+def test_refused_caption_shows_no_amount(caption):
+    found, html = _revenue_caption(caption)
+    assert found == []
+    assert all(not fact.unit.startswith("USD") for fact in _facts(html))
 
 
 def test_billions_caption_renders(tmp_path: Path):
@@ -382,6 +393,8 @@ def test_year_only_header_does_not_invent_december_31(tmp_path: Path):
 
     explained = explain_filing(load_directory(directory))
     assert "operating margin" not in explained.markdown
+    assert "1000 USD millions" in explained.html
+    assert 'class="source-chip"' not in explained.html
 
 
 def test_filer_apostrophe_survives_html_escape(tmp_path: Path):
