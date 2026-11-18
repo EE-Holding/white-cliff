@@ -29,7 +29,9 @@ def _audit_markdown(markdown: str, store) -> None:
         number = re.match(r"-?\d+(?:\.\d+)?", label)
         if number:
             seen = True
+            assert url.startswith("https://www.sec.gov/")
             fragment = urlsplit(url).fragment
+            assert fragment
             kind, _, rest = fragment.partition("=")
             identifier = rest.split("&", 1)[0]
             parsed = Decimal(number.group(0))
@@ -58,9 +60,14 @@ def _audit_markdown(markdown: str, store) -> None:
 
 def _audit_html(document: str, store) -> None:
     assert document.find(DISCLAIMER) < re.search(r"\d", document).start()
-    figures = re.findall(r"<data\b([^>]*)>([^<]*)</data>", document)
+    figures = re.findall(
+        r'<data\b([^>]*)>([^<]*)</data>\s*'
+        r'<a class="source-chip"[^>]*href="(https://www\.sec\.gov/[^"]+)"',
+        document,
+    )
     assert figures
-    for attrs, text in figures:
+    assert len(figures) == len(re.findall(r"<data\b", document))
+    for attrs, text, href in figures:
         identifier = re.search(r'data-id="([^"]+)"', attrs).group(1)
         kind = re.search(r'data-kind="([^"]+)"', attrs).group(1)
         parsed = Decimal(text.split()[0])
@@ -68,8 +75,8 @@ def _audit_html(document: str, store) -> None:
             assert store.get(identifier).value == parsed
         else:
             assert store.get_calc(identifier).value == parsed
+        assert "fact=" in href or "calc=" in href
         assert f'data-id="{identifier}"' in document
-        assert "source-chip" in document
     cleaned = re.sub(r"<data\b[^>]*>[^<]*</data>", "", document)
     cleaned = re.sub(r"<a\b[^>]*>[^<]*</a>", "", cleaned)
     cleaned = re.sub(r"<[^>]+>", "", cleaned).replace(DISCLAIMER, "")

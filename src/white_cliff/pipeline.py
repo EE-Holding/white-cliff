@@ -46,13 +46,14 @@ class Explained:
         return copy_text(self.markdown)
 
 
-def _parse_text(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
+def _parse_text(text: str, document: str, url: str, sha256: str, form: str) -> ParsedFacts:
     if is_instance_document(text):
         return parse_instance(text, document, url, sha256)
     parsed = ParsedFacts(facts=[])
     if "nonfraction" in text.lower():
         parsed = parse_inline(text, document, url, sha256)
-    table_facts, table_price = parse_tables(text, document, url, sha256)
+    table_form = parsed.form or form
+    table_facts, table_price = parse_tables(text, document, url, sha256, table_form)
     covered = {fact.role for fact in parsed.facts if fact.role}
     for fact in table_facts:
         if fact.role and fact.role in covered:
@@ -88,7 +89,7 @@ def load_directory(path: Path) -> Filing:
         text = blob.decode("utf-8")
         texts.append(text)
         url = url or item["url"]
-        parsed = _parse_text(text, item["name"], item["url"], digest)
+        parsed = _parse_text(text, item["name"], item["url"], digest, form)
         _absorb(store, parsed)
         filer = parsed.filer or filer
         document_filer = parsed.filer or document_filer
@@ -123,7 +124,7 @@ def load_file(path: Path) -> Filing:
     digest = hashlib.sha256(blob).hexdigest()
     text = blob.decode("utf-8")
     url = path.resolve().as_uri()
-    parsed = _parse_text(text, path.name, url, digest)
+    parsed = _parse_text(text, path.name, url, digest, "")
     store = FactStore()
     _absorb(store, parsed)
     return Filing(

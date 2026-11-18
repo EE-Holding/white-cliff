@@ -28,6 +28,18 @@ def _fragment(identifier: str, start: int | None, end: int | None) -> str:
     return fragment
 
 
+def _filing_href(
+    url: str,
+    identifier: str,
+    start: int | None,
+    end: int | None,
+    located: bool,
+) -> str | None:
+    if not located or not url.startswith("https://www.sec.gov/"):
+        return None
+    return _with_fragment(url, _fragment(identifier, start, end))
+
+
 def _markdown_chip(label: str, url: str, title: str) -> str:
     return f'[{label}]({url} "{title}")'
 
@@ -123,39 +135,45 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
     if kind == "fact":
         fact = store.get(identifier)
         label = f"{_shown(fact.value, fact.unit)} {fact.unit}"
-        href = _with_fragment(
+        href = _filing_href(
             fact.source.url,
-            _fragment(fact.id, fact.source.char_start, fact.source.char_end),
+            fact.id,
+            fact.source.char_start,
+            fact.source.char_end,
+            fact.source.located(),
         )
-        title = statement_chip(fact)
+        if href is None:
+            return ""
+        title = statement_chip(fact) or "Source in filing"
         data = f'<data data-kind="fact" data-id="{fact.id}">{html.escape(label, quote=False)}</data>'
         if mode == "html":
-            if not title:
-                return data
             return (
                 f"{data} "
                 f'<a class="source-chip" data-id="{fact.id}" '
                 f'href="{html.escape(href, quote=True)}">{html.escape(title, quote=False)}</a>'
             )
-        return _markdown_chip(label, href, title or "source")
+        return _markdown_chip(label, href, title)
     calc = store.get_calc(identifier)
     source_fact = store.get(calc.input_ids[0])
     label = f"{_shown(calc.value, calc.unit)} {calc.unit}"
-    href = _with_fragment(
+    href = _filing_href(
         source_fact.source.url,
-        _fragment(calc.id, source_fact.source.char_start, source_fact.source.char_end),
+        calc.id,
+        source_fact.source.char_start,
+        source_fact.source.char_end,
+        source_fact.source.located(),
     )
-    title = statement_chip(source_fact)
+    if href is None:
+        return ""
+    title = statement_chip(source_fact) or "Source in filing"
     data = f'<data data-kind="calc" data-id="{calc.id}">{html.escape(label, quote=False)}</data>'
     if mode == "html":
-        if not title:
-            return data
         return (
             f"{data} "
             f'<a class="source-chip" data-id="{calc.id}" '
             f'href="{html.escape(href, quote=True)}">{html.escape(title, quote=False)}</a>'
         )
-    return _markdown_chip(label, href, title or "source")
+    return _markdown_chip(label, href, title)
 
 
 def render_markdown(blocks: list[Block], store: FactStore) -> str:

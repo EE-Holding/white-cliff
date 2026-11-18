@@ -1,5 +1,6 @@
 """Column binding, scale, and period span for HTML tables."""
 
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -297,6 +298,13 @@ _ALLOWED = (
     ("(In millions of dollars)", "USD millions"),
     ("(In thousands of dollars)", "USD thousands"),
     ("(In billions of dollars)", "USD billions"),
+    ("(Dollars in billions)", "USD billions"),
+    ("($ in millions)", "USD millions"),
+    ("($ in thousands)", "USD thousands"),
+    ("($ in billions)", "USD billions"),
+    ("(In millions of U.S. dollars)", "USD millions"),
+    ("(In thousands of U.S. dollars)", "USD thousands"),
+    ("(In billions of U.S. dollars)", "USD billions"),
 )
 
 
@@ -326,6 +334,7 @@ _REFUSED = (
     "(In millions of euros, except per share data)",
     "(In thousands, except shares)",
     "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)",
+    "(Amounts in thousands)",
 )
 
 
@@ -394,7 +403,145 @@ def test_year_only_header_does_not_invent_december_31(tmp_path: Path):
     explained = explain_filing(load_directory(directory))
     assert "operating margin" not in explained.markdown
     assert "1000 USD millions" in explained.html
-    assert 'class="source-chip"' not in explained.html
+    assert "Source in filing" in explained.html
+    assert 'class="source-chip"' in explained.html
+    assert "https://www.sec.gov/" in explained.html
+    assert re.search(
+        r'<data data-kind="fact"[^>]*>1000 USD millions</data>\s*'
+        r'<a class="source-chip"[^>]*href="https://www\.sec\.gov/[^"]+"',
+        explained.html,
+    )
+
+
+def test_a_short_date_header_keeps_a_filing_link(tmp_path: Path) -> None:
+    html = """
+    <table>
+      <caption>(In millions)</caption>
+      <tr><th></th><th>Sep 30, 2026</th></tr>
+      <tr><td>Total net sales</td><td>5,000</td></tr>
+    </table>
+    """
+    directory = write_filing(tmp_path / "filing", "sales.htm", html, URL, form="10-K")
+    from white_cliff.pipeline import load_directory
+
+    explained = explain_filing(load_directory(directory))
+    assert "5000 USD millions" in explained.html
+    assert "Source in filing" in explained.html
+    assert re.search(
+        r'<data data-kind="fact"[^>]*>5000 USD millions</data>\s*'
+        r'<a class="source-chip"[^>]*href="https://www\.sec\.gov/[^"]+"',
+        explained.html,
+    )
+
+
+def test_a_figure_without_a_filing_url_is_omitted() -> None:
+    from white_cliff.explain import Block
+    from white_cliff.facts import Fact, FactStore, Period, SourcePointer
+    from white_cliff.render import render_html
+
+    fact = Fact(
+        id="factrevenue",
+        concept="us-gaap:Revenues",
+        label="Revenue",
+        value=Decimal("5000"),
+        unit="USD millions",
+        period=Period("duration", "2024-01-01", "2024-12-31"),
+        source=SourcePointer("filing.htm", "abc", "https://example.com/filing.htm", 10, 20),
+        role="revenue",
+    )
+    store = FactStore()
+    store.add(fact)
+    html = render_html(
+        [Block("Revenue was {fact:factrevenue} [section:Income statement].")],
+        store,
+    )
+    assert "5000" not in html
+    assert 'data-kind="fact"' not in html
+
+
+def test_a_following_table_does_not_inherit_scale() -> None:
+    html = """
+    <p>(In millions)</p>
+    <table>
+      <tr><th></th><th>2026</th></tr>
+      <tr><td>Total net sales</td><td>1</td></tr>
+    </table>
+    <table>
+      <tr><th></th><th>2026</th></tr>
+      <tr><td>Total net sales</td><td>5,000,000</td></tr>
+    </table>
+    """
+    facts = _facts(html)
+    assert any(fact.value == Decimal("1") and fact.unit == "USD millions" for fact in facts)
+    assert all(fact.value != Decimal("5000000") for fact in facts)
+
+
+def test_conflicting_scale_headers_are_refused() -> None:
+    html = """
+    <table>
+      <tr><td>(In millions)</td><td>(In thousands)</td></tr>
+      <tr><th></th><th>December 31, 2026</th></tr>
+      <tr><td>Total net sales</td><td>5</td></tr>
+    </table>
+    """
+    assert _revenue(html) == []
+
+
+def test_eur_in_a_header_refuses_the_table() -> None:
+    html = """
+    <table>
+      <caption>(In millions)</caption>
+      <tr><th></th><th>EUR</th><th>December 31, 2026</th></tr>
+      <tr><td>Total net sales</td><td></td><td>5,000</td></tr>
+    </table>
+    """
+    assert _revenue(html) == []
+
+
+def test_euros_in_parentheses_in_a_header_refuses_the_table() -> None:
+    html = """
+    <table>
+      <caption>(In millions)</caption>
+      <tr><td>(euros)</td><td>December 31, 2026</td></tr>
+      <tr><td>Total net sales</td><td>5,000</td></tr>
+    </table>
+    """
+    assert _revenue(html) == []
+
+
+def test_euros_in_the_lead_paragraph_refuses_the_table() -> None:
+    html = """
+    <p>Amounts are stated in euros.</p>
+    <table>
+      <caption>(In millions)</caption>
+      <tr><th></th><th>December 31, 2026</th></tr>
+      <tr><td>Total net sales</td><td>5,000</td></tr>
+    </table>
+    """
+    assert _revenue(html) == []
+
+
+def test_a_canadian_dollar_cell_refuses_the_table() -> None:
+    html = """
+    <table>
+      <caption>(In millions)</caption>
+      <tr><th></th><th>December 31, 2026</th></tr>
+      <tr><td>Total net sales</td><td>5,000</td><td>C$ 5,000</td></tr>
+    </table>
+    """
+    assert _revenue(html) == []
+
+
+def test_a_20f_table_is_refused() -> None:
+    html = """
+    <table>
+      <caption>(In millions)</caption>
+      <tr><th></th><th>December 31, 2026</th></tr>
+      <tr><td>Total net sales</td><td>5,000</td></tr>
+    </table>
+    """
+    facts, _price = parse_tables(html, "t.htm", URL, "abc", form="20-F")
+    assert facts == []
 
 
 def test_filer_apostrophe_survives_html_escape(tmp_path: Path):

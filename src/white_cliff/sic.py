@@ -7,8 +7,9 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-_FILER_SIC = re.compile(r"https://data\.sec\.gov/submissions/CIK(\d{10})\.json\Z")
-_LABEL = re.compile(r"SEC industry \(SIC (\d+)\): (.*)\Z")
+_FILER_SIC = re.compile(r"https://data\.sec\.gov/submissions/CIK([0-9]{10})\.json\Z")
+_LABEL = re.compile(r"SEC industry \(SIC ([0-9]+)\): (.*)\Z")
+_CODE = re.compile(r"^[0-9]{3,4}$")
 
 
 @lru_cache(maxsize=1)
@@ -25,9 +26,10 @@ def sic_titles() -> dict[str, str]:
 
 
 def sic_title(code: str) -> str | None:
-    if not str(code).strip().isdigit():
+    token = str(code).strip()
+    if _CODE.fullmatch(token) is None:
         return None
-    return sic_titles().get(str(int(code)))
+    return sic_titles().get(str(int(token)))
 
 
 def sector_label(code: str) -> str | None:
@@ -69,7 +71,7 @@ def accepted_sector(sic: object, cik: str) -> str | None:
     code = str(sic.get("code", "")).strip()
     source = str(sic.get("source", "")).strip()
     match = _FILER_SIC.fullmatch(source)
-    if match is None or not code.isdigit():
+    if match is None or _CODE.fullmatch(code) is None:
         return None
     canonical = re.sub(r"\D", "", cik).zfill(10)
     if len(canonical) != 10 or match.group(1) != canonical:

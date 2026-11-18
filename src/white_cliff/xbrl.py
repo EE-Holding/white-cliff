@@ -57,7 +57,12 @@ _ELEMENT = re.compile(
     re.DOTALL,
 )
 _ATTR = re.compile(r'([A-Za-z_:][\w:.-]*)\s*=\s*"([^"]*)"')
-_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
+_PLAIN_NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
+_DOT_DECIMAL = re.compile(r"^-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$")
+_INSTANCE_ROOT = re.compile(r"<xbrl(?:\s|>|/)", re.I)
+_HTML_ROOT = re.compile(r"<html(?:\s|>|/)", re.I)
+_IX_MARK = re.compile(r"xmlns:ix\b|inlinexbrl|<\s*ix:", re.I)
+_XML_DECL = re.compile(r"<\?xml[^>]*\?>", re.I)
 _INLINE = re.compile(
     r"<(?:[A-Za-z_][\w.-]*:)?nonFraction\b([^>]*)>([^<]*)</(?:[A-Za-z_][\w.-]*:)?nonFraction>",
     re.I | re.DOTALL,
@@ -208,11 +213,38 @@ def _decimals(raw: str | None) -> int | None:
         return None
 
 
-def _number(text: str) -> Decimal | None:
-    cleaned = text.strip().replace(",", "")
-    if not _NUMBER.fullmatch(cleaned):
+def _format_kind(fmt: str) -> str | None:
+    """Allow a missing format or num-dot-decimal in any ixt namespace."""
+    if fmt.strip() == "":
+        return "plain"
+    local = fmt.strip().split(":")[-1].lower().replace("-", "").replace("_", "")
+    if local == "numdotdecimal":
+        return "dot"
+    return None
+
+
+def _read_amount(text: str, fmt: str, origin: str) -> Decimal | None:
+    stripped = text.strip()
+    if origin == "ixbrl":
+        kind = _format_kind(fmt)
+        if kind == "plain" and _PLAIN_NUMBER.fullmatch(stripped):
+            return Decimal(stripped)
+        if kind == "dot" and _DOT_DECIMAL.fullmatch(stripped):
+            return Decimal(stripped.replace(",", ""))
         return None
-    return Decimal(cleaned)
+    if _PLAIN_NUMBER.fullmatch(stripped):
+        return Decimal(stripped)
+    return None
+
+
+def _allowed_measure(unit_ref: str, units: dict[str, str]) -> str | None:
+    """A fact needs a defined unit whose measure is USD or shares."""
+    if not unit_ref or unit_ref not in units:
+        return None
+    label = units[unit_ref]
+    if label in {"USD", "shares"}:
+        return label
+    return None
 
 
 def _fact_from_hit(
@@ -240,7 +272,7 @@ def _fact_from_hit(
     stripped = raw_inner.strip()
     if not stripped:
         return None
-    value = _number(stripped)
+    value = _read_amount(stripped, attrs.get("format", ""), origin)
     if value is None:
         return None
     if attrs.get("sign") == "-" and value > 0:
@@ -250,8 +282,9 @@ def _fact_from_hit(
     relative = raw_inner.find(stripped)
     start = inner_start + max(relative, 0)
     end = start + len(stripped)
-    unit_ref = attrs.get("unitRef", "")
-    unit = units.get(unit_ref, _norm_measure(unit_ref) if unit_ref else "")
+    unit = _allowed_measure(attrs.get("unitRef", ""), units)
+    if unit is None:
+        return None
     scaled = _unit_with_scale(unit, attrs.get("scale"), origin)
     if scaled is None:
         return None
@@ -423,5 +456,10 @@ def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts
 
 
 def is_instance_document(text: str) -> bool:
-    head = text.lstrip()[:800].lower()
-    return "<xbrl" in head and "nonfraction" not in head
+    """An instance has an xbrl root. Inline XBRL has an ix namespace or an html root."""
+    head = text.lstrip()
+    head = _XML_DECL.sub("", head, count=1).lstrip()
+    window = head[:8000].lower()
+    if _HTML_ROOT.search(window) or _IX_MARK.search(window):
+        return False
+    return _INSTANCE_ROOT.search(window) is not None

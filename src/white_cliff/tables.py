@@ -60,7 +60,25 @@ _USD_INNER = {
     "in millions of dollars": "USD millions",
     "in thousands of dollars": "USD thousands",
     "in billions of dollars": "USD billions",
+    "dollars in billions": "USD billions",
+    "$ in millions": "USD millions",
+    "$ in thousands": "USD thousands",
+    "$ in billions": "USD billions",
+    "in millions of u.s. dollars": "USD millions",
+    "in thousands of u.s. dollars": "USD thousands",
+    "in billions of u.s. dollars": "USD billions",
 }
+_TABLE_FORMS = {"10-K", "10-Q", "8-K"}
+_FOREIGN_CURRENCY = re.compile(
+    r"(?<![A-Za-z])(?:"
+    r"euros?|pounds?|francs?|yen|yuan|sterling|renminbi|"
+    r"eur|gbp|jpy|rmb|cny|chf|cad|aud|nzd|sgd|krw|inr|"
+    r"sek|nok|dkk|mxn|hkd|twd|brl|cnh"
+    r")(?![A-Za-z])"
+    r"|[€£¥]"
+    r"|C\$|A\$|HK\$|NT\$|NZ\$|R\$|MX\$|S\$|AU\$",
+    re.I,
+)
 _PER_SHARE = (", except per share data", ", except per share amounts")
 _DATE = re.compile(
     r"(January|February|March|April|May|June|July|August|September|"
@@ -82,7 +100,7 @@ class _Cell:
 class _Tables(HTMLParser):
     def __init__(self, raw: str) -> None:
         super().__init__(convert_charrefs=True)
-        self.tables: list[tuple[str, str, list[list[_Cell]]]] = []
+        self.tables: list[tuple[str, str, str, list[list[_Cell]]]] = []
         self._raw = raw
         self._line_starts = [0]
         for index, char in enumerate(raw):
@@ -98,8 +116,10 @@ class _Tables(HTMLParser):
         self._in_caption = False
         self._caption: list[str] = []
         self._outside: list[str] = []
+        self._chunks: list[str] = []
         self._lead_scale = ""
         self._table_lead = ""
+        self._table_scale = ""
 
     def _abs(self) -> int:
         line, offset = self.getpos()
@@ -116,7 +136,10 @@ class _Tables(HTMLParser):
                 self._finish_outside()
                 self._rows = []
                 self._caption = []
-                self._table_lead = self._lead_scale
+                self._table_lead = " ".join(self._chunks).strip()
+                self._table_scale = self._lead_scale
+                self._chunks = []
+                self._lead_scale = ""
             self._depth += 1
         elif tag == "caption" and self._depth:
             self._in_caption = True
@@ -147,8 +170,9 @@ class _Tables(HTMLParser):
             self._depth -= 1
             if self._depth == 0:
                 caption = re.sub(r"\s+", " ", "".join(self._caption)).strip()
-                self.tables.append((caption, self._table_lead, self._rows))
+                self.tables.append((caption, self._table_lead, self._table_scale, self._rows))
                 self._table_lead = ""
+                self._table_scale = ""
         elif self._depth == 0:
             self._finish_outside()
 
@@ -157,6 +181,7 @@ class _Tables(HTMLParser):
         self._outside = []
         if not text:
             return
+        self._chunks.append(text)
         if allowed_unit(text):
             self._lead_scale = text
         else:
@@ -368,16 +393,32 @@ def allowed_unit(text: str) -> str | None:
     return _USD_INNER.get(inner)
 
 
-def _scale_caption(caption: str, lead: str, rows: list[list[_Cell]]) -> str:
+def _foreign_currency(text: str) -> bool:
+    return _FOREIGN_CURRENCY.search(text) is not None
+
+
+def _table_usd_unit(caption: str, lead: str, rows: list[list[_Cell]]) -> str | None:
+    """One allow-listed USD scale from this table, or nothing."""
+    statements: list[str] = []
     if caption.strip():
-        return caption.strip()
+        statements.append(caption.strip())
+    elif allowed_unit(lead):
+        statements.append(lead.strip())
     for row in rows[:4]:
         for cell in row:
             if allowed_unit(cell.text):
-                return cell.text.strip()
-    if allowed_unit(lead):
-        return lead.strip()
-    return ""
+                statements.append(cell.text.strip())
+    if not statements:
+        return None
+    units: list[str] = []
+    for text in statements:
+        unit = allowed_unit(text)
+        if unit is None:
+            return None
+        units.append(unit)
+    if len(set(units)) != 1:
+        return None
+    return units[0]
 
 
 def _table_kind(rows: list[list[_Cell]]) -> str:
@@ -454,16 +495,28 @@ def _locate_in(raw: str, start: int, end: int, value: Decimal) -> tuple[int, int
     return None
 
 
-def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[Fact], bool]:
+def parse_tables(
+    text: str,
+    document: str,
+    url: str,
+    sha256: str,
+    form: str = "10-K",
+) -> tuple[list[Fact], bool]:
     parser = _Tables(text)
     parser.feed(text)
     facts: list[Fact] = []
     price_metric = False
-    for caption, lead, rows in parser.tables:
+    form_allowed = form in _TABLE_FORMS
+    for caption, lead, scale, rows in parser.tables:
         kind = _table_kind(rows)
         columns = _header_columns(rows)
         chosen = _current_column(columns)
-        scale_text = _scale_caption(caption, lead, rows)
+        foreign = (
+            _foreign_currency(caption)
+            or _foreign_currency(lead)
+            or any(_foreign_currency(cell.text) for row in rows for cell in row)
+        )
+        unit = _table_usd_unit(caption, scale, rows) if form_allowed and not foreign else None
         for row in rows:
             placed = _place(row)
             label = ""
@@ -495,7 +548,6 @@ def parse_tables(text: str, document: str, url: str, sha256: str) -> tuple[list[
                 value = _value_in_column(placed, chosen)
             if value is None:
                 continue
-            unit = allowed_unit(scale_text)
             if unit is None:
                 continue
             column = chosen if chosen is not None else chosen_here

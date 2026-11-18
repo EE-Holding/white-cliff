@@ -31,6 +31,9 @@ def pinned_dir() -> Path:
     raise FileNotFoundError("pinned filings were not found")
 
 
+_ACCESSION = re.compile(r"^[0-9]{10}-[0-9]{2}-[0-9]{6}$")
+
+
 def _form_words(form: str) -> str:
     return {
         "10-K": "annual report",
@@ -54,9 +57,12 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     items: list[str] = []
     for entry in manifest["filings"]:
-        filing = load_directory(source / "filings" / entry["accession"])
+        accession = str(entry.get("accession", ""))
+        if _ACCESSION.fullmatch(accession) is None:
+            raise OutputRefused("bad accession")
+        filing = load_directory(source / "filings" / accession)
         explained = explain_filing(filing)
-        page_name = entry["accession"] + ".html"
+        page_name = accession + ".html"
         (output / page_name).write_text(explained.html, encoding="utf-8")
         form_words = _form_words(entry["form"])
         span = registrant_span(filing.document_filer, filing.text)
