@@ -363,6 +363,7 @@ def drive(
 
 def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
     """Start the built app. BROWSER records the URL and opens nothing."""
+    binary = str(Path(binary).resolve())
     home = Path(tempfile.mkdtemp(prefix="white-cliff-home-"))
     url_file = home / "opened-url"
     recorder = home / "record-url"

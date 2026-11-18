@@ -53,6 +53,23 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert offenders == []
 
 
+def test_launch_resolves_a_relative_binary(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    binary = tmp_path / "dist" / "White Cliff"
+    binary.parent.mkdir()
+    binary.write_text(
+        "#!/bin/sh\n" + '"$BROWSER" "http://127.0.0.1:9/"\n' + "sleep 30\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    driver = _driver()
+    proc, url, log = driver.launch("dist/White Cliff")
+    try:
+        assert url == "http://127.0.0.1:9/"
+    finally:
+        driver.stop(proc, log)
+
+
 def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     from tests.test_desktop_app import _Transport, _app
 
