@@ -1,9 +1,11 @@
 """Comparison math: percent rules, prior-quarter selection, and pinned figures."""
 
+import re
 from decimal import Decimal
 from pathlib import Path
 
 from white_cliff.compare import (
+    Cell,
     PriorCandidate,
     choose_prior_10q,
     columns_for,
@@ -199,3 +201,159 @@ def test_a_column_the_form_cannot_carry_uses_the_filing_sentence():
     assert m_last is not None and m_last.basis != "structural"
     assert 'data-template="M2"' in missing_html
     assert 'data-template="M6"' not in missing_html
+
+
+def _plain_page(html_text: str) -> str:
+    return re.sub(r"<[^>]+>", "", html_text)
+
+
+def _column(fact):
+    return Cell(
+        True,
+        value=fact.value,
+        unit=fact.unit,
+        period_end=fact.period.end or "",
+        period_start=fact.period.start,
+        kind=fact.period.kind,
+        fact=fact,
+    )
+
+
+def _change_block(current, last, year, measure="money", role="revenue"):
+    return _comparison_block(role, current, last, year, measure, "quarterly report", "2026-08-01")
+
+
+def _quarter(value, fact_id, start="2026-01-26", end="2026-04-26", role="revenue"):
+    return make_fact(value, role=role, start=start, end=end, fact_id=fact_id)
+
+
+def test_two_rises_read_it_rose_and_it_rose_again():
+    current = _quarter("110", "tworisenow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "tworiselast")
+    year = _quarter("50", "tworiseyear", "2024-07-29", "2025-07-27")
+    html = _change_block(current, _column(last), _column(year))
+    plain = _plain_page(html)
+    assert (
+        "It rose 10.0 percent from the quarter ended April 26, 2026, "
+        "and rose 120.0 percent from the year ended July 27, 2025."
+    ) in plain
+    assert 'data-template="C2"' in html
+    assert "That is" not in plain
+    assert "percent percent" not in plain
+
+
+def test_a_rise_and_no_change_share_one_it_line():
+    current = _quarter("104.2", "mixednow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "mixedlast")
+    year = _quarter("104.2", "mixedyear", "2024-07-29", "2025-07-27")
+    plain = _plain_page(_change_block(current, _column(last), _column(year)))
+    assert (
+        "It rose 4.2 percent from the quarter ended April 26, 2026, "
+        "and was unchanged from the year ended July 27, 2025."
+    ) in plain
+    assert "percent percent" not in plain
+
+
+def test_one_comparison_says_it_rose_or_it_fell_or_it_was_unchanged():
+    rose_now = _quarter("104.2", "onenow", "2026-04-27", "2026-07-26")
+    rose_last = _quarter("100", "onelast")
+    rose = _plain_page(_change_block(rose_now, _column(rose_last), None))
+    assert "It rose 4.2 percent from the quarter ended April 26, 2026." in rose
+    assert ", and " not in rose
+    fell_now = _quarter("90", "fellnow", "2026-04-27", "2026-07-26")
+    fell_last = _quarter("100", "felllast")
+    fell = _plain_page(_change_block(fell_now, _column(fell_last), None))
+    assert "It fell 10.0 percent from the quarter ended April 26, 2026." in fell
+    same_now = _quarter("100", "samenow", "2026-04-27", "2026-07-26")
+    same_last = _quarter("100", "samelast")
+    same = _plain_page(_change_block(same_now, _column(same_last), None))
+    assert "It was unchanged from the quarter ended April 26, 2026." in same
+
+
+def test_a_fall_and_a_rise_share_one_it_line():
+    current = _quarter("90", "mixfellnow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "mixfelllast")
+    year = _quarter("50", "mixfellyear", "2024-07-29", "2025-07-27")
+    plain = _plain_page(_change_block(current, _column(last), _column(year)))
+    assert (
+        "It fell 10.0 percent from the quarter ended April 26, 2026, "
+        "and rose 80.0 percent from the year ended July 27, 2025."
+    ) in plain
+
+
+def test_both_unchanged_comparisons_keep_the_value_sentence():
+    current = _quarter("100", "bothnow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "bothlast")
+    year = _quarter("100", "bothyear", "2024-07-29", "2025-07-27")
+    html = _change_block(current, _column(last), _column(year))
+    plain = _plain_page(html)
+    assert "Revenue was unchanged from the quarter ended April 26, 2026 at $100." in plain
+    assert "Revenue was unchanged from the year ended July 27, 2025 at $100." in plain
+    assert 'data-template="C3"' in html
+    assert "It was unchanged" not in plain
+    assert ", and was unchanged" not in plain
+
+
+def test_an_amount_only_change_says_it_was_higher_or_lower():
+    current = make_fact(
+        "150",
+        concept="LongTermDebt",
+        role="net_debt",
+        start="2026-04-27",
+        end="2026-07-26",
+        fact_id="debtnow",
+    )
+    last = make_fact(
+        "100",
+        concept="LongTermDebt",
+        role="net_debt",
+        start="2026-01-26",
+        end="2026-04-26",
+        fact_id="debtlast",
+    )
+    debt = _plain_page(_change_block(current, _column(last), None, measure="net_debt", role="net_debt"))
+    assert "It was $50 higher than the quarter ended April 26, 2026." in debt
+    margin_now = make_fact("40", role="gross_margin", start="2026-04-27", end="2026-07-26", fact_id="marginow")
+    margin_then = make_fact("35.8", role="gross_margin", start="2026-01-26", end="2026-04-26", fact_id="margthen")
+    margin = _plain_page(
+        _change_block(margin_now, _column(margin_then), None, measure="margin", role="gross_margin")
+    )
+    assert "It was 4.2 percentage points higher than the quarter ended April 26, 2026." in margin
+    assert "That is" not in debt and "That is" not in margin
+
+
+def test_rendered_pages_do_not_say_that_is_rose_or_percent_percent():
+    current = load_directory(PINNED / "0001045810-26-000075")
+    prior = load_directory(PINNED / "0001045810-26-000052")
+    nvidia = result_page(
+        explain_filing(current),
+        form=current.form,
+        period=current.period_end or "",
+        filed="2026-08-26",
+        url=current.url,
+        company=current.filer,
+        focus=current.focus,
+        fiscal_year_end=current.fiscal_year_end,
+        prior_facts=prior.store.facts(),
+        prior_end=prior.period_end,
+    )
+    apple_filing = load_directory(PINNED / "0000320193-26-000026")
+    apple = result_page(
+        explain_filing(apple_filing),
+        form=apple_filing.form,
+        period=apple_filing.period_end or "",
+        filed="2026-10-31",
+        url=apple_filing.url,
+        company=apple_filing.filer,
+        focus=apple_filing.focus,
+        fiscal_year_end=apple_filing.fiscal_year_end,
+    )
+    nvidia_plain = _plain_page(nvidia)
+    assert (
+        "It rose 17.9 percent from the quarter ended April 26, 2026, "
+        "and rose 105.9 percent from the quarter ended July 27, 2025."
+    ) in nvidia_plain
+    for plain in (nvidia_plain, _plain_page(apple)):
+        assert "That is rose" not in plain
+        assert "That is fell" not in plain
+        assert "percent percent" not in plain

@@ -384,7 +384,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             ]]
         word = "higher" if delta > 0 else "lower"
         return [[
-            ("text", "That is "),
+            ("text", "It was "),
             ("link", show_measure(abs(delta), "percentage points"), fact_href(current.fact)),
             ("text", f" {word} than "),
             _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
@@ -393,7 +393,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
     if measure == "net_debt":
         word = _higher(current.value, prior.value)
         return [[
-            ("text", "That is "),
+            ("text", "It was "),
             ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
             ("text", f" {word} than "),
             _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
@@ -433,7 +433,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
         else:
             word = _higher(current.value, prior.value)
             lines.append([
-                ("text", "That is "),
+                ("text", "It was "),
                 ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
                 ("text", f" {word} than "),
                 _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
@@ -452,7 +452,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             ("text", "."),
         ]]
     return [[
-        ("text", f"That is {direction} "),
+        ("text", f"It {direction} "),
         ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
         ("text", " from "),
         _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
@@ -526,8 +526,47 @@ def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None
         chunks.append(_parts_html(template_id, line))
 
 
+def _percent_clause(current: Cell, prior: Cell, measure: str) -> tuple[str, list[tuple]] | None:
+    """One rose, fell, or unchanged clause. None when the column is not a percent change."""
+    if measure not in {"money", "shares", "per_share"}:
+        return None
+    if (
+        not prior.available
+        or prior.fact is None
+        or current.fact is None
+        or prior.value is None
+        or current.value is None
+        or prior.basis in {"currency", "length"}
+    ):
+        return None
+    period = _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact)
+    if current.value == prior.value:
+        return "unchanged", [("text", "was unchanged from "), period]
+    pct = percent_change(current.value, prior.value)
+    if pct is None:
+        return None
+    if pct == 0 or _direction(current.value, prior.value) == "was unchanged":
+        return "unchanged", [("text", "was unchanged from "), period]
+    return "change", [
+        ("text", f"{_direction(current.value, prior.value)} "),
+        ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
+        ("text", " from "),
+        period,
+    ]
+
+
+def _it_line(clauses: list[list[tuple]]) -> list[tuple]:
+    parts: list[tuple] = [("text", "It ")]
+    for index, clause in enumerate(clauses):
+        if index:
+            parts.append(("text", ", and "))
+        parts.extend(clause)
+    parts.append(("text", "."))
+    return parts
+
+
 def _append_changes(chunks, label, current, last, year, measure, form_words, filed) -> None:
-    ready: list[tuple[Cell, list[tuple]]] = []
+    held: list[tuple[Cell, str, list[tuple]]] = []
     for column in (last, year):
         if column is None:
             continue
@@ -543,17 +582,11 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
             if column.basis == "currency":
                 chunks.append(_parts_html("C6", [("text", "The figures are in different currencies, so no change is shown.")]))
             continue
-        lines = _change_parts(label, current, column, measure)
-        percent = (
-            measure in {"money", "shares", "per_share"}
-            and len(lines) == 1
-            and " percent from " in _plain(lines[0])
-            and _plain(lines[0]).startswith("That is ")
-        )
-        if percent:
-            ready.append((column, lines[0]))
+        clause = _percent_clause(current, column, measure)
+        if clause is not None:
+            held.append((column, clause[0], clause[1]))
         else:
-            _emit_lines(chunks, label, lines)
+            _emit_lines(chunks, label, _change_parts(label, current, column, measure))
         if column.revised_from is not None and column.fact is not None and current.fact is not None:
             when = long_date(filed) if filed else "the filing date"
             chunks.append(_parts_html("C5", [
@@ -565,31 +598,12 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
                 _link_fact(column.revised_from),
                 ("text", "."),
             ]))
-    if len(ready) == 2 and current.fact is not None and current.value is not None:
-        prior, _prior_line = ready[0]
-        earlier, _year_line = ready[1]
-        assert prior.fact is not None and earlier.fact is not None and prior.value is not None and earlier.value is not None
-        first = percent_change(current.value, prior.value)
-        second = percent_change(current.value, earlier.value)
-        if first is not None and second is not None:
-            if first == 0 or second == 0:
-                for _column, line in ready:
-                    _emit_lines(chunks, label, [line])
-                return
-            chunks.append(_parts_html("C2", [
-                ("text", f"That is {_direction(current.value, prior.value)} "),
-                ("link", show_measure(abs(first), "percent"), fact_href(current.fact)),
-                ("text", " from "),
-                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
-                ("text", f", and {_direction(current.value, earlier.value)} "),
-                ("link", show_measure(abs(second), "percent"), fact_href(current.fact)),
-                ("text", " from "),
-                _period_link(period_phrase(earlier.kind, earlier.period_start, earlier.period_end), earlier.fact),
-                ("text", "."),
-            ]))
-            return
-    for _column, line in ready:
-        chunks.append(_parts_html("C2", line))
+    if len(held) == 2 and all(kind == "unchanged" for _column, kind, _parts in held):
+        for column, _kind, _parts in held:
+            _emit_lines(chunks, label, _change_parts(label, current, column, measure))
+        return
+    if held:
+        chunks.append(_parts_html("C2", _it_line([parts for _column, _kind, parts in held])))
 
 
 def _explain_block(role: str, fact: Fact, company: str, statement: str, formula: str, inputs: list[tuple[str, Fact]]) -> str:
