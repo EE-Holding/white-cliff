@@ -161,17 +161,13 @@ class DevTools:
 def _shot(page: DevTools, directory: Path, name: str) -> Path:
     metrics = page.call("Page.getLayoutMetrics")
     size = metrics.get("cssContentSize") or metrics["contentSize"]
-    width = max(1, float(size["width"]))
-    height = max(1, float(size["height"]))
-    result = page.call(
-        "Page.captureScreenshot",
-        {
-            "format": "png",
-            "captureBeyondViewport": True,
-            "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
-        },
-        timeout=30,
+    width = int(min(1400, max(800, float(size["width"]))))
+    height = int(min(4000, max(700, float(size["height"]))))
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
     )
+    result = page.call("Page.captureScreenshot", {"format": "png"}, timeout=20)
     path = directory / name
     path.write_bytes(base64.b64decode(result["data"]))
     print(f"screenshot {path}", flush=True)
