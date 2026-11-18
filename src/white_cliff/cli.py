@@ -71,11 +71,11 @@ def _explain(args, user_agent: str) -> int:
         cache = Path(".white-cliff-cache") / target
         if not (cache / "provenance.json").is_file():
             client = EdgarClient(user_agent)
-            cik = str(int(target.split("-")[0]))
             try:
-                client.fetch_accession(target, cache, cik=cik)
-            except FetchError:
                 client.fetch_accession(target, cache, cik=client.cik_for_accession(target))
+            except FetchError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
         filing = load_directory(cache)
     elif path.exists():
         filing = load_file(path)

@@ -229,10 +229,11 @@ def test_index_uses_the_filing_name_and_only_a_real_sic(tmp_path: Path):
         provenance = {
             "filer": filer,
             "form": "10-K",
+            "cik": "0000000001",
             "files": [
                 {
                     "name": "instance.xml",
-                    "url": "https://www.sec.gov/Archives/edgar/data/1/instance.xml",
+                    "url": "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/instance.xml",
                     "sha256": sha256(data).hexdigest(),
                     "retrieved_at": "2026-11-18T00:13:08Z",
                 }

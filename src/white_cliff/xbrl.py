@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from xml.parsers import expat
 
@@ -53,8 +54,8 @@ _SECTION = {
     "shares": "Equity",
 }
 
-_PLAIN_NUMBER = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?$")
-_DOT_DECIMAL = re.compile(r"^-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?$")
+_PLAIN_NUMBER = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
+_DOT_DECIMAL = re.compile(r"^(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?$")
 _ASCII_INT = re.compile(r"-?[0-9]+$")
 _INSTANCE_NS = "http://www.xbrl.org/2003/instance"
 _ISO_NS = "http://www.xbrl.org/2003/iso4217"
@@ -90,20 +91,6 @@ _DEI = frozenset(
     }
 )
 _DIRECT_TEXT = frozenset({"identifier", "startDate", "endDate", "instant"})
-_MONTHS = {
-    "january": 1,
-    "february": 2,
-    "march": 3,
-    "april": 4,
-    "may": 5,
-    "june": 6,
-    "july": 7,
-    "august": 8,
-    "september": 9,
-    "october": 10,
-    "november": 11,
-    "december": 12,
-}
 
 
 MONEY_ROLES = frozenset(role for role in _ROLES.values() if role != "shares")
@@ -120,6 +107,7 @@ class ParsedFacts:
     filer_start: int | None = None
     filer_end: int | None = None
     cik: str = ""
+    shares_tagged: bool = False
 
 
 @dataclass
@@ -196,6 +184,7 @@ class _Scope:
         self.duplicate_contexts: set[str] = set()
         self.hits: list[_Hit] = []
         self.dei: list[_Hit] = []
+        self.seen_roles: set[str] = set()
         self._ns: list[dict[str, str]] = [{}]
         self._frames: list[dict] = []
         self._unit: dict | None = None
@@ -228,8 +217,8 @@ class _Scope:
             self.contexts.clear()
             self.hits.clear()
             self.dei.clear()
+            self.seen_roles.clear()
             return False
-        self._finish_contexts()
         return True
 
     def _external(self, *_args: object) -> int:
@@ -267,7 +256,7 @@ class _Scope:
                 "concept": concept,
             }
         )
-        if local == "unit" and self._unit is None:
+        if local == "unit" and uri == _INSTANCE_NS and self._unit is None:
             self._unit = {
                 "id": _attr(attrs, "id"),
                 "measures": [],
@@ -364,6 +353,12 @@ class _Scope:
             nil=_attr(attrs, "nil").strip().lower() in {"true", "1"},
         )
         if frame["local"] == "nonFraction":
+            role = _ROLES.get(frame["concept"], "")
+            if role:
+                self.seen_roles.add(role)
+            hidden = any(item["local"] == "hidden" and item["uri"] in _IX_NS for item in self._frames)
+            if hidden:
+                return
             self.hits.append(hit)
         elif frame["local"] == "nonNumeric":
             self.dei.append(hit)
@@ -377,13 +372,22 @@ class _Scope:
         start = "".join(self._ctx["start"]).strip()
         end = "".join(self._ctx["end"]).strip()
         ident = "".join(self._ctx["ident"]).strip()
+        bad = self._ctx["bad"]
+        if instant:
+            if _strict_date(instant) is None:
+                bad = True
+            kind, start_value, end_value = "instant", None, instant or None
+        else:
+            if _strict_date(start) is None or _strict_date(end) is None or start >= end:
+                bad = True
+            kind, start_value, end_value = "duration", start or None, end or None
         record = _Context(
-            kind="instant" if instant else "duration",
-            start=start or None,
-            end=(instant or end) or None,
+            kind=kind,
+            start=start_value,
+            end=end_value,
             cik=_cik_number(ident),
             scheme=self._ctx["scheme"],
-            bad=self._ctx["bad"],
+            bad=bad,
         )
         if context_id in self.contexts or context_id in self.duplicate_contexts:
             self.duplicate_contexts.add(context_id)
@@ -391,37 +395,14 @@ class _Scope:
             return
         self.contexts[context_id] = record
 
-    def _finish_contexts(self) -> None:
+    def _finish_contexts(self, filer: int | None) -> None:
         for record in self.contexts.values():
             if record.kind == "duration" and record.start and record.end and record.start >= record.end:
                 record.bad = True
             if record.scheme.rstrip("/") != _CIK_SCHEME:
                 record.bad = True
-        filer = self._filer_cik()
-        if filer is None:
-            return
-        for record in self.contexts.values():
-            if record.cik != filer:
+            if filer is None or record.cik != filer:
                 record.bad = True
-
-    def _filer_cik(self) -> int | None:
-        for hit in self.dei:
-            if hit.concept != "EntityCentralIndexKey":
-                continue
-            record = self.contexts.get(hit.context_id)
-            if record is None or record.bad:
-                continue
-            number = _cik_number(hit.text)
-            if number is not None:
-                return number
-        for hit in self.dei:
-            if hit.concept != "EntityRegistrantName":
-                continue
-            record = self.contexts.get(hit.context_id)
-            if record is None or record.bad or record.cik is None:
-                continue
-            return record.cik
-        return None
 
     def _resolve(self, raw: str) -> tuple[str, str] | None:
         if not raw or not self._ns:
@@ -531,16 +512,18 @@ def _scale_number(scale: str) -> int | None:
     return int(scale)
 
 
+def _strict_date(value: str) -> str | None:
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value or ""):
+        return None
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return None
+    return value
+
+
 def _iso_date(value: str) -> str | None:
-    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
-        return value
-    match = re.fullmatch(r"([A-Za-z]+)\s+([0-9]{1,2}),\s*([0-9]{4})", value)
-    if not match:
-        return None
-    month = _MONTHS.get(match.group(1).lower())
-    if month is None:
-        return None
-    return f"{int(match.group(3)):04d}-{month:02d}-{int(match.group(2)):02d}"
+    return _strict_date(value)
 
 
 def _dei_value(hit: _Hit, contexts: dict[str, _Context]) -> str:
@@ -548,7 +531,11 @@ def _dei_value(hit: _Hit, contexts: dict[str, _Context]) -> str:
     if record is None or record.bad:
         return ""
     if hit.concept == "DocumentPeriodEndDate":
-        return _iso_date(hit.text) or ""
+        strict = _strict_date(hit.text.strip())
+        if strict:
+            return strict
+        # The cover date is often words. The context period is the date.
+        return record.end or ""
     return hit.text
 
 
@@ -561,11 +548,24 @@ def _narrow(text: str, start: int, end: int, needle: str) -> tuple[int, int] | N
     return start + at, start + at + len(needle)
 
 
-def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
+def _dei_ciks(scope: _Scope) -> list[int]:
+    found: list[int] = []
+    for hit in scope.dei:
+        if hit.concept != "EntityCentralIndexKey":
+            continue
+        number = _cik_number(hit.text)
+        if number is not None:
+            found.append(number)
+    return found
+
+
+def parse_inline(text: str, document: str, url: str, sha256: str, filer_cik: str = "") -> ParsedFacts:
     """Read live ix:nonFraction elements. A parse error yields no facts."""
     scope = _Scope()
     if not scope.parse(text):
         return ParsedFacts(facts=[])
+    filer_number = _cik_number(filer_cik)
+    scope._finish_contexts(filer_number)
     meta: dict[str, str] = {}
     name_hit: _Hit | None = None
     for hit in scope.dei:
@@ -582,10 +582,16 @@ def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts
         value = _dei_value(hit, scope.contexts)
         if value:
             meta[key] = value
-    filer_cik = scope._filer_cik()
+    company_ids = _dei_ciks(scope)
+    has_company_id = bool(company_ids) or any(record.cik is not None for record in scope.contexts.values())
+    filer_ok = (
+        filer_number is not None
+        and has_company_id
+        and all(number == filer_number for number in company_ids)
+    )
     facts: list[Fact] = []
     form = meta.get("form", "")
-    if form in _PRIMARY_FORMS:
+    if filer_ok and form in _PRIMARY_FORMS:
         for hit in scope.hits:
             fact = _fact_from_hit(
                 hit,
@@ -608,7 +614,8 @@ def parse_inline(text: str, document: str, url: str, sha256: str) -> ParsedFacts
         price_metric=False,
         filer_start=None if bounds is None else bounds[0],
         filer_end=None if bounds is None else bounds[1],
-        cik=_cik_text(filer_cik),
+        cik=_cik_text(filer_number),
+        shares_tagged="shares" in scope.seen_roles,
     )
 
 
@@ -688,4 +695,5 @@ def _fact_from_hit(
         decimals=_decimals(hit.decimals),
         scale=scale,
         context_id=hit.context_id,
+        entity=_cik_text(context.cik),
     )

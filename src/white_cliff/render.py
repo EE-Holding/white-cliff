@@ -119,7 +119,7 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
             href = _with_fragment(url, f"registrant={start}&end={end}")
         else:
             href = url
-        title = "Registrant name in the filing"
+        title = "Filer on EDGAR" if name == "the filer" else "Registrant name in the filing"
         visible = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         if not _linkable(href):
             return html.escape(name, quote=False) if mode == "html" else visible
@@ -194,11 +194,20 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
 
 
 REFUSAL_SENTENCE = "This filing has no tagged figures that White Cliff can explain."
+_REPORT = f"[Report an error]({ISSUE_URL})."
+
+
+def _valid_filing_url(url: str) -> bool:
+    if not url.startswith("https://www.sec.gov/"):
+        return False
+    if any(char.isspace() for char in url):
+        return False
+    return '"' not in url and "'" not in url and "<" not in url and ">" not in url
 
 
 def render_refusal(url: str) -> tuple[str, str]:
     """Disclaimer, one sentence, the EDGAR filing link or a refusal, and the report link."""
-    if url.startswith("https://www.sec.gov/"):
+    if _valid_filing_url(url):
         filing_md = f"{REFUSAL_SENTENCE} [the filing]({url})"
         filing_html = (
             f"{REFUSAL_SENTENCE} "
@@ -207,7 +216,7 @@ def render_refusal(url: str) -> tuple[str, str]:
     else:
         filing_md = f"{REFUSAL_SENTENCE} This filing was not retrieved from EDGAR."
         filing_html = filing_md
-    report = f"Report an error: [Report an error]({ISSUE_URL})."
+    report = _REPORT
     markdown = f"{DISCLAIMER}\n\n{filing_md}\n\n{report}\n"
     document = (
         "<!DOCTYPE html>\n"
@@ -227,7 +236,7 @@ def render_refusal(url: str) -> tuple[str, str]:
 
 def render_markdown(blocks: list[Block], store: FactStore) -> str:
     body = [text for text in (_fill(block.text, store, block, "md") for block in blocks) if text]
-    report = f"Report an error: [Report an error]({ISSUE_URL})."
+    report = _REPORT
     text = DISCLAIMER + "\n\n" + "\n\n".join(body) + "\n\n" + report + "\n"
     return ensure_safe_output(text)
 

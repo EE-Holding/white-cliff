@@ -41,9 +41,9 @@ _REASON = (
 )
 
 
-_NAME_EXTRA = set(" ., &'()-/")
-_NAME_BANNED = re.compile(
-    r"%|\b(?:usd|dollars?|millions?|thousands?|billions?|shares|percent)\b",
+_NAME_EXTRA = set(" ., &'()-/\u2019\u2018")
+_UNIT_WORD = re.compile(
+    r"%|\b(?:usd|eur|euros?|gbp|pounds?|yen|dollars?|millions?|thousands?|billions?|shares|percent)\b",
     re.IGNORECASE,
 )
 _RECORD = re.compile(r"https://data\.sec\.gov/submissions/CIK[0-9]{10}\.json\Z")
@@ -119,11 +119,12 @@ def acceptable_name(name: str) -> str | None:
     if len(name) > 100 or any(char in "\n\r" for char in name):
         return None
     for char in name:
-        if char.isalpha() or char in _NAME_EXTRA:
+        if char.isalpha() or char.isdigit() or char in _NAME_EXTRA:
             continue
         return None
-    if _NAME_BANNED.search(name):
-        return None
+    for run in re.split(r"[,;]", name):
+        if re.search(r"\d", run) and _UNIT_WORD.search(run):
+            return None
     return name
 
 
@@ -147,10 +148,20 @@ class Block:
     registrant: tuple[str, str, int, int] | None = None
 
 
+def _length_between(start: str, end: str) -> int | None:
+    try:
+        return (date.fromisoformat(end) - date.fromisoformat(start)).days
+    except ValueError:
+        return None
+
+
 def _length(fact: Fact) -> int | None:
-    if fact.period.start and fact.period.end:
+    if not fact.period.start or not fact.period.end:
+        return None
+    try:
         return (date.fromisoformat(fact.period.end) - date.fromisoformat(fact.period.start)).days
-    return None
+    except ValueError:
+        return None
 
 
 def _absolute(fact: Fact) -> Decimal:
@@ -174,12 +185,16 @@ def _group_agrees(group: list[Fact]) -> bool:
 
 
 def _prefer(facts: list[Fact]) -> Fact | None:
-    """Keep one fact when the same context and unit agree after scale and decimals."""
+    """Keep one fact when the same entity, period, and unit agree after scale."""
     if not facts:
         return None
-    groups: dict[tuple[str, str], list[Fact]] = {}
+    periods = {(fact.period.start, fact.period.end) for fact in facts}
+    if len(periods) != 1:
+        return None
+    groups: dict[tuple[str, str, str, str], list[Fact]] = {}
     for fact in facts:
-        groups.setdefault((fact.context_id, _base_unit(fact)), []).append(fact)
+        key = (fact.entity, fact.period.start or "", fact.period.end or "", _base_unit(fact))
+        groups.setdefault(key, []).append(fact)
     kept: list[Fact] = []
     for group in groups.values():
         if _group_agrees(group):
@@ -293,10 +308,7 @@ def _prior(facts: list[Fact], current: Fact) -> Fact | None:
         return None
     closest = min(
         candidates,
-        key=lambda fact: abs(
-            (date.fromisoformat(current.period.end) - date.fromisoformat(fact.period.end or current.period.end)).days
-            - 365
-        ),
+        key=lambda fact: abs((_length_between(current.period.end, fact.period.end or current.period.end) or 0) - 365),
     )
     same_end = [fact for fact in candidates if fact.period.end == closest.period.end]
     return _prefer(same_end)
@@ -458,6 +470,7 @@ def build_blocks(
     filer_start: int | None = None,
     filer_end: int | None = None,
     cik: str = "",
+    shares_tagged: bool = False,
 ) -> list[Block]:
     facts = store.facts()
     chip = shown_registrant(filer, filing_text, filer_start, filer_end)
@@ -521,6 +534,10 @@ def build_blocks(
     if share is not None and share.origin != "table":
         chosen["shares"] = share
         blocks.append(Block(text=_fact_sentence("shares", share)))
+    elif shares_tagged or any(fact.role == "shares" for fact in facts):
+        blocks.append(
+            Block(text="The share count is tagged but White Cliff can't use it [section:Equity].")
+        )
     else:
         blocks.append(
             Block(text="The filing doesn't tag the share count [section:Equity].")

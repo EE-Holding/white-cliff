@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from white_cliff.facts import Fact, Period, SourcePointer
+from white_cliff.fetch import directory_cik
 from white_cliff.ids import letter_id
 
 MINI_XML = """<?xml version="1.0" encoding="utf-8"?>
@@ -95,6 +96,9 @@ def write_filing(directory: Path, name: str, text: str, url: str, form: str = "1
             }
         ],
     }
+    cik = directory_cik(url)
+    if cik:
+        provenance["cik"] = cik
     (directory / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     return directory
 

@@ -17,18 +17,22 @@ _ACCOUNT = re.compile(
     r"(?i)\b(?:bank\s+)?account(?:\s+(?:number|no\.?))?\s*[:#]?\s*\d[\d\s-]{5,}\d"
 )
 _ROUTING = re.compile(r"(?i)\b(?:routing|aba)(?:\s+number)?\s*[:#]?\s*\d{9}\b")
-_IBAN = re.compile(r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
 _STREET = (
     r"Street|St\.?|Avenue|Ave\.?|Road|Rd\.?|Boulevard|Blvd\.?|"
-    r"Lane|Ln\.?|Drive|Dr\.?|Court|Ct\.?|Place|Pl\.?|Terrace|Way|"
+    r"Lane|Ln\.?|Drive|Dr\.?|Ct\.?|Place|Pl\.?|Terrace|Way|"
     r"Rue|Strasse|Straße|Calle|Via"
 )
 _ADDRESS = re.compile(
-    rf"(?i)\b\d{{1,6}}\s+(?:[A-Za-z0-9.'-]+\s+){{0,6}}(?:{_STREET})\b"
+    rf"(?i)\b\d{{1,6}}\s+(?:[A-Za-z0-9.'-]+\s+){{0,3}}(?:{_STREET})\b"
     rf"(?:,\s*[A-Za-z .'-]+){{0,3}}"
     rf"|\b(?:p\.?\s*o\.?\s+box|po box)\s+\d+\b"
-    rf"|\bapt\.?\s*[A-Za-z0-9]+\b"
+    rf"|\bapt(?:\.|\s)\s*[A-Za-z0-9]+\b"
     rf"|(?-i:[A-Z][A-Za-z.'-]*\s+(?:Street|Avenue|Road|Boulevard|Lane|Drive|Terrace|Rue|Via))\b",
+)
+_ENTITY_ADDRESS = re.compile(
+    r"<ix:nonNumeric\b[^>]*\bname=\"[^\"]*EntityAddress[^\"]*\"[^>]*>.*?</ix:nonNumeric>",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -55,7 +59,12 @@ def find_redactions(text: str, document: str, url: str, sha256: str) -> list[Red
         ("account", _IBAN),
         ("address", _ADDRESS),
     ):
+        addresses = [(match.start(), match.end()) for match in _ENTITY_ADDRESS.finditer(text)]
         for match in pattern.finditer(text):
+            if kind == "address" and any(
+                start <= match.start() and match.end() <= end for start, end in addresses
+            ):
+                continue
             spans.append((match.start(), match.end(), kind))
     spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))
     kept: list[tuple[int, int, str]] = []

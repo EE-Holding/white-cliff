@@ -294,22 +294,23 @@ def _index_for(tmp_path: Path, name: str) -> tuple[str, str]:
 
 
 def test_a_digit_in_the_registrant_name_links_the_filer(tmp_path: Path) -> None:
-    page, index = _index_for(tmp_path, "3M Company")
+    page, index = _index_for(tmp_path, "Revenue 99999 USD millions")
     for surface in (page, index):
         assert "the filer" in surface
         assert RECORD in surface
-        assert "3M Company" not in surface
+        assert "Revenue 99999 USD millions" not in surface
     assert 'class="registrant-chip"' in page
+    assert 'title="Filer on EDGAR"' in page
     assert SENTENCE not in page
 
 
 def test_a_unit_word_in_the_registrant_name_links_the_filer(tmp_path: Path) -> None:
     page, index = _index_for(tmp_path, "Dollar General")
     for surface in (page, index):
-        assert "the filer" in surface
-        assert RECORD in surface
-        assert "Dollar General" not in surface
+        assert "Dollar General" in surface
+        assert "the filer" not in surface
     assert 'class="registrant-chip"' in page
+    assert 'title="Registrant name in the filing"' in page
 
 
 def test_file_and_javascript_urls_are_not_filing_links(tmp_path: Path) -> None:
@@ -322,7 +323,8 @@ def test_file_and_javascript_urls_are_not_filing_links(tmp_path: Path) -> None:
         assert "https://www.sec.gov/" not in rendered
         assert NOT_EDGAR in explained.markdown
         assert NOT_EDGAR in explained.html
-        assert f"Report an error: [Report an error]({ISSUE_URL})." in explained.markdown
+        assert f"[Report an error]({ISSUE_URL})" in explained.markdown
+        assert "Report an error: Report an error" not in explained.markdown
         assert f'<a href="{ISSUE_URL}">Report an error</a>' in explained.html
 
 

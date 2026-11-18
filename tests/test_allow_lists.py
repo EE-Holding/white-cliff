@@ -60,7 +60,7 @@ def _inline(
 
 
 def _revenues(text: str):
-    parsed = parse_inline(text, "inline.htm", URL, "abc")
+    parsed = parse_inline(text, "inline.htm", URL, "abc", filer_cik="0000000001")
     return [fact for fact in parsed.facts if fact.role == "revenue"]
 
 

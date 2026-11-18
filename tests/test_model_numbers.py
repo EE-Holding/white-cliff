@@ -73,6 +73,7 @@ _OPENINGS = (
     "Operating cash flow for the ",
     "The basic average share count ",
     "The share count at the period end was",
+    "The share count is tagged but White Cliff can't use it",
     "Debt at the period end was",
     "Cash at the period end was",
     "The gross margin ",
@@ -150,6 +151,7 @@ def test_every_rendered_sentence_is_a_template(tmp_path):
     directory = write_filing(tmp_path / "mini", "mini.xml", MINI_XML, url)
     explained = explain_filing(load_directory(directory))
     body = explained.markdown.replace(DISCLAIMER, " ")
+    body = re.sub(r"\[Report an error\]\([^)]*\)\.?", " ", body)
     body = re.sub(r"\[[^\]]*\]\([^)]*\)", " ", body)
     body = re.sub(r"Section: [A-Za-z ]+", " ", body)
     body = re.sub(r"Report an error:.*", " ", body, flags=re.S)

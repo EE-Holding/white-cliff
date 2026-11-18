@@ -136,13 +136,16 @@ def test_non_edgar_hosts_are_refused():
 
 def test_provenance_records_hash_url_and_time(tmp_path):
     body = b"<xbrl>revenue</xbrl>"
-    index = json.dumps({"directory": {"item": [{"name": "sample_htm.xml"}]}}).encode()
+    index = (
+        b"<html><body><table><tr><td>1</td><td>10-K</td>"
+        b'<td><a href="sample.htm">sample.htm</a></td><td>10-K</td><td>1</td></tr></table></body></html>'
+    )
     seen: list[str] = []
 
     def transport(url, user_agent):
         assert user_agent == UA
         seen.append(url)
-        if url.endswith("/index.json"):
+        if url.endswith("-index.html"):
             return 200, index, {}
         return 200, body, {}
 
@@ -255,9 +258,12 @@ def test_retry_after_is_honoured_and_capped():
 def test_index_file_names_cannot_escape_the_directory(tmp_path):
     from white_cliff.fetch import FetchError
 
-    index = json.dumps(
-        {"directory": {"item": [{"name": "../evil.xml"}, {"name": "/tmp/evil.xml"}]}}
-    ).encode()
+    index = (
+        b"<html><body><table>"
+        b'<tr><td>1</td><td>10-K</td><td><a href="../evil.xml">evil.xml</a></td><td>10-K</td></tr>'
+        b'<tr><td>2</td><td>10-K</td><td><a href="/tmp/evil.xml">evil.xml</a></td><td>10-K</td></tr>'
+        b"</table></body></html>"
+    )
 
     def transport(url, user_agent):
         return 200, index, {}

@@ -15,6 +15,7 @@ from white_cliff.omissions import find_omissions
 from white_cliff.prices import is_price_text
 from white_cliff.redact import Redaction, contains_personal, find_redactions
 from white_cliff.render import copy_text, render_html, render_markdown, render_refusal
+from white_cliff.fetch import directory_cik
 from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, parse_inline
 
 
@@ -34,6 +35,7 @@ class Filing:
     filer_start: int | None = None
     filer_end: int | None = None
     cik: str = ""
+    shares_tagged: bool = False
 
 
 @dataclass
@@ -51,8 +53,8 @@ class Explained:
 _PRIMARY_FORMS = frozenset({"10-K", "10-Q"})
 
 
-def _parse_text(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
-    return parse_inline(text, document, url, sha256)
+def _parse_text(text: str, document: str, url: str, sha256: str, filer_cik: str) -> ParsedFacts:
+    return parse_inline(text, document, url, sha256, filer_cik=filer_cik)
 
 
 def _verified(path: Path, item: dict) -> bytes:
@@ -77,6 +79,8 @@ def _primary_item(files: list[dict], form: str) -> dict | None:
             continue
         usable.append(item)
     matched = [item for item in usable if item.get("document_type") == form]
+    if len(matched) > 1:
+        return None
     if matched:
         return matched[0]
     if len(usable) == 1:
@@ -89,6 +93,15 @@ def _cik_text(raw: str) -> str:
     if not digits or len(digits) > 10:
         return ""
     return digits.zfill(10)
+
+
+def _agreed_cik(url: str, provenance: dict) -> str:
+    """The filer CIK from the EDGAR directory, when the provenance file agrees."""
+    found = directory_cik(url)
+    recorded = _cik_text(str(provenance.get("cik", "")))
+    if not found or found != recorded:
+        return ""
+    return found
 
 
 def _absorb(store: FactStore, parsed: ParsedFacts) -> None:
@@ -123,9 +136,16 @@ def load_directory(path: Path) -> Filing:
     blob = blobs[index]
     digest = hashlib.sha256(blob).hexdigest()
     text = blob.decode("utf-8")
-    parsed = _parse_text(text, chosen["name"], chosen["url"], digest)
-    if parsed.form != form:
-        parsed = ParsedFacts(facts=[], form=form, filer=parsed.filer, cik=parsed.cik)
+    agreed = _agreed_cik(str(chosen["url"]), provenance)
+    parsed = _parse_text(text, chosen["name"], chosen["url"], digest, agreed)
+    if not agreed or parsed.form != form:
+        parsed = ParsedFacts(
+            facts=[],
+            form=form,
+            filer=parsed.filer,
+            cik=agreed,
+            shares_tagged=parsed.shares_tagged,
+        )
     store = FactStore()
     _absorb(store, parsed)
     return Filing(
@@ -142,7 +162,8 @@ def load_directory(path: Path) -> Filing:
         omissions=find_omissions(text),
         text=text,
         url=str(chosen["url"]),
-        cik=_cik_text(str(provenance.get("cik", "")) or parsed.cik),
+        cik=agreed,
+        shares_tagged=parsed.shares_tagged,
     )
 
 
@@ -156,7 +177,7 @@ def load_file(path: Path) -> Filing:
     digest = hashlib.sha256(blob).hexdigest()
     text = blob.decode("utf-8")
     url = path.resolve().as_uri()
-    parsed = _parse_text(text, path.name, url, digest)
+    parsed = _parse_text(text, path.name, url, digest, directory_cik(url) or "")
     store = FactStore()
     _absorb(store, parsed)
     return Filing(
@@ -174,6 +195,7 @@ def load_file(path: Path) -> Filing:
         text=text,
         url=url,
         cik=parsed.cik,
+        shares_tagged=parsed.shares_tagged,
     )
 
 
@@ -201,6 +223,7 @@ def explain_filing(filing: Filing) -> Explained:
         filing_text=filing.text,
         filing_url=filing.url,
         cik=filing.cik,
+        shares_tagged=filing.shares_tagged,
     )
     markdown = render_markdown(blocks, filing.store)
     html_text = render_html(blocks, filing.store)

@@ -94,7 +94,7 @@ def test_untagged_filing_page_is_exact(tmp_path) -> None:
     explained = explain_filing(load_directory(directory))
     assert explained.markdown == (
         f"{DISCLAIMER}\n\n{SENTENCE} [the filing]({URL})\n\n"
-        f"Report an error: [Report an error]({ISSUE_URL}).\n"
+        f"[Report an error]({ISSUE_URL}).\n"
     )
     assert explained.html == (
         "<!DOCTYPE html>\n"
@@ -137,7 +137,7 @@ def test_share_count_on_a_usd_unit_is_refused(tmp_path) -> None:
     assert "revenue" in _roles(filing)
     rendered = explain_filing(filing).markdown
     assert "4242" not in rendered
-    assert "doesn't tag the share count" in rendered
+    assert "The share count is tagged but White Cliff can't use it" in rendered
 
 
 def test_a_two_measure_unit_is_refused(tmp_path) -> None:
@@ -368,6 +368,7 @@ def test_index_registrant_matches_the_filing_page(tmp_path) -> None:
         provenance = {
             "filer": "Manifest Only Name",
             "form": "10-K",
+            "cik": "0000000001",
             "files": [
                 {
                     "name": "instance.xml",

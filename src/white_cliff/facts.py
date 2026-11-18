@@ -54,6 +54,7 @@ class Fact:
     header: str = ""
     scale: int = 0
     context_id: str = ""
+    entity: str = ""
 
 
 @dataclass(frozen=True)
