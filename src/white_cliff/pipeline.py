@@ -15,17 +15,7 @@ from white_cliff.omissions import find_omissions
 from white_cliff.prices import is_price_text
 from white_cliff.redact import Redaction, contains_personal, find_redactions
 from white_cliff.render import copy_text, render_html, render_markdown, render_refusal
-from white_cliff.xbrl import ParsedFacts, is_instance_document, parse_inline, parse_instance
-
-_MONEY_ROLES = {
-    "revenue",
-    "gross_profit",
-    "operating_income",
-    "net_income",
-    "operating_cash_flow",
-    "debt",
-    "cash",
-}
+from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, is_instance_document, parse_inline, parse_instance
 
 
 @dataclass
@@ -41,6 +31,8 @@ class Filing:
     omissions: list[tuple[int, int, str]]
     text: str
     url: str
+    filer_start: int | None = None
+    filer_end: int | None = None
 
 
 @dataclass
@@ -73,7 +65,10 @@ def load_directory(path: Path) -> Filing:
     store = FactStore()
     filer = provenance.get("filer", "")
     document_filer = ""
+    filer_start: int | None = None
+    filer_end: int | None = None
     form = provenance.get("form", "")
+    base = 0
     focus = None
     period_end = None
     price = False
@@ -91,8 +86,12 @@ def load_directory(path: Path) -> Filing:
         url = url or item["url"]
         parsed = _parse_text(text, item["name"], item["url"], digest)
         _absorb(store, parsed)
+        if parsed.filer:
+            document_filer = parsed.filer
+            filer_start = None if parsed.filer_start is None else base + parsed.filer_start
+            filer_end = None if parsed.filer_end is None else base + parsed.filer_end
         filer = parsed.filer or filer
-        document_filer = parsed.filer or document_filer
+        base += len(text) + 1
         form = parsed.form or form
         focus = parsed.focus or focus
         period_end = parsed.period_end or period_end
@@ -103,6 +102,8 @@ def load_directory(path: Path) -> Filing:
         store=store,
         filer=filer,
         document_filer=document_filer,
+        filer_start=filer_start,
+        filer_end=filer_end,
         form=form,
         focus=focus,
         period_end=period_end,
@@ -131,6 +132,8 @@ def load_file(path: Path) -> Filing:
         store=store,
         filer=parsed.filer,
         document_filer=parsed.filer,
+        filer_start=parsed.filer_start,
+        filer_end=parsed.filer_end,
         form=parsed.form,
         focus=parsed.focus,
         period_end=parsed.period_end,
@@ -143,7 +146,7 @@ def load_file(path: Path) -> Filing:
 
 
 def explain_filing(filing: Filing) -> Explained:
-    if not any(fact.role in _MONEY_ROLES for fact in filing.store.facts()):
+    if not any(fact.role in MONEY_ROLES for fact in filing.store.facts()):
         markdown, html_text = render_refusal(filing.url)
         for rendered in (markdown, html_text):
             problem = audit_rendered(rendered)
@@ -154,7 +157,9 @@ def explain_filing(filing: Filing) -> Explained:
         return Explained(markdown=markdown, html=html_text, store=filing.store)
     blocks = build_blocks(
         store=filing.store,
-        filer=filing.filer,
+        filer=filing.document_filer,
+        filer_start=filing.filer_start,
+        filer_end=filing.filer_end,
         form=filing.form,
         focus=filing.focus,
         period_end=filing.period_end,

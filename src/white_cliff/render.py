@@ -76,6 +76,7 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
     spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))
     pieces: list[str] = []
     offset = 0
+    dropped = False
     for start, end, kind, payload in spans:
         if start < offset:
             continue
@@ -83,8 +84,13 @@ def _fill(text: str, store: FactStore, block: Block, mode: str) -> str:
         if kind == "quote":
             pieces.append(_quote_piece(payload, mode))
         else:
-            pieces.append(_token_piece(payload, store, block, mode))
+            piece = _token_piece(payload, store, block, mode)
+            if piece == "" and payload.group(1) in {"fact", "calc"}:
+                dropped = True
+            pieces.append(piece)
         offset = max(offset, end)
+    if dropped:
+        return ""
     pieces.append(_escape_text(text[offset:], mode))
     return "".join(pieces)
 
@@ -199,14 +205,18 @@ def render_refusal(url: str) -> tuple[str, str]:
 
 
 def render_markdown(blocks: list[Block], store: FactStore) -> str:
-    body = [_fill(block.text, store, block, "md") for block in blocks]
+    body = [text for text in (_fill(block.text, store, block, "md") for block in blocks) if text]
     report = f"Report an error: [Report an error]({ISSUE_URL})."
     text = DISCLAIMER + "\n\n" + "\n\n".join(body) + "\n\n" + report + "\n"
     return ensure_safe_output(text)
 
 
 def render_html(blocks: list[Block], store: FactStore) -> str:
-    paragraphs = "".join(f"<p>{_fill(block.text, store, block, 'html')}</p>" for block in blocks)
+    paragraphs = "".join(
+        f"<p>{text}</p>"
+        for text in (_fill(block.text, store, block, "html") for block in blocks)
+        if text
+    )
     document = (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'

@@ -88,6 +88,24 @@ def registrant_span(name: str, filing_text: str) -> tuple[int, int] | None:
     return raw_start, raw_end
 
 
+def shown_registrant(
+    name: str,
+    filing_text: str,
+    start: int | None,
+    end: int | None,
+) -> tuple[str, int, int] | None:
+    """The XBRL registrant fact, when its text is a short safe label."""
+    shown = acceptable_name(name)
+    if shown is None or start is None or end is None:
+        return None
+    if start < 0 or end > len(filing_text) or start >= end:
+        return None
+    raw = filing_text[start:end]
+    if raw != shown and html.unescape(raw) != shown:
+        return None
+    return shown, start, end
+
+
 def acceptable_name(name: str) -> str | None:
     """A filing-supplied label: one short line of letters, digits, and light punctuation."""
     if not name or name != name.strip():
@@ -388,10 +406,12 @@ def build_blocks(
     omissions: list[tuple[int, int, str]],
     filing_text: str,
     filing_url: str,
+    filer_start: int | None = None,
+    filer_end: int | None = None,
 ) -> list[Block]:
     facts = store.facts()
-    span = registrant_span(filer, filing_text)
-    if span is None:
+    chip = shown_registrant(filer, filing_text, filer_start, filer_end)
+    if chip is None:
         cover = Block(
             text=(
                 f"This explanation covers the filer in {_form_words(form)} "
@@ -399,13 +419,13 @@ def build_blocks(
             )
         )
     else:
-        start, end = span
+        name, start, end = chip
         cover = Block(
             text=(
                 f"This explanation covers {{registrant}} in {_form_words(form)} "
                 "[section:Cover]."
             ),
-            registrant=(acceptable_name(filer) or filer, filing_url, start, end),
+            registrant=(name, filing_url, start, end),
         )
     blocks: list[Block] = [cover]
     if filing_url and not filing_url.startswith("https://www.sec.gov/"):

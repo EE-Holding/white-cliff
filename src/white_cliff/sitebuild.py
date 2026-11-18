@@ -8,10 +8,11 @@ import re
 from pathlib import Path
 
 from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, OutputRefused, ensure_safe_output
-from white_cliff.explain import acceptable_name, registrant_span
+from white_cliff.explain import shown_registrant
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.review import audit_rendered
 from white_cliff.sic import sector_html
+from white_cliff.xbrl import MONEY_ROLES
 
 
 def pinned_dir() -> Path:
@@ -65,11 +66,15 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
         page_name = accession + ".html"
         (output / page_name).write_text(explained.html, encoding="utf-8")
         form_words = _form_words(entry["form"])
-        span = registrant_span(filing.document_filer, filing.text)
         edgar = filing.url if filing.url.startswith("https://www.sec.gov/") else ""
-        shown = acceptable_name(filing.document_filer) if span else None
-        if shown and edgar and span:
-            start, end = span
+        money = any(fact.role in MONEY_ROLES for fact in filing.store.facts())
+        chip = (
+            shown_registrant(filing.document_filer, filing.text, filing.filer_start, filing.filer_end)
+            if money and edgar
+            else None
+        )
+        if chip:
+            shown, start, end = chip
             href = f"{edgar}#registrant={start}&end={end}"
             filer_html = (
                 f'<a class="registrant-chip" title="Registrant name in the filing" '
