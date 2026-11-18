@@ -15,7 +15,7 @@ from white_cliff.omissions import find_omissions
 from white_cliff.prices import is_price_text
 from white_cliff.redact import Redaction, contains_personal, find_redactions
 from white_cliff.render import copy_text, render_html, render_markdown, render_refusal
-from white_cliff.fetch import directory_cik
+from white_cliff.fetch import directory_cik, strip_edgar_script
 from white_cliff.xbrl import MONEY_ROLES, ParsedFacts, parse_inline
 
 
@@ -62,6 +62,9 @@ def _verified(path: Path, item: dict) -> bytes:
     digest = hashlib.sha256(blob).hexdigest()
     if digest != item["sha256"]:
         raise ValueError(f"sha256 mismatch for {item['name']}")
+    content = hashlib.sha256(strip_edgar_script(blob)).hexdigest()
+    if content != item.get("content_sha256"):
+        raise ValueError(f"content hash mismatch for {item['name']}")
     return blob
 
 

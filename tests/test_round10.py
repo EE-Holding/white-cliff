@@ -143,7 +143,7 @@ def test_pinned_files_match_the_raw_hash_and_the_hash_without_the_trailing_scrip
             assert sha256(strip_edgar_script(raw)).hexdigest() == item["content_sha256"]
             assert strip_edgar_script(raw) != raw
             checked += 1
-    assert checked == 9
+    assert checked == 10
 
 
 def test_a_cik_only_in_the_query_string_is_refused() -> None:
@@ -308,11 +308,13 @@ def test_a_decoy_primary_with_an_untyped_real_file_is_refused(tmp_path: Path) ->
                 "name": "real.htm",
                 "url": SEC,
                 "sha256": sha256(real).hexdigest(),
+                "content_sha256": sha256(real).hexdigest(),
             },
             {
                 "name": "decoy.htm",
                 "url": SEC.replace("primary.htm", "decoy.htm"),
                 "sha256": sha256(decoy).hexdigest(),
+                "content_sha256": sha256(decoy).hexdigest(),
                 "document_type": "10-K",
             },
         ],

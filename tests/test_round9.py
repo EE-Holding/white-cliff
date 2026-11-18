@@ -6,7 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from white_cliff.disclaimer import ISSUE_URL
-from white_cliff.fetch import EdgarClient
+from white_cliff.fetch import EdgarClient, strip_edgar_script
 from white_cliff.pipeline import explain_filing, load_directory
 from tests.support import write_filing
 
@@ -30,6 +30,8 @@ def _page(
     focus: str = "FY",
     period_end: str = "2024-12-31",
     period_format: str = "",
+    period_context: str = "c-year",
+    lead: str = "",
 ) -> str:
     unit_xml = units or '<xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>'
     context_xml = contexts or """
@@ -62,7 +64,8 @@ def _page(
 <ix:nonNumeric name="dei:DocumentType" contextRef="c-year">{form}</ix:nonNumeric>
 {name_xml}
 <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="c-year">{focus}</ix:nonNumeric>
-<ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="c-year"{format_attr}>{period_end}</ix:nonNumeric>
+{lead}
+<ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="{period_context}"{format_attr}>{period_end}</ix:nonNumeric>
 {dei_xml}
 {body}
 </body>
@@ -202,6 +205,7 @@ def _mutated_microsoft(tmp_path: Path, new_cik: str):
     (directory / name).write_bytes(data)
     files = [dict(provenance["files"][0])]
     files[0]["sha256"] = sha256(data).hexdigest()
+    files[0]["content_sha256"] = sha256(strip_edgar_script(data)).hexdigest()
     rewritten = dict(provenance)
     rewritten["files"] = files
     (directory / "provenance.json").write_text(json.dumps(rewritten), encoding="utf-8")
@@ -419,12 +423,14 @@ def test_two_files_claiming_the_primary_form_are_refused(tmp_path: Path) -> None
                 "name": "one.htm",
                 "url": SEC,
                 "sha256": sha256(first).hexdigest(),
+                "content_sha256": sha256(first).hexdigest(),
                 "document_type": "10-K",
             },
             {
                 "name": "two.htm",
                 "url": SEC.replace("primary.htm", "other.htm"),
                 "sha256": sha256(second).hexdigest(),
+                "content_sha256": sha256(second).hexdigest(),
                 "document_type": "10-K",
             },
         ],
@@ -491,6 +497,7 @@ def test_explain_asks_for_the_filer_cik_and_not_the_accession_prefix(tmp_path, m
                     "name": "primary.htm",
                     "url": url,
                     "sha256": sha256(data).hexdigest(),
+                    "content_sha256": sha256(data).hexdigest(),
                     "document_type": "10-K",
                 }
             ],

@@ -374,6 +374,7 @@ def test_index_registrant_matches_the_filing_page(tmp_path) -> None:
                     "name": "instance.xml",
                     "url": SEC,
                     "sha256": sha256(data).hexdigest(),
+                    "content_sha256": sha256(data).hexdigest(),
                     "retrieved_at": "2026-11-18T00:13:08Z",
                 }
             ],

@@ -91,19 +91,43 @@ _DEI = frozenset(
     }
 )
 _DIRECT_TEXT = frozenset({"identifier", "startDate", "endDate", "instant"})
-_DISPLAY_NONE = re.compile(r"(?i)(?:^|;)\s*display\s*:\s*none\b")
+_HIDDEN_STYLE = re.compile(
+    r"(?i)(?:^|;)\s*(?:"
+    r"display\s*:\s*none\b"
+    r"|visibility\s*:\s*hidden\b"
+    r"|font-size\s*:\s*0(?:[a-z%]+)?(?![0-9.])"
+    r"|height\s*:\s*0(?:[a-z%]+)?(?![0-9.])"
+    r")"
+)
+_STYLE_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}", re.S)
+_CLASS_IN_SELECTOR = re.compile(r"\.(-?[_A-Za-z][_A-Za-z0-9-]*)")
 
 
 def _style_hides(attrs: dict[str, str]) -> bool:
     for key, value in attrs.items():
         local = key.rsplit(_NS_SEP, 1)[-1]
-        if local.lower() == "style" and value and _DISPLAY_NONE.search(value):
+        if local.lower() == "style" and value and _HIDDEN_STYLE.search(value):
             return True
     return False
 
 
+def _class_names(attrs: dict[str, str]) -> list[str]:
+    raw = _attr(attrs, "class")
+    return [part for part in raw.split() if part]
+
+
+def _hiding_classes(css: str) -> set[str]:
+    """Class names whose style rule hides the text."""
+    found: set[str] = set()
+    for selector, body in _STYLE_RULE.findall(css):
+        if _HIDDEN_STYLE.search(body) is None:
+            continue
+        found.update(_CLASS_IN_SELECTOR.findall(selector))
+    return found
+
+
 def _concealed(frame: dict, ancestors: list[dict]) -> bool:
-    """A figure inside ix:hidden or a display:none block is not shown."""
+    """A figure inside ix:hidden or a hidden block is not shown."""
     for item in (*ancestors, frame):
         if item["local"] == "hidden" and item["uri"] in _IX_NS:
             return True
@@ -183,6 +207,7 @@ class _Hit:
     nil: bool = False
     concealed: bool = False
     transform: str = ""
+    classes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -211,6 +236,8 @@ class _Scope:
         self._unit: dict | None = None
         self._ctx: dict | None = None
         self._buf: list[str] = []
+        self._styles: list[str] = []
+        self._style_chunks: list[str] | None = None
         self._parser: expat.XMLParserType | None = None
         self._raw = b""
         self.ok = True
@@ -240,6 +267,11 @@ class _Scope:
             self.dei.clear()
             self.seen_roles.clear()
             return False
+        hiding = _hiding_classes("\n".join(self._styles))
+        if hiding:
+            for hit in self.hits:
+                if any(name in hiding for name in hit.classes):
+                    hit.concealed = True
         return True
 
     def _external(self, *_args: object) -> int:
@@ -258,6 +290,8 @@ class _Scope:
     def _start(self, name: str, attrs: dict[str, str]) -> None:
         uri, local = _split_name(name)
         concept = _concept_name(_attr(attrs, "name"))
+        if local.lower() == "style" and uri in {"", "http://www.w3.org/1999/xhtml"}:
+            self._style_chunks = []
         keep = False
         if local == "nonFraction" and uri in _IX_NS:
             keep = True
@@ -307,6 +341,8 @@ class _Scope:
         return any(frame["local"] == "exclude" and frame["uri"] in _IX_NS for frame in self._frames)
 
     def _text(self, data: str) -> None:
+        if self._style_chunks is not None:
+            self._style_chunks.append(data)
         if not data or self._excluded() or not self._frames:
             return
         top = self._frames[-1]
@@ -326,6 +362,9 @@ class _Scope:
 
     def _end(self, name: str) -> None:
         uri, local = _split_name(name)
+        if local.lower() == "style" and self._style_chunks is not None:
+            self._styles.append("".join(self._style_chunks))
+            self._style_chunks = None
         del uri
         if not self._frames:
             return
@@ -374,6 +413,11 @@ class _Scope:
             decimals=_attr(attrs, "decimals").strip(),
             nil=_attr(attrs, "nil").strip().lower() in {"true", "1"},
             transform=frame["transform"],
+            classes=tuple(
+                name
+                for item in (*self._frames, frame)
+                for name in _class_names(item["attrs"])
+            ),
         )
         if frame["local"] == "nonFraction":
             role = _ROLES.get(frame["concept"], "")
@@ -642,22 +686,33 @@ def parse_inline(text: str, document: str, url: str, sha256: str, filer_cik: str
         return ParsedFacts(facts=[])
     filer_number = _cik_number(filer_cik)
     scope._finish_contexts(filer_number)
-    meta: dict[str, str] = {}
+    cover: dict[str, list[str]] = {"filer": [], "form": [], "focus": [], "period_end": []}
     name_hit: _Hit | None = None
+    conflict = False
     for hit in scope.dei:
-        if hit.concept == "EntityRegistrantName" and name_hit is None and _dei_value(hit, scope.contexts):
-            name_hit = hit
         key = {
             "EntityRegistrantName": "filer",
             "DocumentType": "form",
             "DocumentFiscalPeriodFocus": "focus",
             "DocumentPeriodEndDate": "period_end",
         }.get(hit.concept)
-        if key is None or key in meta:
+        if key is None:
             continue
         value = _dei_value(hit, scope.contexts)
-        if value:
-            meta[key] = value
+        if hit.concept == "DocumentPeriodEndDate":
+            record = scope.contexts.get(hit.context_id)
+            if not value or record is None or record.end != value:
+                conflict = True
+                continue
+        elif not value:
+            continue
+        cover[key].append(value)
+        if key == "filer" and name_hit is None:
+            name_hit = hit
+    for values in cover.values():
+        if len(set(values)) > 1:
+            conflict = True
+    meta = {key: values[0] for key, values in cover.items() if values}
     company_ids = _dei_ciks(scope)
     has_company_id = bool(company_ids) or any(record.cik is not None for record in scope.contexts.values())
     filer_ok = (
@@ -667,6 +722,8 @@ def parse_inline(text: str, document: str, url: str, sha256: str, filer_cik: str
     )
     facts: list[Fact] = []
     form = meta.get("form", "")
+    if conflict:
+        filer_ok = False
     if filer_ok and form in _PRIMARY_FORMS:
         for hit in scope.hits:
             fact = _fact_from_hit(

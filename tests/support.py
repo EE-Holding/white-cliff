@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from white_cliff.facts import Fact, Period, SourcePointer
-from white_cliff.fetch import directory_cik
+from white_cliff.fetch import directory_cik, strip_edgar_script
 from white_cliff.ids import letter_id
 
 MINI_XML = """<?xml version="1.0" encoding="utf-8"?>
@@ -92,6 +92,7 @@ def write_filing(directory: Path, name: str, text: str, url: str, form: str = "1
                 "name": name,
                 "url": url,
                 "sha256": hashlib.sha256(data).hexdigest(),
+                "content_sha256": hashlib.sha256(strip_edgar_script(data)).hexdigest(),
                 "retrieved_at": "2026-11-17T17:40:00Z",
             }
         ],

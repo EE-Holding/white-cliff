@@ -32,7 +32,7 @@ _IX_DOC = re.compile(
     r"^/ix\?doc=/Archives/edgar/data/([0-9]{1,10})/([0-9]{18})/([A-Za-z0-9._-]+\.htm)$"
 )
 _EDGAR_SCRIPT = re.compile(
-    rb"""<script\s+type="text/javascript"\s+src="[^"]*"></script>""",
+    rb"""<script\s+type="text/javascript"\s+src="(/[^"]*)"></script>""",
     re.IGNORECASE,
 )
 
@@ -41,7 +41,10 @@ def directory_cik(url: str) -> str | None:
     """The filer CIK in the URL path /Archives/edgar/data/<CIK>/<accession>/, never the query string."""
     if not url.startswith("https://www.sec.gov/"):
         return None
-    match = _DIRECTORY.match(urllib.parse.urlsplit(url).path)
+    path = urllib.parse.urlsplit(url).path
+    if ".." in path.split("/"):
+        return None
+    match = _DIRECTORY.match(path)
     if match is None:
         return None
     return match.group(1).zfill(10)
@@ -63,6 +66,9 @@ def strip_edgar_script(data: bytes) -> bytes:
     for found in _EDGAR_SCRIPT.finditer(head):
         pass
     if found is None or head[found.end() :].strip():
+        return data
+    src = found.group(1)
+    if src.startswith(b"//") or b".." in src.split(b"/"):
         return data
     return head[: found.start()] + data[body_at:]
 
@@ -223,6 +229,7 @@ class EdgarClient:
                     "name": name,
                     "url": url,
                     "sha256": hashlib.sha256(body).hexdigest(),
+                    "content_sha256": hashlib.sha256(strip_edgar_script(body)).hexdigest(),
                     "retrieved_at": retrieved,
                     "document_type": document_type,
                 }

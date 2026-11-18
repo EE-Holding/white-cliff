@@ -104,6 +104,19 @@
         "retrieved_at": "2026-11-18T00:13:08Z"
       },
       "period_of_report": "2026-09-30"
+    },
+    {
+      "accession": "0001652044-26-000084",
+      "cik": "0001652044",
+      "filer": "Alphabet Inc.",
+      "form": "10-Q",
+      "sic": {
+        "code": "7370",
+        "description": "SERVICES-COMPUTER PROGRAMMING, DATA PROCESSING, ETC.",
+        "source": "https://data.sec.gov/submissions/CIK0001652044.json",
+        "retrieved_at": "2026-11-18T06:52:42Z"
+      },
+      "period_of_report": "2026-09-30"
     }
   ]
 }

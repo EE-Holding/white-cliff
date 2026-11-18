@@ -71,6 +71,26 @@ _SCALE_TOKEN = frozenset(
     }
 )
 _UNIT_TOKEN = frozenset({"share", "shares", "cent", "cents", "pct", "percent"})
+_SPELLED_CURRENCY = frozenset(
+    form
+    for word in (
+        "dollar",
+        "euro",
+        "yen",
+        "pound",
+        "rupee",
+        "peso",
+        "franc",
+        "yuan",
+        "won",
+        "real",
+        "rand",
+        "krona",
+        "krone",
+        "ruble",
+    )
+    for form in (word, word + "s")
+)
 _RECORD = re.compile(r"https://data\.sec\.gov/submissions/CIK[0-9]{10}\.json\Z")
 
 
@@ -169,7 +189,12 @@ def _token_words(token: str) -> list[str]:
 def _currency_token(token: str) -> bool:
     if any(symbol in token for symbol in "$€£¥¢"):
         return True
-    return any(word.lower() in _CURRENCY_CODE for word in _token_words(token))
+    for word in _token_words(token):
+        if word.isupper() and len(word) == 3 and word.lower() in _CURRENCY_CODE:
+            return True
+        if word.lower() in _SPELLED_CURRENCY:
+            return True
+    return False
 
 
 def _scale_or_unit_token(token: str) -> bool:
@@ -184,9 +209,14 @@ def _single_scale_suffix(token: str) -> bool:
     return re.search(r"(?i)\d[kmb](?![a-z])", token) is not None
 
 
+def _counts_toward_distance(token: str) -> bool:
+    """A dash or other punctuation-only token does not separate a digit from a unit."""
+    return any(char.isalnum() or char in "$€£¥¢%" for char in token)
+
+
 def _money_digit(name: str) -> bool:
     """A digit fused with, or within three tokens of, a currency, scale, or unit."""
-    tokens = _name_tokens(name)
+    tokens = [token for token in _name_tokens(name) if _counts_toward_distance(token)]
     for index, token in enumerate(tokens):
         if not any(char.isdigit() for char in token):
             continue

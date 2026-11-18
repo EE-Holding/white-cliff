@@ -265,6 +265,7 @@ def _index_for(tmp_path: Path, name: str) -> tuple[str, str]:
                 "name": "primary.htm",
                 "url": SEC,
                 "sha256": sha256(data).hexdigest(),
+                "content_sha256": sha256(data).hexdigest(),
                 "retrieved_at": "2026-11-18T04:23:53Z",
                 "document_type": "10-K",
             }
@@ -364,6 +365,7 @@ def test_an_exhibit_is_not_joined_onto_the_primary_document(tmp_path: Path) -> N
                 "name": "primary.htm",
                 "url": SEC,
                 "sha256": sha256(primary_bytes).hexdigest(),
+                "content_sha256": sha256(primary_bytes).hexdigest(),
                 "retrieved_at": "2026-11-18T04:23:53Z",
                 "document_type": "10-K",
             },
@@ -371,6 +373,7 @@ def test_an_exhibit_is_not_joined_onto_the_primary_document(tmp_path: Path) -> N
                 "name": "exhibit.htm",
                 "url": EXHIBIT,
                 "sha256": sha256(exhibit_bytes).hexdigest(),
+                "content_sha256": sha256(exhibit_bytes).hexdigest(),
                 "retrieved_at": "2026-11-18T04:23:53Z",
                 "document_type": "EX-99.1",
             },
