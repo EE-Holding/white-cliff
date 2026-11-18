@@ -39,3 +39,13 @@ def test_conflicting_id_is_rejected():
 def test_format_decimal_round_trips():
     value = Decimal("233602000000") / Decimal("478834000000")
     assert Decimal(format_decimal(value)) == value
+
+
+def test_package_version_is_0_1_0():
+    from pathlib import Path
+
+    import white_cliff
+
+    text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    assert white_cliff.__version__ == "0.1.0"
+    assert 'version = "0.1.0"' in text

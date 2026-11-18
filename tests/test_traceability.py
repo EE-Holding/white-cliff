@@ -80,8 +80,13 @@ def test_golden_numbers_resolve_and_match_the_filing():
     manifest = json.loads((PINNED / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["target_count"] == 30
     assert len(manifest["filings"]) >= 5
-    sectors = {entry["sector"] for entry in manifest["filings"]}
+    sectors = {entry["sic"]["description"] for entry in manifest["filings"]}
     assert len(sectors) >= 5
+    assert "technology" not in sectors
+    for entry in manifest["filings"]:
+        assert "sector" not in entry
+        assert entry["sic"]["code"].isdigit()
+        assert entry["sic"]["source"].startswith("https://data.sec.gov/submissions/CIK")
     for entry in manifest["filings"]:
         directory = PINNED / "filings" / entry["accession"]
         provenance = json.loads((directory / "provenance.json").read_text(encoding="utf-8"))

@@ -1,6 +1,6 @@
 [project]
 name = "white-cliff"
-version = "1.0.0"
+version = "0.1.0"
 description = "Explain the numbers in a public company filing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-white_cliff = ["data/confusables.txt"]
+white_cliff = ["data/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

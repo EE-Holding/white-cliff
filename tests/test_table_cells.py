@@ -200,39 +200,53 @@ def _shares(html: str):
     return [fact for fact in _facts(html) if fact.role == "shares"]
 
 
-def test_share_rows_follow_the_caption_exception():
-    millions = """
+def _one_share(caption: str, cell: str = "7,427", extra: str = ""):
+    html = f"""
     <table>
-    <caption>(In millions)</caption>
+    <caption>{caption}</caption>
     <tr><th></th><th>2026</th></tr>
-    <tr><td>Shares outstanding</td><td>7,427</td></tr>
+    <tr><td>Shares outstanding</td><td>{cell}</td></tr>
+    {extra}
     </table>
     """
-    found = _shares(millions)
+    return _shares(html), html
+
+
+def test_share_counts_follow_an_explicit_clause_or_the_caption_scale():
+    found, _html = _one_share("(In millions)")
     assert found and found[0].unit == "shares millions"
     assert found[0].value == Decimal("7427")
-    plain = """
-    <table>
-    <caption>(In millions, except per share amounts)</caption>
-    <tr><th></th><th>2026</th></tr>
-    <tr><td>Shares outstanding</td><td>7,427</td></tr>
-    </table>
-    """
-    found = _shares(plain)
-    assert found and found[0].unit == "shares"
+    assert found[0].value * Decimal("1000000") == Decimal("7427000000")
+
+    found, _html = _one_share("(In millions, except per share amounts)")
+    assert found and found[0].unit == "shares millions"
     assert found[0].value == Decimal("7427")
-    thousands = """
-    <table>
-    <caption>(In thousands, except share data)</caption>
-    <tr><th></th><th>2026</th></tr>
-    <tr><td>Shares outstanding</td><td>7,427,000</td></tr>
-    </table>
-    """
-    found = _shares(thousands)
-    assert found and found[0].unit == "shares"
-    assert found[0].value == Decimal("7427000")
-    revenue = _revenue(thousands)
-    assert revenue == []
+    assert found[0].value * Decimal("1000000") == Decimal("7427000000")
+
+    found, _html = _one_share("(In thousands, except per share data)")
+    assert found and found[0].unit == "shares thousands"
+    assert found[0].value == Decimal("7427")
+    assert found[0].value * Decimal("1000") == Decimal("7427000")
+
+    found, _html = _one_share("(Shares in thousands)")
+    assert found and found[0].unit == "shares thousands"
+
+    apple = "(In millions, except number of shares, which are reflected in thousands, and per-share amounts)"
+    found, _html = _one_share(apple)
+    assert found and found[0].unit == "shares thousands"
+    assert found[0].value == Decimal("7427")
+
+    for caption in (
+        "(In millions, except shares)",
+        "(In millions, except share data)",
+        "(In millions, except number of shares)",
+        "(In thousands, except share data)",
+    ):
+        cell = "7,427,000" if "thousands" in caption and "share data" in caption else "7,427"
+        found, _html = _one_share(caption, cell)
+        assert found and found[0].unit == "shares", caption
+        assert found[0].value == Decimal(cell.replace(",", ""))
+
     sales = """
     <table>
     <caption>(In thousands, except share data)</caption>
@@ -240,27 +254,25 @@ def test_share_rows_follow_the_caption_exception():
     <tr><td>Total net sales</td><td>1,000</td></tr>
     </table>
     """
-    found = _revenue(sales)
-    assert found and found[0].unit == "USD thousands"
-    apple = """
-    <table>
-    <caption>(In millions, except number of shares, which are reflected in thousands, and per-share amounts)</caption>
-    <tr><th></th><th>2026</th></tr>
-    <tr><td>Shares outstanding</td><td>7,427</td></tr>
-    </table>
+    revenue = _revenue(sales)
+    assert revenue and revenue[0].unit == "USD thousands"
+    assert revenue[0].value == Decimal("1000")
+
+    eps = """
+    <tr><td>Earnings per share</td><td>1.25</td></tr>
     """
-    found = _shares(apple)
-    assert found
-    assert found[0].unit == "shares"
-    explicit = """
-    <table>
-    <caption>(Shares in thousands)</caption>
-    <tr><th></th><th>2026</th></tr>
-    <tr><td>Shares outstanding</td><td>7,427</td></tr>
-    </table>
-    """
-    found = _shares(explicit)
-    assert found and found[0].unit == "shares thousands"
+    found, html = _one_share("(In millions, except per share amounts)", extra=eps)
+    assert found and found[0].unit == "shares millions"
+    assert all("per share" not in fact.label.lower() for fact in _facts(html))
+    assert all(fact.value != Decimal("1250000") for fact in _facts(html))
+    assert all(fact.value != Decimal("1.25") for fact in _facts(html))
+
+    for caption in (
+        "(In millions, in thousands)",
+        "(Unaudited)",
+    ):
+        found, _html = _one_share(caption)
+        assert found == [], caption
 
 
 def test_current_cell_does_not_match_inside_the_prior_year():
@@ -329,3 +341,65 @@ def test_filer_apostrophe_survives_html_escape(tmp_path: Path):
     assert "Lowe's" in explained.html
     assert "&#x27;" not in explained.html
     assert "Lowe&#" not in explained.html
+    assert "registrant-chip" in explained.html
+    assert "Registrant name in the filing" in explained.html
+
+
+def test_cell_pointer_skips_numbers_inside_comments():
+    html = """
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td><!-- 100 -->100</td></tr>
+    </table>
+    """
+    found = _revenue(html)
+    assert found and found[0].value == Decimal("100")
+    start, end = found[0].source.char_start, found[0].source.char_end
+    assert html[start:end] == "100"
+    assert "<!--" not in html[start:end]
+    assert html[:start].rstrip().endswith("-->")
+
+
+def test_filer_name_is_a_registrant_chip_or_the_filer(tmp_path: Path):
+    from white_cliff.pipeline import load_directory
+
+    html = """
+    <table>
+    <caption>(In millions)</caption>
+    <tr><th></th><th>2026</th></tr>
+    <tr><td>Total net sales</td><td>1,000</td></tr>
+    </table>
+    """
+
+    def explained_for(name: str):
+        directory = write_filing(tmp_path / "name", "table.htm", html, URL, form="10-K", filer=name)
+        return explain_filing(load_directory(directory))
+
+    shown = explained_for("Best Buy Co., Inc.")
+    rendered = shown.markdown + shown.html
+    assert "Best Buy Co., Inc." in rendered
+    assert "Registrant name in the filing" in rendered
+    assert "https://www.sec.gov/" in rendered
+    assert "advice" not in shown.reasons
+
+    priced = explained_for("PEG Inc")
+    assert "PEG Inc" in priced.markdown
+    assert "price metric" not in priced.reasons
+
+    counted = explained_for("Twelve Inc")
+    assert "Twelve Inc" in counted.markdown
+    assert counted.reasons == [] or "number word" not in counted.reasons
+
+    for name in (
+        "Best **Buy**",
+        "Best\nBuy",
+        "A" * 101,
+        "Buy [now](https://example.com)",
+    ):
+        hidden = explained_for(name)
+        rendered = hidden.markdown + hidden.html
+        assert "the filer" in rendered
+        assert name not in rendered
+        assert "**" not in rendered
+        assert "example.com" not in rendered

@@ -357,31 +357,44 @@ def _has_scale(text: str) -> bool:
     return "in millions" in lowered or "in thousands" in lowered
 
 
-_EXPLICIT_SHARE_THOUSANDS = re.compile(
-    r"shares?\s+in\s+thousands|share\s+amounts?\s+in\s+thousands",
+_SHARE_THOUSANDS = re.compile(
+    r"shares?\s+in\s+thousands"
+    r"|share\s+amounts?\s+in\s+thousands"
+    r"|number\s+of\s+shares,?\s+which\s+are\s+reflected\s+in\s+thousands"
+    r"|shares?(?:\s+\w+){0,6}\s+in\s+thousands",
     re.I,
 )
-_SHARE_EXCEPTION = re.compile(
-    r"except\s+(?:(?:the\s+)?(?:number\s+of\s+)?(?:per\s+)?shares?(?:\s+data|\s+amounts?)?)",
+_PLAIN_SHARE_EXCEPTION = re.compile(
+    r"except\s+(?:the\s+)?(?:number\s+of\s+shares|shares(?:\s+data)?|share(?:\s+data)?)\b(?!\s+[A-Za-z])",
     re.I,
 )
+
+
+def _share_unit(scale_text: str) -> str | None:
+    """Share counts use an explicit share clause, otherwise the caption's one scale."""
+    if _SHARE_THOUSANDS.search(scale_text):
+        return "shares thousands"
+    if _PLAIN_SHARE_EXCEPTION.search(scale_text):
+        return "shares"
+    lowered = scale_text.lower()
+    millions = "in millions" in lowered
+    thousands = "in thousands" in lowered
+    if millions and thousands:
+        return None
+    if millions:
+        return "shares millions"
+    if thousands:
+        return "shares thousands"
+    return None
 
 
 def _unit_for(role: str, scale_text: str) -> str | None:
     lowered = scale_text.lower()
     millions = "in millions" in lowered
     thousands = "in thousands" in lowered
-    explicit_share_thousands = _EXPLICIT_SHARE_THOUSANDS.search(lowered) is not None
-    share_exception = _SHARE_EXCEPTION.search(lowered) is not None
     shares_clause = "share" in lowered and "in thousands" in lowered
     if role == "shares":
-        if explicit_share_thousands:
-            return "shares thousands"
-        if share_exception:
-            return "shares"
-        if millions and not thousands:
-            return "shares millions"
-        return None
+        return _share_unit(scale_text)
     if millions and thousands and not shares_clause:
         return None
     if millions and thousands and shares_clause:
@@ -435,18 +448,35 @@ def _column_bounds(
     return found_start, found_end
 
 
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
+
+
+def _visible_ranges(raw: str, start: int, end: int) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    pos = start
+    for comment in _COMMENT.finditer(raw, start, end):
+        if comment.start() > pos:
+            ranges.append((pos, comment.start()))
+        pos = max(pos, comment.end())
+    if pos < end:
+        ranges.append((pos, end))
+    return ranges
+
+
 def _locate_in(raw: str, start: int, end: int, value: Decimal) -> tuple[int, int] | None:
-    window = raw[start:end]
     plain = format(abs(value), "f")
     if "." in plain:
         plain = plain.rstrip("0").rstrip(".")
     comma = _comma_form(abs(value))
-    for token in sorted({comma, plain}, key=len, reverse=True):
-        if not token:
-            continue
-        match = re.search(rf"(?<![\d,]){re.escape(token)}(?!\d)", window)
-        if match:
-            return start + match.start(), start + match.end()
+    tokens = sorted({comma, plain}, key=len, reverse=True)
+    for piece_start, piece_end in _visible_ranges(raw, start, end):
+        window = raw[piece_start:piece_end]
+        for token in tokens:
+            if not token:
+                continue
+            match = re.search(rf"(?<![\d,]){re.escape(token)}(?!\d)", window)
+            if match:
+                return piece_start + match.start(), piece_start + match.end()
     return None
 
 

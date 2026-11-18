@@ -1,0 +1,3 @@
+# Characters this project maps in addition to UTS #39 confusables.txt.
+028A ;	0075 ;	MA	# ( ʊ → u ) LATIN SMALL LETTER UPSILON → LATIN SMALL LETTER U
+1969 ;	0075 ;	MA	# ( ᥙ → u ) TAI LE LETTER UE → LATIN SMALL LETTER U

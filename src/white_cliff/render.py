@@ -9,9 +9,9 @@ from urllib.parse import urlsplit, urlunsplit
 from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, OutputRefused, ensure_safe_output
 from white_cliff.explain import Block
 from white_cliff.facts import FactStore, format_decimal
-from white_cliff.quotes import Quote, QuoteError, review_quotes
+from white_cliff.quotes import Quote
 
-_TOKEN = re.compile(r"\{(fact|calc):([a-z]+)\}|\{redaction\}|\[section:([^\]]+)\]")
+_TOKEN = re.compile(r"\{(fact|calc):([a-z]+)\}|\{redaction\}|\{registrant\}|\[section:([^\]]+)\]")
 _LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)(?:\s+\"([^\"]*)\")?\)")
 
 
@@ -86,6 +86,22 @@ def _quote_piece(quote: object, mode: str) -> str:
 
 
 def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str) -> str:
+    if match.group(0) == "{registrant}":
+        if block.registrant is None:
+            raise OutputRefused("missing registrant")
+        name, url, start, end = block.registrant
+        if start >= 0 and end > start:
+            href = _with_fragment(url, f"registrant={start}&end={end}")
+        else:
+            href = url
+        title = "Registrant name in the filing"
+        if mode == "html":
+            return (
+                f'<a class="registrant-chip" title="{html.escape(title, quote=True)}" '
+                f'href="{html.escape(href, quote=True)}">{html.escape(name, quote=False)}</a>'
+            )
+        visible = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f'[{visible}]({href} "{title}")'
     if match.group(0) == "{redaction}":
         if block.redaction is None:
             raise OutputRefused("missing redaction")
@@ -169,17 +185,3 @@ def copy_text(markdown: str) -> str:
 def markdown_figure_ids(markdown: str) -> list[tuple[str, str, str]]:
     """Return (label, url, title) for every Markdown link."""
     return [(m.group(1), m.group(2), m.group(3) or "") for m in _LINK.finditer(markdown)]
-
-
-def render_quote_page(text: str, filing_text: str, filing_url: str) -> tuple[str, str]:
-    """Render one sentence, linking any quote that survives the quote check."""
-    store = FactStore()
-    try:
-        quotes = review_quotes(text, filing_text, filing_url)
-        block = Block(text=text, quotes=tuple(quotes))
-    except QuoteError:
-        block = Block(
-            text="This section was omitted because it failed the quote check [section:Notes].",
-            reason="quote",
-        )
-    return render_markdown([block], store), render_html([block], store)

@@ -6,7 +6,12 @@
       "cik": "0000320193",
       "filer": "Apple Inc.",
       "form": "10-K",
-      "sector": "technology",
+      "sic": {
+        "code": "3571",
+        "description": "Electronic Computers",
+        "source": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2026-09-26"
     },
     {
@@ -14,7 +19,12 @@
       "cik": "0000104169",
       "filer": "Walmart Inc.",
       "form": "10-K",
-      "sector": "retail",
+      "sic": {
+        "code": "5331",
+        "description": "Retail-Variety Stores",
+        "source": "https://data.sec.gov/submissions/CIK0000104169.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2026-01-31"
     },
     {
@@ -22,7 +32,12 @@
       "cik": "0000021344",
       "filer": "COCA COLA CO",
       "form": "10-K",
-      "sector": "consumer staples",
+      "sic": {
+        "code": "2080",
+        "description": "Beverages",
+        "source": "https://data.sec.gov/submissions/CIK0000021344.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2025-12-31"
     },
     {
@@ -30,7 +45,12 @@
       "cik": "0000034088",
       "filer": "Exxon Mobil Corporation",
       "form": "10-K",
-      "sector": "energy",
+      "sic": {
+        "code": "2911",
+        "description": "Petroleum Refining",
+        "source": "https://data.sec.gov/submissions/CIK0000034088.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2025-12-31"
     },
     {
@@ -38,7 +58,12 @@
       "cik": "0000200406",
       "filer": "Johnson & Johnson",
       "form": "10-K",
-      "sector": "health care",
+      "sic": {
+        "code": "2834",
+        "description": "Pharmaceutical Preparations",
+        "source": "https://data.sec.gov/submissions/CIK0000200406.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2025-12-28"
     },
     {
@@ -46,7 +71,12 @@
       "cik": "0000320193",
       "filer": "Apple Inc.",
       "form": "10-Q",
-      "sector": "technology",
+      "sic": {
+        "code": "3571",
+        "description": "Electronic Computers",
+        "source": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2026-06-27"
     },
     {
@@ -54,7 +84,12 @@
       "cik": "0000320193",
       "filer": "Apple Inc.",
       "form": "8-K",
-      "sector": "technology",
+      "sic": {
+        "code": "3571",
+        "description": "Electronic Computers",
+        "source": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2026-09-26"
     },
     {
@@ -62,7 +97,12 @@
       "cik": "0000789019",
       "filer": "MICROSOFT CORPORATION",
       "form": "10-Q",
-      "sector": "technology",
+      "sic": {
+        "code": "7372",
+        "description": "Services-Prepackaged Software",
+        "source": "https://data.sec.gov/submissions/CIK0000789019.json",
+        "retrieved_at": "2026-11-18T00:13:08Z"
+      },
       "period_of_report": "2026-09-30"
     }
   ]

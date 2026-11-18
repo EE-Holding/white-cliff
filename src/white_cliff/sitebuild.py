@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, ensure_safe_output
+from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import explain_filing, load_directory
 
 
@@ -45,14 +46,25 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
         explained = explain_filing(filing)
         page_name = entry["accession"] + ".html"
         (output / page_name).write_text(explained.html, encoding="utf-8")
-        label = f"{entry['filer']} {_form_words(entry['form'])}"
-        if any(char.isdigit() for char in label):
-            label = f"Filing {_form_words(entry['form'])}"
+        form_words = _form_words(entry["form"])
+        name = acceptable_name(str(entry.get("filer", "")))
+        sic = entry.get("sic") if isinstance(entry.get("sic"), dict) else {}
+        sector = acceptable_name(str(sic.get("description", ""))) if sic else None
+        edgar = filing.url if filing.url.startswith("https://www.sec.gov/") else ""
+        if name and edgar:
+            filer_html = (
+                f'<a class="registrant-chip" title="Registrant name in the filing" '
+                f'href="{html.escape(edgar, quote=True)}">{html.escape(name, quote=False)}</a>'
+            )
+        else:
+            filer_html = "the filer"
+        sector_html = html.escape(sector, quote=False) if sector else ""
         items.append(
-            "<li><a href=\"{href}\">{label}</a> {sector}</li>".format(
+            "<li><a href=\"{href}\">{form_words}</a> {filer} {sector}</li>".format(
                 href=html.escape(page_name, quote=True),
-                label=html.escape(label),
-                sector=html.escape(entry.get("sector", "")),
+                form_words=html.escape(form_words),
+                filer=filer_html,
+                sector=sector_html,
             )
         )
     index = (

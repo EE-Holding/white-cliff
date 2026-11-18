@@ -96,3 +96,22 @@ def make_fact(
         origin="xbrl",
         kind=fact_kind,
     )
+
+
+def render_quote_page(text: str, filing_text: str, filing_url: str) -> tuple[str, str]:
+    """Render one sentence, linking any quote that survives the quote check."""
+    from white_cliff.explain import Block
+    from white_cliff.facts import FactStore
+    from white_cliff.quotes import QuoteError, review_quotes
+    from white_cliff.render import render_html, render_markdown
+
+    store = FactStore()
+    try:
+        quotes = review_quotes(text, filing_text, filing_url)
+        block = Block(text=text, quotes=tuple(quotes))
+    except QuoteError:
+        block = Block(
+            text="This section was omitted because it failed the quote check [section:Notes].",
+            reason="quote",
+        )
+    return render_markdown([block], store), render_html([block], store)

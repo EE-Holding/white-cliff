@@ -92,6 +92,30 @@ def test_backoff_on_403_and_429():
         assert 2.0 in clock.sleeps
 
 
+def test_same_host_redirect_off_port_443_is_refused():
+    def transport(url, user_agent):
+        if url.endswith("/start"):
+            return 302, b"", {"Location": "https://www.sec.gov:8443/evil"}
+        return 200, b"secret", {}
+
+    client = EdgarClient(UA, transport=transport, sleep=lambda _seconds: None, clock=lambda: 0.0)
+    with pytest.raises(DisallowedHost):
+        client.get("https://www.sec.gov/start")
+    for location in (
+        "https://www.sec.gov:80/evil",
+        "http://www.sec.gov/evil",
+        "http://www.sec.gov:443/evil",
+    ):
+        def transport(url, user_agent, location=location):
+            if url.endswith("/start"):
+                return 302, b"", {"Location": location}
+            return 200, b"secret", {}
+
+        client = EdgarClient(UA, transport=transport, sleep=lambda _seconds: None, clock=lambda: 0.0)
+        with pytest.raises(DisallowedHost):
+            client.get("https://www.sec.gov/start")
+
+
 def test_non_edgar_hosts_are_refused():
     called = {"value": False}
 

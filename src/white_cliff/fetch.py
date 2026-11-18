@@ -39,6 +39,8 @@ def host_allowed(url: str) -> bool:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https":
         return False
+    if parsed.port not in (None, 443):
+        return False
     return (parsed.hostname or "") in ALLOWED_HOSTS
 
 

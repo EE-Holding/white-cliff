@@ -7,9 +7,9 @@ from functools import lru_cache
 from pathlib import Path
 
 
-def _load() -> dict[str, str]:
-    table: dict[str, str] = {}
-    path = Path(__file__).with_name("data") / "confusables.txt"
+def _read_table(path: Path, table: dict[str, str]) -> None:
+    if not path.is_file():
+        return
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
             continue
@@ -19,6 +19,13 @@ def _load() -> dict[str, str]:
         key = "".join(chr(int(piece, 16)) for piece in source.split())
         value = "".join(chr(int(piece, 16)) for piece in target.split())
         table[key] = value
+
+
+def _load() -> dict[str, str]:
+    table: dict[str, str] = {}
+    data = Path(__file__).with_name("data")
+    _read_table(data / "confusables.txt", table)
+    _read_table(data / "local-confusables.txt", table)
     return table
 
 

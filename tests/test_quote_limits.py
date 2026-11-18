@@ -2,7 +2,7 @@ import pytest
 
 from white_cliff.pipeline import load_directory
 from white_cliff.quotes import QuoteError, review_quotes
-from white_cliff.render import render_quote_page
+from tests.support import render_quote_page
 from tests.support import write_filing
 
 FILING = (

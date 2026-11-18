@@ -53,12 +53,29 @@ _REASON = (
 )
 
 
+_NAME_EXTRA = set(" ., &'()-/")
+
+
+def acceptable_name(name: str) -> str | None:
+    """A filing-supplied label: one short line of letters, digits, and light punctuation."""
+    if not name or name != name.strip():
+        return None
+    if len(name) > 100 or any(char in "\n\r" for char in name):
+        return None
+    for char in name:
+        if char.isalpha() or char.isdigit() or char in _NAME_EXTRA:
+            continue
+        return None
+    return name
+
+
 @dataclass
 class Block:
     text: str
     redaction: Redaction | None = None
     reason: str | None = None
     quotes: tuple = ()
+    registrant: tuple[str, str, int, int] | None = None
 
 
 def _length(fact: Fact) -> int | None:
@@ -242,13 +259,6 @@ def _calc_sentence(role: str, fact: Fact, calc) -> str:
     )
 
 
-def _safe_name(name: str) -> str:
-    if not name or any(char.isdigit() for char in name):
-        return "the filer"
-    # A period inside a name, as in "Inc.", would split the sentence.
-    return name.replace(".", "").strip()
-
-
 def _form_words(form: str) -> str:
     return {
         "10-K": "an annual report",
@@ -283,14 +293,26 @@ def build_blocks(
     filing_url: str,
 ) -> list[Block]:
     facts = store.facts()
-    blocks: list[Block] = [
-        Block(
+    shown_name = acceptable_name(filer)
+    if shown_name is None:
+        cover = Block(
             text=(
-                f"This explanation covers {_safe_name(filer)} in {_form_words(form)} "
+                f"This explanation covers the filer in {_form_words(form)} "
                 "[section:Cover]."
             )
         )
-    ]
+    else:
+        found = filing_text.find(shown_name)
+        start = found if found >= 0 else -1
+        end = found + len(shown_name) if found >= 0 else -1
+        cover = Block(
+            text=(
+                f"This explanation covers {{registrant}} in {_form_words(form)} "
+                "[section:Cover]."
+            ),
+            registrant=(shown_name, filing_url, start, end),
+        )
+    blocks: list[Block] = [cover]
     if filing_url and not filing_url.startswith("https://www.sec.gov/"):
         blocks.append(
             Block(text="This filing was not retrieved from EDGAR [section:Document].")
@@ -418,6 +440,12 @@ def build_blocks(
             checked.append(_omission("Document", str(exc)))
             continue
         checked.append(
-            Block(text=block.text, redaction=block.redaction, quotes=quotes, reason=block.reason)
+            Block(
+                text=block.text,
+                redaction=block.redaction,
+                quotes=quotes,
+                reason=block.reason,
+                registrant=block.registrant,
+            )
         )
     return checked
