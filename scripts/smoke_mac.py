@@ -161,12 +161,12 @@ class DevTools:
         return payload.decode("utf-8")
 
 
-def _window(page: DevTools) -> None:
+def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
     """Give headless Chrome a real window. Old headless rejects the metrics call."""
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
-            {"width": 1100, "height": 2200, "deviceScaleFactor": 1, "mobile": False},
+            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
         )
         return
     except PageError:
@@ -177,21 +177,25 @@ def _window(page: DevTools) -> None:
             "Browser.setWindowBounds",
             {
                 "windowId": window["windowId"],
-                "bounds": {"width": 1100, "height": 2200, "windowState": "normal"},
+                "bounds": {"width": width, "height": height, "windowState": "normal"},
             },
         )
     except PageError:
         pass
 
 
-def _shot(page: DevTools, directory: Path, name: str) -> Path:
+def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height: int = 2200) -> Path:
     last: Exception | None = None
     for _ in range(2):
         fresh = DevTools(page.ws_url)
         try:
             fresh.call("Page.enable")
             fresh.call("Runtime.enable")
-            _window(fresh)
+            _window(fresh, width, height)
+            fresh.call(
+                "Runtime.evaluate",
+                {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
+            )
             result = fresh.call(
                 "Page.captureScreenshot",
                 {"format": "png", "optimizeForSpeed": True},
@@ -423,8 +427,12 @@ def drive(
         _fill(page, "#query", query)
         _click(page, 'form[action="/explain"] button')
         _wait_result(page, out_dir, heading, suffix, loading=True)
+        _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600)
+        _shot(page, out_dir, f"smoke-{ARCH}-7-result-420.png", width=420, height=1800)
+        _window(page)
         _reduced_motion(page)
-        _eval(page, "document.documentElement.dataset.shot = 'old'")
+        page.call("Page.navigate", {"url": url})
+        _wait_node(page, "#query", 20)
         _fill(page, "#query", query)
         _click(page, 'form[action="/explain"] button')
         _wait_result(
@@ -433,7 +441,6 @@ def drive(
             heading,
             suffix,
             loading=False,
-            fresh=True,
             shot_name=f"smoke-{ARCH}-5-reduced.png",
         )
     finally:

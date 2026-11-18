@@ -213,13 +213,12 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; "
         "text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }\n"
         "a.figure:hover, a.figure:focus-visible { text-decoration-color: var(--accent); }\n"
-        ".row.compare { grid-template-columns: minmax(0, 1fr) auto minmax(0, 16rem); "
-        "column-gap: 32px; align-items: start; }\n"
-        ".earlier { display: flex; flex-direction: column; gap: 8px; min-width: 0; }\n"
-        ".row.compare .prior, .row.compare a.figure { justify-self: end; text-align: right; }\n"
-        ".row.compare .prior p { overflow-wrap: anywhere; }\n"
-        ".caption { margin: 0 0 4px; font-size: 18px; line-height: 27px; font-weight: 600; "
-        "color: var(--ink-2); }\n"
+        ".row.stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }\n"
+        ".row.stack a.figure { text-align: left; }\n"
+        ".this-period { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }\n"
+        ".earlier { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; margin-top: 8px; }\n"
+        ".caption { margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; "
+        "color: var(--ink-3); }\n"
         ".prior-value, .prior p { margin: 0; font-size: 18px; line-height: 27px; color: var(--ink-2); "
         "font-weight: 400; }\n"
         "a.prior-value { font-size: 21px; line-height: 30px; color: var(--ink-2); "
@@ -258,8 +257,8 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "@media (max-width: 480px) {\n"
         "  .disclaimer, .column { padding-left: 20px; padding-right: 20px; }\n"
         "  h1 { font-size: 32px; line-height: 38px; }\n"
-        "  .row, .row.compare { grid-template-columns: 1fr; }\n"
-        "  .row.compare .prior, .row.compare a.figure { text-align: left; justify-self: start; }\n"
+        "  .row { grid-template-columns: 1fr; }\n"
+        "  .earlier { grid-template-columns: 1fr; row-gap: 8px; }\n"
         "  a.figure { text-align: left; margin-top: 4px; }\n"
         "}\n"
         "@media (prefers-reduced-motion: reduce) {\n"
@@ -688,6 +687,14 @@ def _anchor_from_href(href: str) -> str:
     return ""
 
 
+def _leading_caption(rest: str) -> tuple[str, str]:
+    """Lift this period's caption out of the comparison text so it sits with the figure."""
+    match = re.search(r'<p class="caption">.*?</p>\s*', rest, flags=re.S)
+    if match is None:
+        return "", rest
+    return match.group(0), rest[: match.start()] + rest[match.end() :]
+
+
 def _split_earlier(after: str) -> tuple[str, str]:
     marker = '<div class="earlier">'
     start = after.find(marker)
@@ -740,17 +747,31 @@ def _rows(explained_html: str, additions=None) -> str:
                     f'aria-controls="{control}">Explain</button>'
                 )
         earlier, rest = _split_earlier(after)
-        kind = " compare" if earlier else ""
+        caption = ""
         if earlier:
-            earlier = f'<div class="earlier">{earlier}</div>'
+            caption, rest = _leading_caption(rest)
+            shown = (
+                f'<div class="this-period">{caption}'
+                f'<a class="figure" href="{href}">{html.escape(amount)}</a></div>'
+            )
+            row = (
+                '<div class="row stack">'
+                f"<span>{html.escape(label)}</span>"
+                f"{shown}"
+                "</div>\n"
+                f'<div class="earlier">{earlier}</div>\n'
+            )
+        else:
+            row = (
+                '<div class="row">'
+                f"<span>{html.escape(label)}</span>"
+                f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
+                "</div>\n"
+            )
         rows.append(
             before
             + '<div class="figure-block">'
-            + f'<div class="row{kind}">'
-            + f'<span>{html.escape(label)}</span>'
-            + f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
-            + earlier
-            + "</div>\n"
+            + row
             + rest
             + button
             + "</div>\n"

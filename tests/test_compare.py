@@ -372,6 +372,63 @@ def test_column_headers_name_the_period_and_do_not_call_a_year_to_date_a_quarter
     assert all("quarter" not in head.lower() for head in nine_heads)
 
 
+def test_comparison_markup_is_label_then_figure_then_the_two_cell_grid():
+    current = load_directory(PINNED / "0001045810-26-000075")
+    prior = load_directory(PINNED / "0001045810-26-000052")
+    page = result_page(
+        explain_filing(current),
+        form=current.form,
+        period=current.period_end or "",
+        filed="2026-08-26",
+        url=current.url,
+        company=current.filer,
+        focus=current.focus,
+        fiscal_year_end=current.fiscal_year_end,
+        prior_facts=prior.store.facts(),
+        prior_end=prior.period_end,
+    )
+    style = page.split("</style>", 1)[0]
+    caption_rule = re.search(r"\.caption \{([^}]*)\}", style)
+    assert caption_rule is not None
+    assert "600" not in caption_rule.group(1)
+    assert "font-weight: 400" in caption_rule.group(1)
+
+    def block_for(label: str) -> str:
+        start = page.find(f">{label}</span>")
+        assert start > 0
+        opening = page.rfind('<div class="figure-block">', 0, start)
+        closing = page.find('<div class="figure-block">', opening + 1)
+        return page[opening:closing]
+
+    revenue = block_for("Revenue")
+    label_at = revenue.find(">Revenue</span>")
+    figure_at = revenue.find('class="figure"')
+    grid_at = revenue.find('class="earlier"')
+    change_at = revenue.find('class="change-line"')
+    assert 0 <= label_at < figure_at < grid_at < change_at
+    cells = re.findall(r'<div class="prior">.*?</div>', revenue)
+    assert len(cells) == 2
+    assert "Three months ended April 26, 2026" in cells[0]
+    assert "$81,615 million" in cells[0]
+    assert "Three months ended July 27, 2025" in cells[1]
+    assert "$46,743 million" in cells[1]
+
+    cash = block_for("Operating cash flow for the year to date")
+    cash_figure = cash.find('class="figure"')
+    cash_grid = cash.find('class="earlier"')
+    cash_caption = cash.find("Six months ended July 26, 2026")
+    assert cash.find(">Operating cash flow for the year to date</span>") < cash_figure < cash_grid
+    assert cash_figure > cash_caption > 0
+    assert cash_caption < cash_grid
+    cash_cells = re.findall(r'<div class="prior">.*?</div>', cash)
+    assert cash_cells[0] == (
+        '<div class="prior"><p data-template="M6">'
+        "Operating cash flow for the prior quarter is not available for this filing.</p></div>"
+    )
+    assert "Six months ended July 27, 2025" in cash_cells[1]
+    assert "<strong" not in page and "<b>" not in page
+
+
 def test_rendered_pages_do_not_say_that_is_rose_or_percent_percent():
     current = load_directory(PINNED / "0001045810-26-000075")
     prior = load_directory(PINNED / "0001045810-26-000052")
