@@ -161,6 +161,13 @@ class DevTools:
         return payload.decode("utf-8")
 
 
+def _window(page: DevTools) -> None:
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        {"width": 1100, "height": 2200, "deviceScaleFactor": 1, "mobile": False},
+    )
+
+
 def _shot(page: DevTools, directory: Path, name: str) -> Path:
     last: Exception | None = None
     for _ in range(2):
@@ -168,6 +175,7 @@ def _shot(page: DevTools, directory: Path, name: str) -> Path:
         try:
             fresh.call("Page.enable")
             fresh.call("Runtime.enable")
+            _window(fresh)
             result = fresh.call(
                 "Page.captureScreenshot",
                 {"format": "png", "optimizeForSpeed": True},
@@ -231,7 +239,18 @@ def _click(page: DevTools, selector: str) -> None:
 def _fill(page: DevTools, selector: str, text: str) -> None:
     _click(page, selector)
     page.call("Input.insertText", {"text": text})
-    value = _eval(page, f"document.querySelector({json.dumps(selector)}).value")
+    shown = json.dumps(selector)
+    value = _eval(page, f"document.querySelector({shown}).value")
+    if value != text:
+        _eval(
+            page,
+            "(() => { const node = document.querySelector("
+            + shown
+            + "); node.focus(); node.value = "
+            + json.dumps(text)
+            + "; return node.value; })()",
+        )
+        value = _eval(page, f"document.querySelector({shown}).value")
     if value != text:
         raise PageError(f"{selector} showed {value!r}")
 
@@ -316,6 +335,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     page = DevTools(info["webSocketDebuggerUrl"])
     page.call("Page.enable")
     page.call("Runtime.enable")
+    _window(page)
     page.call("Page.navigate", {"url": url})
     return chrome, page
 
