@@ -45,6 +45,7 @@ class PageError(RuntimeError):
 
 class DevTools:
     def __init__(self, ws_url: str) -> None:
+        self.ws_url = ws_url
         parsed = urllib.parse.urlsplit(ws_url)
         self.sock = socket.create_connection((parsed.hostname, parsed.port or 80), timeout=10)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
@@ -91,7 +92,9 @@ class DevTools:
         raise PageError(method)
 
     def close(self) -> None:
-        self.sock.close()
+        sock = getattr(self, "sock", None)
+        if sock is not None:
+            sock.close()
 
     def _send(self, opcode: int, payload: bytes) -> None:
         mask = os.urandom(4)
@@ -159,15 +162,26 @@ class DevTools:
 
 
 def _shot(page: DevTools, directory: Path, name: str) -> Path:
-    _eval(
-        page,
-        "new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); })",
-    )
-    result = page.call("Page.captureScreenshot", {"format": "png"}, timeout=15)
-    path = directory / name
-    path.write_bytes(base64.b64decode(result["data"]))
-    print(f"screenshot {path}", flush=True)
-    return path
+    last: Exception | None = None
+    for _ in range(2):
+        fresh = DevTools(page.ws_url)
+        try:
+            fresh.call("Page.enable")
+            fresh.call("Runtime.enable")
+            result = fresh.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=8,
+            )
+            path = directory / name
+            path.write_bytes(base64.b64decode(result["data"]))
+            print(f"screenshot {path}", flush=True)
+            return path
+        except (PageError, TimeoutError, OSError) as exc:
+            last = exc
+        finally:
+            fresh.close()
+    raise PageError(last)
 
 
 def _eval(page: DevTools, expression: str):
