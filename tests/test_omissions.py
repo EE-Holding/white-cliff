@@ -19,9 +19,11 @@ def test_confidential_omission_is_shown_as_filed():
 def test_other_omission_markers_are_shown_as_filed(tmp_path):
     from tests.support import write_filing
 
-    html = "<p>Rates are [*], ***, [* * *], [Redacted] and [omitted].</p>"
+    from tests.support import narrative_instance
+
+    note = "Rates are [*], ***, [* * *], [Redacted] and [omitted]."
     url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/omit.htm"
-    directory = write_filing(tmp_path / "omit", "filing.html", html, url, form="8-K")
+    directory = write_filing(tmp_path / "omit", "filing.xml", narrative_instance(note), url, form="10-K")
     filing = load_directory(directory)
     explained = explain_filing(filing)
     for marker in ("[*]", "***", "[* * *]", "[Redacted]", "[omitted]"):

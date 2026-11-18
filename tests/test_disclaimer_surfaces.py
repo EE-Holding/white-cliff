@@ -147,11 +147,7 @@ def test_local_file_without_provenance_invents_no_sec_url(tmp_path, capsys):
     from white_cliff.pipeline import load_file
 
     target = tmp_path / "filing.html"
-    target.write_text(
-        "<table><caption>(In millions)</caption><tr><th>2026</th></tr>"
-        "<tr><td>Total net sales</td><td>5</td></tr></table>",
-        encoding="utf-8",
-    )
+    target.write_text("<html><body><p>Total net sales 5</p></body></html>", encoding="utf-8")
     try:
         filing = load_file(target)
     except Exception as exc:
@@ -160,7 +156,7 @@ def test_local_file_without_provenance_invents_no_sec_url(tmp_path, capsys):
     explained = explain_filing(filing)
     rendered = explained.markdown + explained.html
     assert "https://www.sec.gov/" not in rendered
-    assert "not retrieved from EDGAR" in rendered
+    assert "This filing has no tagged figures that White Cliff can explain." in rendered
 
 
 def test_output_without_the_disclaimer_is_refused():

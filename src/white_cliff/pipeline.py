@@ -14,9 +14,18 @@ from white_cliff.facts import FactStore
 from white_cliff.omissions import find_omissions
 from white_cliff.prices import is_price_text
 from white_cliff.redact import Redaction, contains_personal, find_redactions
-from white_cliff.render import copy_text, render_html, render_markdown
-from white_cliff.tables import parse_tables
+from white_cliff.render import copy_text, render_html, render_markdown, render_refusal
 from white_cliff.xbrl import ParsedFacts, is_instance_document, parse_inline, parse_instance
+
+_MONEY_ROLES = {
+    "revenue",
+    "gross_profit",
+    "operating_income",
+    "net_income",
+    "operating_cash_flow",
+    "debt",
+    "cash",
+}
 
 
 @dataclass
@@ -46,21 +55,12 @@ class Explained:
         return copy_text(self.markdown)
 
 
-def _parse_text(text: str, document: str, url: str, sha256: str, form: str) -> ParsedFacts:
+def _parse_text(text: str, document: str, url: str, sha256: str) -> ParsedFacts:
     if is_instance_document(text):
         return parse_instance(text, document, url, sha256)
-    parsed = ParsedFacts(facts=[])
     if "nonfraction" in text.lower():
-        parsed = parse_inline(text, document, url, sha256)
-    table_form = parsed.form or form
-    table_facts, table_price = parse_tables(text, document, url, sha256, table_form)
-    covered = {fact.role for fact in parsed.facts if fact.role}
-    for fact in table_facts:
-        if fact.role and fact.role in covered:
-            continue
-        parsed.facts.append(fact)
-    parsed.price_metric = parsed.price_metric or table_price
-    return parsed
+        return parse_inline(text, document, url, sha256)
+    return ParsedFacts(facts=[])
 
 
 def _absorb(store: FactStore, parsed: ParsedFacts) -> None:
@@ -89,7 +89,7 @@ def load_directory(path: Path) -> Filing:
         text = blob.decode("utf-8")
         texts.append(text)
         url = url or item["url"]
-        parsed = _parse_text(text, item["name"], item["url"], digest, form)
+        parsed = _parse_text(text, item["name"], item["url"], digest)
         _absorb(store, parsed)
         filer = parsed.filer or filer
         document_filer = parsed.filer or document_filer
@@ -124,7 +124,7 @@ def load_file(path: Path) -> Filing:
     digest = hashlib.sha256(blob).hexdigest()
     text = blob.decode("utf-8")
     url = path.resolve().as_uri()
-    parsed = _parse_text(text, path.name, url, digest, "")
+    parsed = _parse_text(text, path.name, url, digest)
     store = FactStore()
     _absorb(store, parsed)
     return Filing(
@@ -143,6 +143,15 @@ def load_file(path: Path) -> Filing:
 
 
 def explain_filing(filing: Filing) -> Explained:
+    if not any(fact.role in _MONEY_ROLES for fact in filing.store.facts()):
+        markdown, html_text = render_refusal(filing.url)
+        for rendered in (markdown, html_text):
+            problem = audit_rendered(rendered)
+            if problem:
+                raise OutputRefused(problem)
+        if contains_personal(markdown) or contains_personal(html_text):
+            raise OutputRefused("personal data in output")
+        return Explained(markdown=markdown, html=html_text, store=filing.store)
     blocks = build_blocks(
         store=filing.store,
         filer=filing.filer,

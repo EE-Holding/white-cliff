@@ -197,17 +197,6 @@ def _by_concept(facts: list[Fact], concept: str) -> list[Fact]:
     return [fact for fact in facts if fact.concept == concept]
 
 
-def _table(facts: list[Fact], role: str, kinds: set[str]) -> Fact | None:
-    pool = [
-        fact
-        for fact in facts
-        if fact.origin == "table" and fact.role == role and fact.table_kind in kinds
-    ]
-    if not pool:
-        pool = [fact for fact in facts if fact.origin == "table" and fact.role == role]
-    return _prefer(pool)
-
-
 def _pick_ordered(
     facts: list[Fact],
     concepts: tuple[str, ...],
@@ -425,16 +414,6 @@ def build_blocks(
         )
 
     chosen: dict[str, Fact] = {}
-    table_kinds = {
-        "revenue": {"income"},
-        "gross_profit": {"income"},
-        "operating_income": {"income"},
-        "net_income": {"income"},
-        "operating_cash_flow": {"cashflow"},
-        "debt": {"balance"},
-        "cash": {"balance"},
-        "shares": {"balance", "income", "other"},
-    }
     plans = (
         ("revenue", _REVENUE, False),
         ("gross_profit", ("GrossProfit",), False),
@@ -446,8 +425,6 @@ def build_blocks(
     )
     for role, concepts, instant in plans:
         picked = _pick_ordered(facts, concepts, focus, period_end, instant)
-        if picked is None:
-            picked = _table(facts, role, table_kinds[role])
         if picked is not None:
             chosen[role] = picked
             blocks.append(Block(text=_fact_sentence(role, picked)))

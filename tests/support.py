@@ -43,6 +43,33 @@ MINI_XML = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
+def narrative_instance(note: str) -> str:
+    """A small 10-K instance plus one non-numeric note from the filing."""
+    escaped = (
+        note.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<xbrl xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:us-gaap="http://fasb.org/us-gaap/2026"
+      xmlns:dei="http://xbrl.sec.gov/dei/2026"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217">
+  <context id="c-year">
+    <entity><identifier scheme="http://www.sec.gov/CIK">0000000001</identifier></entity>
+    <period><startDate>2024-01-01</startDate><endDate>2024-12-31</endDate></period>
+  </context>
+  <unit id="usd"><measure>iso4217:USD</measure></unit>
+  <dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>
+  <dei:DocumentType contextRef="c-year">10-K</dei:DocumentType>
+  <dei:DocumentFiscalPeriodFocus contextRef="c-year">FY</dei:DocumentFiscalPeriodFocus>
+  <dei:DocumentPeriodEndDate contextRef="c-year">2024-12-31</dei:DocumentPeriodEndDate>
+  <us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0">5000</us-gaap:Revenues>
+  <dei:TradingSymbol contextRef="c-year">{escaped}</dei:TradingSymbol>
+</xbrl>
+"""
+
+
 def write_filing(directory: Path, name: str, text: str, url: str, form: str = "10-K", filer: str = "Example Co") -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / name

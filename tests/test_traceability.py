@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from white_cliff.disclaimer import DISCLAIMER
 from white_cliff.pipeline import explain_filing, load_directory
-from white_cliff.review import review_text
+from white_cliff.review import audit_rendered, review_text
 
 ROOT = Path(__file__).resolve().parents[1]
 PINNED = ROOT / "pinned"
@@ -128,6 +128,12 @@ def test_golden_numbers_resolve_and_match_the_filing():
             slice_text = raw[fact.source.char_start : fact.source.char_end]
             assert _digits(format(fact.value, "f")) == _digits(slice_text)
         explained = explain_filing(filing)
+        if not expected["facts"]:
+            assert "This filing has no tagged figures that White Cliff can explain." in explained.markdown
+            assert "<data" not in explained.html
+            assert explained.markdown.startswith(DISCLAIMER)
+            assert audit_rendered(explained.markdown) is None
+            continue
         _audit_markdown(explained.markdown, filing.store)
         _audit_html(explained.html, filing.store)
         assert "https://github.com/EE-Holding/white-cliff/issues/new?template=filing_error.md" in explained.markdown
@@ -140,6 +146,9 @@ def test_every_shown_fact_has_a_hand_checked_expected_entry():
         expected = json.loads((directory / "expected.json").read_text(encoding="utf-8"))
         filing = load_directory(directory)
         explained = explain_filing(filing)
+        if not expected["facts"]:
+            assert "This filing has no tagged figures that White Cliff can explain." in explained.markdown
+            continue
         shown = []
         for match in LINK.finditer(explained.markdown):
             label, url = match.group(1), match.group(2)
@@ -301,20 +310,13 @@ def test_index_uses_the_filing_name_and_only_a_real_sic(tmp_path: Path):
     assert "#registrant=" in index
 
 
-def test_apple_exhibit_chip_names_the_cash_flow_year():
+def test_apple_exhibit_has_no_tagged_figures():
     directory = PINNED / "filings" / "0000320193-26-000024"
     filing = load_directory(directory)
     explained = explain_filing(filing)
-    page = explained.html
-    assert "132175 USD millions" in page
-    assert "Cash flows, twelve months ended September 26, 2026" in page
-    chip = re.search(
-        r"132175 USD millions</data>\s*<a class=\"source-chip\"[^>]*>([^<]*)</a>",
-        page,
-    )
-    assert chip, page
-    assert chip.group(1) == "Cash flows, twelve months ended September 26, 2026"
-    assert "Income statement" not in chip.group(1)
+    assert "This filing has no tagged figures that White Cliff can explain." in explained.markdown
+    assert "132175" not in explained.markdown
+    assert "<data" not in explained.html
 
 
 def test_sector_label_is_exempt_only_in_its_form():

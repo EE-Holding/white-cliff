@@ -176,6 +176,28 @@ def _token_piece(match: re.Match[str], store: FactStore, block: Block, mode: str
     return _markdown_chip(label, href, title)
 
 
+REFUSAL_SENTENCE = "This filing has no tagged figures that White Cliff can explain."
+
+
+def render_refusal(url: str) -> tuple[str, str]:
+    """A public page with the disclaimer, one sentence, and the filing link."""
+    markdown = f"{DISCLAIMER}\n\n{REFUSAL_SENTENCE} [the filing]({url})\n"
+    document = (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        "<title>Filing explanation</title>\n"
+        "</head>\n"
+        "<body>\n"
+        f'<p class="disclaimer">{DISCLAIMER}</p>\n'
+        f"<p>{REFUSAL_SENTENCE} "
+        f'<a href="{html.escape(url, quote=True)}">the filing</a></p>\n'
+        "</body>\n"
+        "</html>\n"
+    )
+    return ensure_safe_output(markdown), ensure_safe_output(document)
+
+
 def render_markdown(blocks: list[Block], store: FactStore) -> str:
     body = [_fill(block.text, store, block, "md") for block in blocks]
     report = f"Report an error: [Report an error]({ISSUE_URL})."

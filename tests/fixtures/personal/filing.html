@@ -1,14 +1,17 @@
-<!DOCTYPE html>
-<html>
-<body>
-<p>(In millions)</p>
-<p>The executive social security number is 123-45-6789.</p>
-<p>Wire funds to bank account number 123456789012.</p>
-<p>Notices go to 742 Evergreen Terrace, Springfield, IL 62704.</p>
-<table>
-<caption>(In millions)</caption>
-<tr><th>Item</th><th>Amount</th></tr>
-<tr><td>Total net sales</td><td>5000</td></tr>
-</table>
-</body>
-</html>
+<?xml version="1.0" encoding="utf-8"?>
+<xbrl xmlns="http://www.xbrl.org/2003/instance"
+      xmlns:us-gaap="http://fasb.org/us-gaap/2026"
+      xmlns:dei="http://xbrl.sec.gov/dei/2026"
+      xmlns:iso4217="http://www.xbrl.org/2003/iso4217">
+  <context id="c-year">
+    <entity><identifier scheme="http://www.sec.gov/CIK">0000000001</identifier></entity>
+    <period><startDate>2024-01-01</startDate><endDate>2024-12-31</endDate></period>
+  </context>
+  <unit id="usd"><measure>iso4217:USD</measure></unit>
+  <dei:EntityRegistrantName contextRef="c-year">Example Co</dei:EntityRegistrantName>
+  <dei:DocumentType contextRef="c-year">10-K</dei:DocumentType>
+  <dei:DocumentFiscalPeriodFocus contextRef="c-year">FY</dei:DocumentFiscalPeriodFocus>
+  <dei:DocumentPeriodEndDate contextRef="c-year">2024-12-31</dei:DocumentPeriodEndDate>
+  <us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0">5000</us-gaap:Revenues>
+  <dei:TradingSymbol contextRef="c-year">The executive social security number is 123-45-6789. Wire funds to bank account number 123456789012. Notices go to 742 Evergreen Terrace, Springfield, IL 62704.</dei:TradingSymbol>
+</xbrl>

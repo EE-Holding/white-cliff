@@ -25,22 +25,16 @@ def test_personal_data_is_replaced_by_chips():
 
 
 def test_more_personal_shapes_are_chips_and_a_street_in_words_is_refused(tmp_path):
-    html = """
-    <p>SSN 123456789</p>
-    <p>The other form is 123.45.6789.</p>
-    <p>Account No. 12345678</p>
-    <p>Pay to IBAN GB82WEST12345698765432.</p>
-    <p>Mail to PO Box 123.</p>
-    <p>Deliver to Apt 4B, 77 Main St.</p>
-    <p>The plant is at 77 main street.</p>
-    <p>The office is at 10 Downing Street, London.</p>
-    <table><caption>(In millions)</caption>
-    <tr><th>2026</th></tr>
-    <tr><td>Total net sales</td><td>5000</td></tr>
-    </table>
-    """
+    from tests.support import narrative_instance
+
+    note = (
+        "SSN 123456789. The other form is 123.45.6789. "
+        "Account No. 12345678. Pay to IBAN GB82WEST12345698765432. "
+        "Mail to PO Box 123. Deliver to Apt 4B, 77 Main St. "
+        "The plant is at 77 main street. The office is at 10 Downing Street, London."
+    )
     url = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/personal.htm"
-    directory = write_filing(tmp_path / "personal", "filing.html", html, url, form="8-K")
+    directory = write_filing(tmp_path / "personal", "filing.xml", narrative_instance(note), url, form="10-K")
     filing = load_directory(directory)
     sentence = "The officer lives at Elm Street in Springfield [section:Notes]."
     assert contains_personal(sentence)
