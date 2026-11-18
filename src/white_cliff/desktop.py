@@ -163,7 +163,7 @@ class Desktop:
         if path == "/stay":
             return Page(204, "")
         if method == "GET" and path == "/progress":
-            payload = json.dumps({"step": self.step_n, "reading": self.reading})
+            payload = json.dumps({"step": self.step_n})
             return Page(200, payload, content_type="application/json; charset=utf-8")
         if method == "POST" and path == "/identity":
             return self._save(form)
@@ -461,7 +461,14 @@ class _Handler(BaseHTTPRequestHandler):
     def _from_here(self, value: str) -> bool:
         return any(value == origin or value.startswith(origin + "/") for origin in self._origins())
 
-    def _post_allowed(self, form: dict[str, str]) -> bool:
+    def _presented_token(self, form: dict[str, str]) -> str:
+        if form.get("token"):
+            return form["token"]
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        values = query.get("token") or []
+        return values[0] if values else ""
+
+    def _request_allowed(self, token: str) -> bool:
         site = (self.headers.get("Sec-Fetch-Site") or "").casefold()
         if site in {"cross-site", "same-site"}:
             return False
@@ -471,7 +478,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return False
         elif origin not in self._origins():
             return False
-        return _same(form.get("token", ""), self.desktop.token)
+        return _same(token, self.desktop.token)
+
+    def _post_allowed(self, form: dict[str, str]) -> bool:
+        return self._request_allowed(form.get("token", ""))
 
     def _send(self, status: int, body: bytes, location: str = "", content_type: str = "text/html; charset=utf-8") -> None:
         self.send_response(status)
@@ -517,7 +527,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
         raw = self.rfile.read(length) if length else b""
         form = _form_fields(raw, self.headers.get("Content-Type", ""))
-        if method == "POST" and not self._post_allowed(form):
+        if method == "GET" and path == "/progress":
+            if not self._request_allowed(self._presented_token(form)):
+                self._send(403, error_page(REFUSED, token=self.desktop.token).encode("utf-8"))
+                return
+        elif method == "POST" and not self._post_allowed(form):
             self._send(403, self._refused_page(path, form).encode("utf-8"))
             return
         try:

@@ -44,6 +44,9 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert "smoke-{ARCH}-1-first-run.png" in driver
     assert "smoke-{ARCH}-2-search.png" in driver
     assert "smoke-{ARCH}-3-nvda.png" in driver
+    assert "smoke-{ARCH}-4-loading.png" in driver
+    assert "smoke-{ARCH}-5-reduced.png" in driver
+    assert "prefers-reduced-motion" in driver
     tracked = driver + "\n" + workflow
     offenders = [
         match.group(0)
@@ -101,5 +104,7 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
         f"smoke-{driver.ARCH}-1-first-run.png",
         f"smoke-{driver.ARCH}-2-search.png",
         f"smoke-{driver.ARCH}-3-nvda.png",
+        f"smoke-{driver.ARCH}-4-loading.png",
+        f"smoke-{driver.ARCH}-5-reduced.png",
     ):
         assert (tmp_path / name).stat().st_size > 1000

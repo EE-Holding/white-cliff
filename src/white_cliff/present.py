@@ -142,6 +142,10 @@ def _shell(inner: str, *, result: bool = False) -> str:
         ":root { --bg: #ffffff; --ink: #1d1d1f; --ink-2: #3a3a3c; --ink-3: #555559; "
         "--accent: #0a4b8f; --line: #86868b; --hairline: #e6e6e8; --panel: #f5f5f7; "
         "--btn-busy: #3a3a3c; --on-btn: #ffffff; "
+        "--s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; "
+        "--s7: 48px; --s8: 64px; "
+        "--dur-xs: 100ms; --dur-s: 200ms; --dur-m: 300ms; --dur-l: 400ms; "
+        "--spin: 1000ms; --stagger: 60ms; "
         "--ease-standard: cubic-bezier(0.2, 0, 0, 1); "
         "--ease-decel: cubic-bezier(0.05, 0.7, 0.1, 1); "
         "--ease-accel: cubic-bezier(0.3, 0, 0.8, 0.15); }\n"
@@ -174,11 +178,9 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "border: 0; border-radius: 12px; padding: 14px 24px; }\n"
         "button.busy { background: var(--btn-busy); color: var(--on-btn); cursor: progress; }\n"
         "form.pick { margin: 0 0 8px; }\n"
-        "button.choice { display: flex; align-items: center; justify-content: space-between; "
-        "width: 100%; text-align: left; font-weight: 400; background: var(--panel); "
-        "color: var(--ink); border: 2px solid transparent; margin: 0; "
-        "min-height: 56px; padding: 14px 20px; }\n"
-        "button.choice:hover, button.choice:focus-visible { border-color: var(--accent); }\n"
+        "button.choice { display: block; width: 100%; text-align: left; font-weight: 400; "
+        "background: var(--bg); color: var(--ink); border: 2px solid var(--line); margin: 0; "
+        "min-height: 56px; padding: 14px 24px; }\n"
         ".steps { background: var(--panel); border-radius: 16px; padding: 24px; "
         "margin-top: 24px; max-width: 100%; }\n"
         ".steps.open { animation: enter 200ms var(--ease-decel) both; }\n"
@@ -193,7 +195,7 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "li.done .step-label { color: var(--ink-2); font-weight: 400; }\n"
         ".mark svg { display: none; }\n"
         "li.waiting .mark-wait, li.active .mark-active, li.done .mark-done { display: block; }\n"
-        ".arc { transform-origin: 14px 14px; animation: spin 1000ms linear infinite; }\n"
+        ".arc { transform-origin: 14px 14px; animation: spin var(--spin) linear infinite; }\n"
         ".mark-active .dot { display: none; }\n"
         ".done-fill { opacity: 0; animation: fillin 200ms var(--ease-standard) forwards; }\n"
         ".check { stroke-dasharray: 18; stroke-dashoffset: 18; "
@@ -211,10 +213,13 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; "
         "text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }\n"
         "a.figure:hover, a.figure:focus-visible { text-decoration-color: var(--accent); }\n"
-        ".figure-block:has(.earlier) .row { grid-template-columns: 1fr; }\n"
-        ".figure-block:has(.earlier) a.figure { justify-self: start; text-align: left; }\n"
-        ".earlier { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; margin-top: 8px; }\n"
-        ".caption { margin: 0; font-size: 18px; line-height: 27px; color: var(--ink-3); }\n"
+        ".row.compare { grid-template-columns: minmax(0, 1fr) auto minmax(0, 16rem); "
+        "column-gap: 32px; align-items: start; }\n"
+        ".earlier { display: flex; flex-direction: column; gap: 8px; min-width: 0; }\n"
+        ".row.compare .prior, .row.compare a.figure { justify-self: end; text-align: right; }\n"
+        ".row.compare .prior p { overflow-wrap: anywhere; }\n"
+        ".caption { margin: 0 0 4px; font-size: 18px; line-height: 27px; font-weight: 600; "
+        "color: var(--ink-2); }\n"
         ".prior-value, .prior p { margin: 0; font-size: 18px; line-height: 27px; color: var(--ink-2); "
         "font-weight: 400; }\n"
         "a.prior-value { font-size: 21px; line-height: 30px; color: var(--ink-2); "
@@ -253,8 +258,8 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "@media (max-width: 480px) {\n"
         "  .disclaimer, .column { padding-left: 20px; padding-right: 20px; }\n"
         "  h1 { font-size: 32px; line-height: 38px; }\n"
-        "  .row, .earlier { grid-template-columns: 1fr; }\n"
-        "  .earlier { row-gap: 8px; }\n"
+        "  .row, .row.compare { grid-template-columns: 1fr; }\n"
+        "  .row.compare .prior, .row.compare a.figure { text-align: left; justify-self: start; }\n"
         "  a.figure { text-align: left; margin-top: 4px; }\n"
         "}\n"
         "@media (prefers-reduced-motion: reduce) {\n"
@@ -350,16 +355,16 @@ def _shell(inner: str, *, result: bool = False) -> str:
         '        panel.classList.add("open");\n'
         '        if (action === "/pick") reach(2);\n'
         "        else reach(1);\n"
+        "        var tokenInput = form.querySelector('input[name=\"token\"]');\n"
+        '        var progress = "/progress";\n'
+        "        if (tokenInput && tokenInput.value) {\n"
+        '          progress += "?token=" + encodeURIComponent(tokenInput.value);\n'
+        "        }\n"
         "        poll = setInterval(function () {\n"
-        '          fetch("/progress", {cache: "no-store", credentials: "same-origin"})\n'
+        '          fetch(progress, {cache: "no-store", credentials: "same-origin"})\n'
         "            .then(function (response) { return response.json(); })\n"
         "            .then(function (data) {\n"
-        "              if (!data) return;\n"
-        "              if (data.reading) {\n"
-        '                var label = document.querySelector("#steps li[data-step=\\"3\\"] .step-label");\n'
-        "                if (label && label.textContent !== data.reading) label.textContent = data.reading;\n"
-        "              }\n"
-        "              if (data.step) reach(data.step);\n"
+        "              if (data && data.step) reach(data.step);\n"
         "            })\n"
         "            .catch(function () {});\n"
         "        }, 400);\n"
@@ -480,20 +485,20 @@ def _indicator() -> str:
 
 
 def _steps_panel() -> str:
-    def item(number: int, text: str) -> str:
+    def item(number: int, text: str, template: str) -> str:
         return (
             f'<li class="waiting" data-step="{number}">'
             + _indicator()
-            + f'<span class="step-label">{html.escape(text)}</span></li>'
+            + f'<span class="step-label" data-template="{template}">{html.escape(text)}</span></li>'
         )
 
     return (
         '<div class="steps" id="steps" hidden role="status">\n'
         f'<p class="steps-title">{html.escape(LOOKING)}</p>\n'
         "<ol>\n"
-        + item(1, FINDING)
-        + item(2, FILING_LIST)
-        + item(3, READING)
+        + item(1, FINDING, "FINDING")
+        + item(2, FILING_LIST, "FILING_LIST")
+        + item(3, READING_PRIOR, "READING_PRIOR")
         + "</ol>\n"
         '<p class="sr" id="step-live" aria-live="polite"></p>\n'
         "</div>\n"
@@ -658,11 +663,9 @@ def choices_page(
             + _hidden(token)
             + '<button class="choice" type="submit" name="cik" value="'
             + cik
-            + '"><span>'
+            + '">'
             + label
-            + '</span><svg class="chevron" aria-hidden="true" width="20" height="20" viewBox="0 0 20 20">'
-            + '<path d="M7 4l6 6-6 6" fill="none" stroke="#3a3a3c" stroke-width="2.5" '
-            + 'stroke-linecap="round" stroke-linejoin="round"></path></svg></button>\n'
+            + "</button>\n"
             + "</form>\n"
         )
     body = f'<p class="notice">{html.escape(heading)}</p>\n' + "".join(buttons)
@@ -683,6 +686,31 @@ def _anchor_from_href(href: str) -> str:
         if token in fragment:
             return fragment.split(token, 1)[1].split("&", 1)[0]
     return ""
+
+
+def _split_earlier(after: str) -> tuple[str, str]:
+    marker = '<div class="earlier">'
+    start = after.find(marker)
+    if start < 0:
+        return "", after
+    inner_at = start + len(marker)
+    depth = 1
+    index = inner_at
+    while index < len(after) and depth:
+        if after.startswith("<div", index):
+            depth += 1
+            index += 4
+            continue
+        if after.startswith("</div>", index):
+            depth -= 1
+            if depth == 0:
+                inner = after[inner_at:index]
+                end = index + len("</div>")
+                return inner, after[:start] + after[end:]
+            index += 6
+            continue
+        index += 1
+    return "", after
 
 
 def _rows(explained_html: str, additions=None) -> str:
@@ -711,14 +739,19 @@ def _rows(explained_html: str, additions=None) -> str:
                     f'<button type="button" class="tap" aria-expanded="false" '
                     f'aria-controls="{control}">Explain</button>'
                 )
+        earlier, rest = _split_earlier(after)
+        kind = " compare" if earlier else ""
+        if earlier:
+            earlier = f'<div class="earlier">{earlier}</div>'
         rows.append(
             before
             + '<div class="figure-block">'
-            + '<div class="row">'
+            + f'<div class="row{kind}">'
             + f'<span>{html.escape(label)}</span>'
             + f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
+            + earlier
             + "</div>\n"
-            + after
+            + rest
             + button
             + "</div>\n"
         )

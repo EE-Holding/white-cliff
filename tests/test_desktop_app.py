@@ -1365,8 +1365,22 @@ class _FirstQuarterTransport:
 
 
 def test_step_labels_name_an_earlier_quarter_only_when_it_is_fetched(monkeypatch, tmp_path):
-    nvidia = _NvidiaTransport()
+    holder: dict[str, Desktop] = {}
+
+    class _Watching(_NvidiaTransport):
+        def __call__(self, url, user_agent):
+            app = holder["app"]
+            if url.endswith("/files/company_tickers.json"):
+                assert app.step_n == 1
+            elif "/submissions/" in url:
+                assert app.step_n == 2
+            elif url.endswith(".htm"):
+                assert app.step_n == 3
+            return super().__call__(url, user_agent)
+
+    nvidia = _Watching()
     app = _app(monkeypatch, tmp_path, nvidia)
+    holder["app"] = app
     app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
     app.handle("POST", "/explain", {"query": "NVDA"})
     assert app.steps == [
@@ -1376,8 +1390,8 @@ def test_step_labels_name_an_earlier_quarter_only_when_it_is_fetched(monkeypatch
     ]
     progress = app.handle("GET", "/progress", {})
     reported = json.loads(progress.body)
+    assert list(reported) == ["step"]
     assert reported["step"] == 3
-    assert reported["reading"] == "Reading the filing and the earlier quarter"
     assert progress.content_type.startswith("application/json")
     assert any(url.endswith("nvda-20260426.htm") for url, _user_agent in nvidia.calls)
 
@@ -1401,6 +1415,48 @@ def test_step_labels_name_an_earlier_quarter_only_when_it_is_fetched(monkeypatch
         "Reading the filing",
     ]
     assert not any(url.endswith("prior.htm") for url in first.calls)
+
+
+def test_progress_refuses_a_missing_or_wrong_token_and_a_cross_origin_request(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    server = make_server(app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    try:
+        status, _, body = _exchange(port, "GET", "/")
+        assert status == 200
+        match = re.search(r'name="token" value="([^"]*)"', body.decode("utf-8"))
+        assert match
+        token = match.group(1)
+
+        def progress(path, headers):
+            return _exchange(port, "GET", path, headers=headers)
+
+        same = {"Origin": origin, "Sec-Fetch-Site": "same-origin", "Referer": origin + "/"}
+        missing, _, missing_body = progress("/progress", same)
+        assert missing == 403
+        assert not missing_body.startswith(b"{")
+        wrong, _, _ = progress("/progress?token=wrong-token", same)
+        assert wrong == 403
+        quoted = urllib.parse.quote(token, safe="")
+        cross, _, cross_body = progress(
+            "/progress?token=" + quoted,
+            {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+        )
+        assert cross == 403
+        assert REFUSED.encode("utf-8") in cross_body
+        assert not cross_body.lstrip().startswith(b"{")
+        code, fields, payload = progress("/progress?token=" + quoted, same)
+        assert code == 200
+        assert fields["cache-control"] == "no-store"
+        assert fields["content-type"].startswith("application/json")
+        assert json.loads(payload) == {"step": 0}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_nvidia_lookup_reads_the_nvidia_filing(monkeypatch, tmp_path):

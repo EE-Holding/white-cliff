@@ -290,6 +290,33 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
         raise PageError(f"{selector} showed {value!r}")
 
 
+def _loading(page: DevTools) -> bool:
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const panel = document.getElementById("steps");
+          if (!panel || panel.hidden) return false;
+          const items = Array.from(panel.querySelectorAll("li"));
+          const active = items.filter((item) => item.className === "active").length;
+          const done = items.filter((item) => item.className === "done").length;
+          return active === 1 && done >= 1;
+        })()
+        """,
+    )
+    return raw is True
+
+
+def _reduced_motion(page: DevTools) -> None:
+    page.call(
+        "Emulation.setEmulatedMedia",
+        {"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]},
+    )
+    matched = _eval(page, "window.matchMedia('(prefers-reduced-motion: reduce)').matches")
+    if matched is not True:
+        raise PageError("reduced motion was not emulated")
+
+
 def _state(page: DevTools) -> dict:
     raw = _eval(
         page,
@@ -395,26 +422,20 @@ def drive(
         _shot(page, out_dir, f"smoke-{ARCH}-2-search.png")
         _fill(page, "#query", query)
         _click(page, 'form[action="/explain"] button')
-        deadline = time.time() + 180
-        last = ""
-        while time.time() < deadline:
-            try:
-                state = _state(page)
-            except PageError:
-                time.sleep(0.2)
-                continue
-            last = state.get("text") or ""
-            if state.get("failure"):
-                _shot(page, out_dir, f"smoke-{ARCH}-3-nvda.png")
-                raise PageError(state["failure"])
-            figures = state.get("figures") or []
-            if heading in last and any(figure.endswith(suffix) for figure in figures):
-                _shot(page, out_dir, f"smoke-{ARCH}-3-nvda.png")
-                print(f"result {heading} with a figure ending in {suffix}", flush=True)
-                return
-            time.sleep(0.4)
-        _shot(page, out_dir, f"smoke-{ARCH}-3-nvda.png")
-        raise PageError(last[:800] or "the result page did not appear")
+        _wait_result(page, out_dir, heading, suffix, loading=True)
+        _reduced_motion(page)
+        _eval(page, "document.documentElement.dataset.shot = 'old'")
+        _fill(page, "#query", query)
+        _click(page, 'form[action="/explain"] button')
+        _wait_result(
+            page,
+            out_dir,
+            heading,
+            suffix,
+            loading=False,
+            fresh=True,
+            shot_name=f"smoke-{ARCH}-5-reduced.png",
+        )
     finally:
         page.close()
         if chrome.poll() is None:
@@ -423,6 +444,62 @@ def drive(
                 chrome.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 os.killpg(chrome.pid, signal.SIGKILL)
+
+
+def _wait_result(
+    page,
+    out_dir,
+    heading,
+    suffix,
+    *,
+    loading: bool,
+    fresh: bool = False,
+    shot_name: str = "",
+) -> None:
+    deadline = time.time() + 180
+    last = ""
+    saw_loading = not loading
+    replaced = not fresh
+    while time.time() < deadline:
+        if fresh and not replaced:
+            try:
+                replaced = _eval(page, "document.documentElement.dataset.shot || ''") != "old"
+            except PageError:
+                replaced = False
+            if not replaced:
+                time.sleep(0.05)
+                continue
+        if loading and not saw_loading:
+            try:
+                if _loading(page):
+                    _shot(page, out_dir, f"smoke-{ARCH}-4-loading.png")
+                    saw_loading = True
+            except PageError:
+                pass
+        try:
+            state = _state(page)
+        except PageError:
+            time.sleep(0.05)
+            continue
+        last = state.get("text") or ""
+        if state.get("failure"):
+            _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
+            raise PageError(state["failure"])
+        figures = state.get("figures") or []
+        if heading in last and any(figure.endswith(suffix) for figure in figures):
+            if loading and not saw_loading:
+                raise PageError("the loading steps were not shown")
+            time.sleep(0.9)
+            try:
+                _eval(page, "window.scrollTo(0, 0)")
+            except PageError:
+                pass
+            _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
+            print(f"result {heading} with a figure ending in {suffix}", flush=True)
+            return
+        time.sleep(0.05)
+    _shot(page, out_dir, shot_name or f"smoke-{ARCH}-3-nvda.png")
+    raise PageError(last[:800] or "the result page did not appear")
 
 
 def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
