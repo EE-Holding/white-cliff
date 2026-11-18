@@ -22,7 +22,7 @@ Apple's guide says the Open Anyway button is there for about an hour after you t
 
 The exact warning words differ by macOS version. The current path is System Settings, Privacy & Security, and Open Anyway. On macOS Sonoma and earlier, Control-click and Open was another path. On the current macOS, use Open Anyway.
 
-After this, double-clicking White Cliff opens it. Your browser shows a private page on this computer. Close that tab and White Cliff quits.
+After this, double-clicking White Cliff opens it. Your browser shows a private page on this computer. Opening White Cliff again opens the page that is already running. The page closes after 30 minutes with no use.
 
 ## Windows
 
@@ -30,7 +30,7 @@ Double-click White Cliff.exe.
 
 Windows shows a blue window titled "Windows protected your PC". Click More info. The window names the program and says Unknown publisher. Click Run anyway.
 
-Your browser shows a private page on this computer. Close that tab and White Cliff quits.
+Your browser shows a private page on this computer. Opening White Cliff again opens the page that is already running. The page closes after 30 minutes with no use.
 
 If Smart App Control is turned on, the window can say the app was blocked and show no Run anyway button. The More info path above is the usual SmartScreen window.
 

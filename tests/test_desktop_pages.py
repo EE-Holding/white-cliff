@@ -18,10 +18,12 @@ from white_cliff.desktop_copy import (
     SEC_ODD,
     SEC_WHY,
     SEVERAL,
+    WHAT_SAVE,
+    WHAT_SEARCH,
 )
 from white_cliff.disclaimer import ensure_safe_output
 from white_cliff.pipeline import explain_filing, load_directory
-from white_cliff.present import error_page, result_page
+from white_cliff.present import error_page, plain_report, result_page, search_page, shown_amount
 from white_cliff.render import markdown_figure_ids
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +34,19 @@ EXACT_WHY = (
     "and sends them only to sec.gov, with each request. We never see them. "
     "You can change or erase them at any time."
 )
-PLAIN = (NO_INTERNET, NO_MATCH, NO_10KQ, BUSY, CANNOT_EXPLAIN, ENTER_BOTH, SEC_ODD, CLOSE_INTRO, SEVERAL)
+PLAIN = (
+    NO_INTERNET,
+    NO_MATCH,
+    NO_10KQ,
+    BUSY,
+    CANNOT_EXPLAIN,
+    ENTER_BOTH,
+    SEC_ODD,
+    CLOSE_INTRO,
+    SEVERAL,
+    WHAT_SEARCH,
+    WHAT_SAVE,
+)
 
 
 def _visible(page: str) -> str:
@@ -83,10 +97,15 @@ def test_pinned_explanations_match_and_keep_the_guard():
         )
         ensure_safe_output(page)
         assert page.find(DISCLAIMER) < page.find("font-size")
-        assert "font-size: 22px" in page
-        assert "#111111" in page
+        assert "font-size: 21px" in page
+        assert "font-size: 24px" in page
+        assert "#1d1d1f" in page
         assert "#ffffff" in page
-        assert _page_figures(page) == _figures(explained.markdown)
+        assert [href for _text, href in _page_figures(page)] == [
+            href for _label, href in _figures(explained.markdown)
+        ]
+        shown = [html.unescape(item) for item in re.findall(r"<data[^>]*>(.*?)</data>", explained.html)]
+        assert [text for text, _href in _page_figures(page)] == [shown_amount(item) for item in shown]
         assert advice_reason(_visible(page), filing.text) is None
         assert "github.com" not in page
         assert "Traceback" not in page
@@ -96,7 +115,9 @@ def test_pinned_explanations_match_and_keep_the_guard():
                 continue
             assert urlsplit(target).hostname in {"www.sec.gov", "data.sec.gov"}
         if filing.form in {"10-K", "10-Q"} and filing.url.startswith("https://www.sec.gov/"):
-            assert filing.form in page
+            line = plain_report(filing.form, filing.period_end or "")
+            assert line in page
+            assert filing.form not in page
             assert filing.url in page or html.escape(filing.url, quote=True) in page
 
 
@@ -113,8 +134,15 @@ def test_how_to_open_says_the_first_lookup_is_live():
 
 
 def test_error_page_is_the_sentence():
-    page = error_page(CANNOT_EXPLAIN)
+    page = error_page(CANNOT_EXPLAIN, token="abc", query="NVDA")
     ensure_safe_output(page)
     assert CANNOT_EXPLAIN in page
+    assert 'class="failure"' in page
+    assert 'value="NVDA"' in page
+    assert WHAT_SEARCH in page
     assert "Traceback" not in page
     assert advice_reason(_visible(page)) is None
+    fresh = search_page(token="abc")
+    assert 'class="failure"' not in fresh
+    assert ".submit(" not in page
+    assert "requestSubmit" not in page

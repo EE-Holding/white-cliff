@@ -2,22 +2,116 @@
 
 from __future__ import annotations
 
+import calendar
 import html
 import re
+from datetime import date
 from typing import Sequence
 
-from white_cliff.desktop_copy import DISCLAIMER, ENTER_BOTH, SEC_WHY
+from white_cliff.desktop_copy import (
+    BUSY,
+    CLOSED,
+    DISCLAIMER,
+    EMPTY_QUERY,
+    ENTER_BOTH,
+    LOOKING,
+    NO_INTERNET,
+    SEC_ODD,
+    SEC_WHY,
+    WHAT_SAVE,
+    WHAT_SEARCH,
+)
 from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import Explained
 
 _DATA_LINK = re.compile(
-    r'<data\b[^>]*>(.*?)</data>\s*'
-    r'<a class="source-chip"[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
+    r"(.*?)<data\b[^>]*>(.*?)</data>\s*"
+    r'<a class="source-chip"[^>]*href="([^"]*)"[^>]*>.*?</a>',
     re.S,
 )
+_MONEY = re.compile(
+    r"^(-?\d+(?:\.\d+)?)(?:\s+USD)?(?:\s+(millions|thousands|billions))?$",
+    re.I,
+)
+_TAG = re.compile(r"<[^>]+>")
+_SCALE = {
+    "millions": "million",
+    "thousands": "thousand",
+    "billions": "billion",
+}
+
+
+def shown_amount(raw: str) -> str:
+    """The filing amount, with separators and a dollar sign. No new rounding."""
+    text = " ".join(html.unescape(raw).split())
+    match = _MONEY.fullmatch(text)
+    if match is not None:
+        number, scale = match.group(1), match.group(2)
+        shown = _commas(number)
+        if "USD" in text:
+            shown = f"${shown}"
+        if scale:
+            shown = f"{shown} {_SCALE.get(scale.lower(), scale.lower())}"
+        return shown
+    parts = text.split()
+    scale = ""
+    if len(parts) >= 2 and parts[-1].lower() in _SCALE:
+        scale = parts[-1]
+        parts = parts[:-1]
+    if not parts or re.fullmatch(r"-?\d+(?:\.\d+)?", parts[0]) is None:
+        return text
+    shown = _commas(parts[0])
+    if scale:
+        shown = f"{shown} {_SCALE[scale.lower()]}"
+    unit = " ".join(parts[1:])
+    if unit:
+        shown = f"{shown} {unit}"
+    return shown
+
+
+def _commas(number: str) -> str:
+    sign = ""
+    if number.startswith("-"):
+        sign = "-"
+        number = number[1:]
+    whole, dot, frac = number.partition(".")
+    groups: list[str] = []
+    while whole:
+        groups.append(whole[-3:])
+        whole = whole[:-3]
+    body = ",".join(reversed(groups)) or "0"
+    if dot:
+        body = f"{body}.{frac}"
+    return sign + body
+
+
+def _plain_date(iso: str) -> str:
+    try:
+        year, month, day = (int(part) for part in str(iso).split("-"))
+        when = date(year, month, day)
+    except (TypeError, ValueError):
+        return ""
+    return f"{calendar.month_name[when.month]} {when.day}, {when.year}"
+
+
+def plain_report(form: str, period: str) -> str:
+    when = _plain_date(period)
+    if form == "10-Q":
+        if when:
+            return f"Quarterly report for the three months ended {when}."
+        return "Quarterly report."
+    if form == "10-K":
+        if when:
+            return f"Annual report for the year ended {when}."
+        return "Annual report."
+    if when:
+        return f"Report for the period ended {when}."
+    return ""
 
 
 def _shell(inner: str) -> str:
+    closed = html.escape(CLOSED, quote=True)
+    looking = html.escape(LOOKING, quote=True)
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -27,22 +121,101 @@ def _shell(inner: str) -> str:
         "<body>\n"
         f'<p class="disclaimer">{DISCLAIMER}</p>\n'
         "<style>\n"
-        "body { font-family: system-ui, sans-serif; font-size: 22px; line-height: 1.6; "
-        "color: #111111; background: #ffffff; margin: 1.5rem; }\n"
-        "p, label { margin: 1rem 0; }\n"
-        "input, button { font: inherit; font-size: 22px; padding: 0.6rem; }\n"
-        "a { color: #082567; }\n"
-        "button { margin: 0.4rem 0.4rem 0.4rem 0; }\n"
+        "body { margin: 0; background: #ffffff; color: #1d1d1f; "
+        'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; '
+        "font-size: 21px; line-height: 1.5; }\n"
+        ".disclaimer, .column { max-width: 640px; margin-left: auto; margin-right: auto; "
+        "padding-left: 1.5rem; padding-right: 1.5rem; }\n"
+        ".disclaimer { margin-top: 4.5rem; margin-bottom: 0; color: #3a3a3c; "
+        "font-size: 18px; line-height: 1.5; }\n"
+        ".column { padding-top: 2.5rem; padding-bottom: 5rem; }\n"
+        "h1 { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; "
+        "margin: 0 0 0.35rem; }\n"
+        ".quiet { color: #3a3a3c; margin: 0 0 2rem; }\n"
+        ".notice { margin: 0 0 1rem; }\n"
+        ".failure { background: #f4f4f6; border-radius: 16px; "
+        "padding: 1.25rem 1.4rem; margin: 0 0 1.75rem; }\n"
+        ".failure .notice { font-size: 21px; margin: 0; }\n"
+        ".failure .next { margin: 0.75rem 0 0; color: #3a3a3c; }\n"
+        "label { display: block; margin: 0 0 0.6rem; }\n"
+        "input { font: inherit; font-size: 24px; width: 100%; box-sizing: border-box; "
+        "padding: 0.85rem 1rem; border: 1px solid #d2d2d7; border-radius: 12px; "
+        "color: #1d1d1f; background: #ffffff; }\n"
+        "button { font: inherit; font-size: 21px; margin-top: 1rem; "
+        "background: #1d1d1f; color: #ffffff; border: 0; border-radius: 12px; "
+        "padding: 0.85rem 1.4rem; }\n"
+        "button:disabled { opacity: 0.55; }\n"
+        "button.choice { display: block; width: 100%; text-align: left; "
+        "background: #ffffff; color: #1d1d1f; border: 1px solid #d2d2d7; "
+        "margin: 0.6rem 0; }\n"
+        ".progress { height: 2px; background: #e6e6e8; margin: 0.8rem 0 0; overflow: hidden; }\n"
+        ".progress span { display: block; height: 100%; width: 40%; background: #0a4b8f; }\n"
+        ".row { display: flex; justify-content: space-between; gap: 1.5rem; "
+        "padding: 0.9rem 0; border-bottom: 1px solid #e6e6e8; }\n"
+        "a { color: #0a4b8f; }\n"
+        "a.figure { color: #1d1d1f; text-decoration: none; white-space: nowrap; }\n"
+        ".filing { margin-top: 1.5rem; }\n"
+        ".change { margin-top: 4rem; font-size: 16px; }\n"
+        ".change a { color: #3a3a3c; }\n"
         "</style>\n"
+        '<div class="column">\n'
         f"{inner}\n"
-        '<script>setInterval(function(){fetch("/stay",{cache:"no-store"})},2000)</script>\n'
+        "</div>\n"
+        "<script>\n"
+        "(function () {\n"
+        f'  var closed = "{closed}";\n'
+        f'  var looking = "{looking}";\n'
+        "  function say(text) {\n"
+        '    var note = document.getElementById("working");\n'
+        "    if (!note) return;\n"
+        "    note.hidden = false;\n"
+        "    note.textContent = text;\n"
+        "  }\n"
+        '  document.querySelectorAll("form").forEach(function (form) {\n'
+        '    form.addEventListener("submit", function (event) {\n'
+        "      event.preventDefault();\n"
+        '      var button = form.querySelector("button");\n'
+        "      if (button) button.disabled = true;\n"
+        '      var bar = document.getElementById("progress");\n'
+        "      if (bar) bar.hidden = false;\n"
+        "      say(looking);\n"
+        "      fetch(form.action, {\n"
+        '        method: "POST",\n'
+        "        body: new FormData(form),\n"
+        '        credentials: "same-origin",\n'
+        '        redirect: "manual",\n'
+        '        cache: "no-store"\n'
+        "      }).then(function (response) {\n"
+        '        if (response.type === "opaqueredirect" || response.status === 303 || response.status === 302) {\n'
+        '          window.location.assign("/");\n'
+        "          return;\n"
+        "        }\n"
+        "        return response.text().then(function (html) {\n"
+        "          document.open();\n"
+        "          document.write(html);\n"
+        "          document.close();\n"
+        "        });\n"
+        "      }).catch(function () {\n"
+        "        if (button) button.disabled = false;\n"
+        "        if (bar) bar.hidden = true;\n"
+        "        say(closed);\n"
+        "      });\n"
+        "    });\n"
+        "  });\n"
+        "  setInterval(function () {\n"
+        '    fetch("/stay", {cache: "no-store", credentials: "same-origin"}).catch(function () {\n'
+        "      say(closed);\n"
+        "    });\n"
+        "  }, 2000);\n"
+        "})();\n"
+        "</script>\n"
         "</body>\n"
         "</html>\n"
     )
 
 
 def _change_link() -> str:
-    return '<p><a href="/identity">Change my name and email</a></p>\n'
+    return '<p class="change"><a href="/identity">Change my name and email</a></p>\n'
 
 
 def _hidden(token: str) -> str:
@@ -52,59 +225,123 @@ def _hidden(token: str) -> str:
     return f'<input type="hidden" name="token" value="{safe}">\n'
 
 
-def _search_form(token: str = "") -> str:
+_STATED = {NO_INTERNET, BUSY, SEC_ODD, EMPTY_QUERY, ENTER_BOTH}
+
+
+def _notice(sentence: str, nxt: str = "") -> str:
+    if not sentence:
+        return '<p class="notice" id="working" hidden></p>\n'
+    extra = ""
+    if sentence not in _STATED and nxt:
+        extra = f'<p class="next">{html.escape(nxt)}</p>\n'
+    return (
+        '<div class="failure">\n'
+        f'<p class="notice" id="working">{html.escape(sentence)}</p>\n'
+        + extra
+        + "</div>\n"
+    )
+
+
+def _progress() -> str:
+    return '<div class="progress" id="progress" hidden><span></span></div>\n'
+
+
+def _value(text: str) -> str:
+    if not text:
+        return ""
+    return f' value="{html.escape(text, quote=True)}"'
+
+
+def _search_form(
+    token: str = "",
+    notice: str = "",
+    *,
+    focus: bool = True,
+    query: str = "",
+) -> str:
+    auto = " autofocus" if focus else ""
     return (
         '<form method="post" action="/explain">\n'
         + _hidden(token)
+        + _notice(notice, WHAT_SEARCH)
+        + _progress()
         + '<p><label for="query">Company name or ticker</label></p>\n'
-        '<p><input id="query" name="query" autocomplete="off"></p>\n'
-        '<p><button type="submit">Explain</button></p>\n'
-        "</form>\n"
+        + f'<p><input id="query" name="query" autocomplete="off"{_value(query)}{auto}></p>\n'
+        + '<p><button type="submit">Explain</button></p>\n'
+        + "</form>\n"
     )
 
 
-def _identity_form(token: str = "") -> str:
+def _identity_form(
+    token: str = "",
+    notice: str = "",
+    *,
+    name: str = "",
+    email: str = "",
+) -> str:
     return (
         '<form method="post" action="/identity">\n'
         + _hidden(token)
+        + _notice(notice, WHAT_SAVE)
+        + _progress()
         + '<p><label for="name">Your name</label></p>\n'
-        '<p><input id="name" name="name" autocomplete="name"></p>\n'
-        '<p><label for="email">Your email</label></p>\n'
-        '<p><input id="email" name="email" type="email" autocomplete="email"></p>\n'
-        '<p><button type="submit">Save</button></p>\n'
-        "</form>\n"
+        + f'<p><input id="name" name="name" autocomplete="name" autofocus{_value(name)}></p>\n'
+        + '<p><label for="email">Your email</label></p>\n'
+        + f'<p><input id="email" name="email" type="email" autocomplete="email"{_value(email)}></p>\n'
+        + '<p><button type="submit">Save</button></p>\n'
+        + "</form>\n"
     )
 
 
-def first_run_page(*, rejected: bool = False, token: str = "") -> str:
-    note = f"<p>{ENTER_BOTH}</p>\n" if rejected else ""
-    return _shell(note + f"<p>{html.escape(SEC_WHY)}</p>\n" + _identity_form(token))
+def first_run_page(
+    *,
+    rejected: bool = False,
+    token: str = "",
+    name: str = "",
+    email: str = "",
+    notice: str = "",
+) -> str:
+    note = notice or (ENTER_BOTH if rejected else "")
+    return _shell(
+        f"<p>{html.escape(SEC_WHY)}</p>\n"
+        + _identity_form(token, note, name=name, email=email)
+    )
 
 
-def edit_page(token: str = "") -> str:
+def edit_page(
+    token: str = "",
+    *,
+    name: str = "",
+    email: str = "",
+    notice: str = "",
+) -> str:
     erase = (
         '<form method="post" action="/identity/erase">\n'
         + _hidden(token)
         + '<p><button type="submit">Erase</button></p>\n'
-        "</form>\n"
+        + "</form>\n"
     )
-    back = '<p><a href="/">Company name or ticker</a></p>\n'
-    return _shell(f"<p>{html.escape(SEC_WHY)}</p>\n" + _identity_form(token) + erase + back)
+    return _shell(
+        f"<p>{html.escape(SEC_WHY)}</p>\n"
+        + _identity_form(token, notice, name=name, email=email)
+        + erase
+        + _change_link()
+    )
 
 
 def search_page(token: str = "") -> str:
-    return _shell(_change_link() + _search_form(token))
+    return _shell(_search_form(token) + _change_link())
 
 
-def error_page(sentence: str, token: str = "") -> str:
-    return _shell(f"<p>{html.escape(sentence)}</p>\n" + _change_link() + _search_form(token))
+def error_page(sentence: str, token: str = "", query: str = "") -> str:
+    return _shell(_search_form(token, notice=sentence, query=query) + _change_link())
 
 
 def _choice_label(company: object) -> str:
     title = str(getattr(company, "title", "") or "")
     ticker = str(getattr(company, "ticker", "") or "")
     cik = str(getattr(company, "cik", "") or "")
-    shown = acceptable_name(f"{title} ({ticker})")
+    shown = acceptable_name(title)
     if shown is None:
         shown = acceptable_name(f"{ticker} {cik}")
     if shown is None:
@@ -114,7 +351,12 @@ def _choice_label(company: object) -> str:
     return shown
 
 
-def choices_page(heading: str, companies: Sequence[object], token: str = "") -> str:
+def choices_page(
+    heading: str,
+    companies: Sequence[object],
+    token: str = "",
+    query: str = "",
+) -> str:
     buttons: list[str] = []
     for company in companies:
         label = html.escape(_choice_label(company))
@@ -122,45 +364,50 @@ def choices_page(heading: str, companies: Sequence[object], token: str = "") -> 
         buttons.append(
             '<form method="post" action="/pick">\n'
             + _hidden(token)
-            + f'<p><button type="submit" name="cik" value="{cik}">{label}</button></p>\n'
-            "</form>\n"
+            + f'<p><button class="choice" type="submit" name="cik" value="{cik}">{label}</button></p>\n'
+            + "</form>\n"
         )
-    body = f"<p>{html.escape(heading)}</p>\n" + "".join(buttons)
-    return _shell(body + _change_link() + _search_form(token))
+    body = f'<p class="notice">{html.escape(heading)}</p>\n' + "".join(buttons)
+    return _shell(body + _search_form(token, focus=False, query=query) + _change_link())
 
 
-def _link_numbers(page: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        label, href, title = match.group(1), match.group(2), match.group(3)
-        return f'<a class="figure" href="{href}">{label}</a> {title}'
+def _plain_label(lead: str) -> str:
+    text = " ".join(_TAG.sub(" ", html.unescape(lead)).split())
+    text = re.sub(r"\s+was$", "", text)
+    text = re.sub(r"\s+for the (fiscal year|quarter)$", "", text)
+    return text.strip()
 
-    return _DATA_LINK.sub(replace, page)
 
-
-def _explanation_body(explained_html: str) -> str:
-    transformed = _link_numbers(explained_html)
-    parts = re.findall(r"<p\b[^>]*>.*?</p>", transformed, flags=re.I | re.S)
-    kept: list[str] = []
-    for part in parts:
+def _rows(explained_html: str) -> str:
+    rows: list[str] = []
+    for part in re.findall(r"<p\b[^>]*>.*?</p>", explained_html, flags=re.I | re.S):
         if 'class="disclaimer"' in part or "github.com" in part or "Report an error" in part:
             continue
-        kept.append(part)
-    return "\n".join(kept)
+        match = _DATA_LINK.search(part)
+        if match is None:
+            continue
+        label = _plain_label(match.group(1))
+        amount = shown_amount(match.group(2))
+        href = html.escape(html.unescape(match.group(3)), quote=True)
+        if not label:
+            continue
+        rows.append(
+            '<div class="row">'
+            f'<span>{html.escape(label)}</span>'
+            f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
+            "</div>\n"
+        )
+    return "".join(rows)
 
 
-def _filing_line(form: str, period: str, filed: str, url: str) -> str:
-    bits = [form] if form else []
-    if period:
-        bits.append("period ended " + period)
-    if filed:
-        bits.append("filed " + filed)
-    label = ", ".join(bits)
-    if url.startswith("https://www.sec.gov/") or url.startswith("https://data.sec.gov/"):
-        href = html.escape(url, quote=True)
-        return f'<p><a href="{href}">{html.escape(label)}</a></p>\n'
-    if not label:
+def _company_name(explained_html: str, company: str) -> str:
+    chosen = acceptable_name(company.strip()) if company else None
+    if chosen:
+        return chosen
+    match = re.search(r'<a class="registrant-chip"[^>]*>(.*?)</a>', explained_html, re.S)
+    if match is None:
         return ""
-    return f"<p>{html.escape(label)}</p>\n"
+    return acceptable_name(html.unescape(_TAG.sub("", match.group(1))).strip()) or ""
 
 
 def result_page(
@@ -171,11 +418,16 @@ def result_page(
     filed: str,
     url: str,
     token: str = "",
+    company: str = "",
 ) -> str:
-    inner = (
-        _change_link()
-        + _search_form(token)
-        + _filing_line(form, period, filed, url)
-        + _explanation_body(explained.html)
-    )
+    del filed
+    name = _company_name(explained.html, company)
+    heading = f"<h1>{html.escape(name)}</h1>\n" if name else ""
+    line = plain_report(form, period)
+    quiet = f'<p class="quiet">{html.escape(line)}</p>\n' if line else ""
+    filing = ""
+    if url.startswith("https://www.sec.gov/") or url.startswith("https://data.sec.gov/"):
+        href = html.escape(url, quote=True)
+        filing = f'<p class="filing"><a href="{href}">The filing</a></p>\n'
+    inner = heading + quiet + _rows(explained.html) + filing + _search_form(token, focus=False) + _change_link()
     return _shell(inner)

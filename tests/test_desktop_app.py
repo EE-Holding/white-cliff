@@ -3,6 +3,7 @@
 import html
 import http.client
 import json
+import os
 import re
 import threading
 import urllib.parse
@@ -23,7 +24,7 @@ from white_cliff.desktop_copy import (
     SEC_WHY,
     SEVERAL,
 )
-from white_cliff.desktop_main import run_until_closed
+from white_cliff.desktop_main import Instance, pid_alive, read_instance, run_until_closed
 from white_cliff.disclaimer import OutputRefused
 from white_cliff.identity import app_data_dir, cache_dir
 from white_cliff.pipeline import explain_filing, load_directory
@@ -50,7 +51,7 @@ def _no_live_network(monkeypatch):
 
 def _home(monkeypatch, tmp_path):
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
@@ -155,7 +156,8 @@ def test_details_file_is_only_in_app_data_and_user_agent_matches(monkeypatch, tm
     assert cache_hits == []
     explained = explain_filing(load_directory(PINNED))
     assert "478834 USD millions" in explained.markdown
-    assert "478834 USD millions" in page.body
+    assert "$478,834 million" in page.body
+    assert "https://www.sec.gov/" in page.body
 
 
 def test_erase_returns_to_first_run_and_sends_nothing(monkeypatch, tmp_path):
@@ -199,7 +201,8 @@ def test_plain_failures(monkeypatch, tmp_path):
     close = app.handle("POST", "/explain", {"query": "Microsft"})
     assert "No exact match. These names are on the SEC list." in close.body
     assert "MICROSOFT CORP" in close.body
-    assert "Microsft" not in close.body
+    assert 'value="Microsft"' in close.body
+    assert ">Microsft<" not in close.body
 
     several = app.handle("POST", "/explain", {"query": "Apple"})
     assert SEVERAL in several.body
@@ -235,11 +238,13 @@ def test_pipeline_refusal_hides_the_traceback(monkeypatch, tmp_path):
     assert EMAIL not in page.body
 
 
-def test_rejected_identity_is_not_echoed(monkeypatch, tmp_path):
+def test_rejected_identity_keeps_what_was_typed(monkeypatch, tmp_path):
     app = _app(monkeypatch, tmp_path)
     page = app.handle("POST", "/identity", {"name": "A", "email": "not-an-email"})
-    assert "not-an-email" not in page.body
+    assert 'value="A"' in page.body
+    assert 'value="not-an-email"' in page.body
     assert "Enter your name and a full email address." in page.body
+    assert 'class="failure"' in page.body
     assert not (app_data_dir() / "identity.json").exists()
 
 
@@ -247,9 +252,10 @@ def test_numbers_screen_starts_with_the_disclaimer(monkeypatch, tmp_path):
     app = _app(monkeypatch, tmp_path)
     app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
     page = app.handle("POST", "/explain", {"query": "AAPL"})
-    assert page.body.find(DISCLAIMER) < page.body.find("10-K")
-    assert "period ended 2026-09-26" in page.body
-    assert "filed 2026-10-31" in page.body
+    assert page.body.find(DISCLAIMER) < page.body.find("Annual report")
+    assert "Annual report for the year ended September 26, 2026." in page.body
+    assert "10-K" not in page.body
+    assert "filed 2026-10-31" not in page.body
     assert html.escape(DOC, quote=True) in page.body or DOC in page.body
 
 
@@ -332,12 +338,10 @@ def test_cross_origin_posts_leave_the_identity_unchanged(monkeypatch, tmp_path):
         assert status == 200
         assert fields["x-frame-options"] == "DENY"
         assert fields["content-security-policy"] == "frame-ancestors 'none'"
-        cookie = fields["set-cookie"]
-        assert "HttpOnly" in cookie
-        assert "SameSite=Strict" in cookie
-        token = cookie.split(";", 1)[0].split("=", 1)[1]
+        assert "set-cookie" not in fields
         match = re.search(r'name="token" value="([^"]*)"', body.decode("utf-8"))
-        assert match and match.group(1) == token
+        assert match
+        token = match.group(1)
 
         def attack(extra, payload=stolen):
             headers = {
@@ -349,7 +353,12 @@ def test_cross_origin_posts_leave_the_identity_unchanged(monkeypatch, tmp_path):
             )
             assert code == 403
             assert REFUSED.encode("utf-8") in attack_body
-            assert b"stolen@example.com" not in attack_body
+            assert b'value="stolen@example.com"' in attack_body
+            assert b'name="name"' in attack_body
+            assert b'name="email"' in attack_body
+            assert token.encode("ascii") in attack_body
+            assert b".submit(" not in attack_body
+            assert b"requestSubmit" not in attack_body
             assert attack_fields["x-frame-options"] == "DENY"
             assert "frame-ancestors 'none'" in attack_fields["content-security-policy"]
             _assert_unchanged(app.identity_file, before)
@@ -426,7 +435,6 @@ def test_cross_origin_posts_leave_the_identity_unchanged(monkeypatch, tmp_path):
                 "Sec-Fetch-Site": "same-origin",
                 "Sec-Fetch-Mode": "navigate",
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Cookie": f"wc={token}",
             },
         )
         assert code == 303
@@ -514,7 +522,9 @@ def test_refused_pick_list_name_falls_back_to_ticker_and_cik(monkeypatch, tmp_pa
     page = app.handle("POST", "/explain", {"query": hostile})
     assert SEVERAL in page.body
     assert hostile not in page.body
-    assert "alert(1)" not in page.body
+    kept = 'value="&lt;script&gt;alert(1)&lt;/script&gt;"'
+    assert kept in page.body
+    assert "alert(1)" not in page.body.replace(kept, "")
     assert "EVIL" in page.body
     assert "0000000099" in page.body
     assert "LONG" in page.body
@@ -553,7 +563,8 @@ def test_an_extra_submission_page_is_read(monkeypatch, tmp_path):
     app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
     page = app.handle("POST", "/explain", {"query": "AAPL"})
     assert any(url.endswith("CIK0000320193-submissions-001.json") for url, _ua in base.calls)
-    assert "10-K" in page.body
+    assert "Annual report for the year ended September 26, 2026." in page.body
+    assert "10-K" not in page.body
     assert "aapl-20260926.htm" in page.body
 
 
@@ -577,3 +588,244 @@ def test_ctrl_c_exits_without_a_traceback():
     code = run_until_closed(server, desktop, sleep=sleep, clock=lambda: 0)
     assert code == 0
     assert server.shut
+
+
+def _serve(app):
+    server = make_server(app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+def _token(port: int) -> str:
+    status, _fields, body = _exchange(port, "GET", "/")
+    assert status == 200
+    match = re.search(r'name="token" value="([^"]*)"', body.decode("utf-8"))
+    assert match
+    return match.group(1)
+
+
+def test_two_instances_on_one_cookie_jar(monkeypatch, tmp_path):
+    left_home = tmp_path / "left"
+    right_home = tmp_path / "right"
+    monkeypatch.setenv("HOME", str(left_home))
+    app_a = _app(monkeypatch, left_home)
+    app_a.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    monkeypatch.setenv("HOME", str(right_home))
+    app_b = _app(monkeypatch, right_home)
+    app_b.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    server_a = _serve(app_a)
+    server_b = _serve(app_b)
+    try:
+        port_a = server_a.server_address[1]
+        port_b = server_b.server_address[1]
+        token_a = _token(port_a)
+        token_b = _token(port_b)
+        jar = f"wc={token_b}"
+        for port, token, other in (
+            (port_a, token_a, token_b),
+            (port_b, token_b, token_a),
+        ):
+            origin = f"http://127.0.0.1:{port}"
+            body = urllib.parse.urlencode({"query": "NVDA", "token": token}).encode("ascii")
+            code, _fields, payload = _exchange(
+                port,
+                "POST",
+                "/explain",
+                body,
+                {
+                    "Origin": origin,
+                    "Sec-Fetch-Site": "same-origin",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Cookie": jar if port == port_a else f"wc={other}",
+                },
+            )
+            assert code == 200
+            assert REFUSED.encode("utf-8") not in payload
+            assert b'value="NVDA"' in payload
+            assert b'class="failure"' in payload
+    finally:
+        server_a.shutdown()
+        server_a.server_close()
+        server_b.shutdown()
+        server_b.server_close()
+
+
+def test_localhost_host_and_origin_and_a_client_with_no_cookies(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    server = _serve(app)
+    try:
+        port = server.server_address[1]
+        status, fields, _body = _exchange(
+            port, "GET", "/", headers={"Host": f"localhost:{port}"}
+        )
+        assert status == 302
+        assert fields["location"] == f"http://127.0.0.1:{port}/"
+        token = _token(port)
+        local = "http://" + "local" + "host:" + str(port)
+        body = urllib.parse.urlencode({"query": "AAPL", "token": token}).encode("ascii")
+        code, response_fields, payload = _exchange(
+            port,
+            "POST",
+            "/explain",
+            body,
+            {
+                "Host": f"localhost:{port}",
+                "Origin": local,
+                "Sec-Fetch-Site": "same-origin",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        assert "set-cookie" not in response_fields
+        assert code == 200
+        assert b"Annual report" in payload
+        assert REFUSED.encode("utf-8") not in payload
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_refused_identity_shows_setup_again(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    server = _serve(app)
+    try:
+        port = server.server_address[1]
+        token = _token(port)
+        typed = urllib.parse.urlencode(
+            {"name": "Ada Example", "email": "ada@example.com", "token": "nope"}
+        ).encode("ascii")
+        code, _fields, payload = _exchange(
+            port,
+            "POST",
+            "/identity",
+            typed,
+            {
+                "Origin": f"http://127.0.0.1:{port}",
+                "Sec-Fetch-Site": "same-origin",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        text = payload.decode("utf-8")
+        assert code == 403
+        assert REFUSED in text
+        assert 'value="Ada Example"' in text
+        assert 'value="ada@example.com"' in text
+        assert f'value="{token}"' in text
+        assert 'action="/identity"' in text
+        assert 'id="query"' not in text
+        assert ".submit(" not in text
+        assert not (app_data_dir() / "identity.json").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_csrf_matrix(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    server = _serve(app)
+    try:
+        port = server.server_address[1]
+        token = _token(port)
+        origins = {
+            "missing": None,
+            "loopback": f"http://127.0.0.1:{port}",
+            "localhost": "http://" + "local" + "host:" + str(port),
+            "null": "null",
+            "evil": "https://evil.example",
+        }
+        sites = ("missing", "same-origin", "same-site", "cross-site")
+        tokens = ("missing", "right", "wrong")
+        refused = 0
+        accepted = 0
+        seen = 0
+        for origin_name, site, token_name in (
+            (origin_name, site, token_name)
+            for origin_name in origins
+            for site in sites
+            for token_name in tokens
+        ):
+            seen += 1
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": "wc=from-the-other-instance",
+            }
+            if origin_name != "missing":
+                headers["Origin"] = origins[origin_name]
+            if site != "missing":
+                headers["Sec-Fetch-Site"] = site
+            fields = {"query": "NVDA"}
+            if token_name == "right":
+                fields["token"] = token
+            elif token_name == "wrong":
+                fields["token"] = "wrong-token"
+            code, _fields, payload = _exchange(
+                port,
+                "POST",
+                "/explain",
+                urllib.parse.urlencode(fields).encode("ascii"),
+                headers,
+            )
+            allowed = (
+                origin_name in {"loopback", "localhost"}
+                and site not in {"same-site", "cross-site"}
+                and token_name == "right"
+            )
+            if allowed:
+                assert code != 403
+                assert REFUSED.encode("utf-8") not in payload
+                accepted += 1
+            else:
+                assert code == 403, (origin_name, site, token_name, code)
+                assert b'value="NVDA"' in payload
+                assert b'class="failure"' in payload
+                refused += 1
+        assert seen == 60
+        assert refused == 56
+        assert accepted == 4
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_dead_instance_does_not_keep_the_port(tmp_path):
+    directory = tmp_path / "slot"
+    directory.mkdir()
+    dead = 2_000_000_000
+    assert pid_alive(dead) is False
+    (directory / "instance.port").write_text(f"{dead} 9\n", encoding="ascii")
+    slot = Instance(directory)
+    owner, url = slot.start_or_url(lambda _port: True, sleep=lambda _seconds: None)
+    assert owner is True
+    assert url is None
+    slot.publish(9)
+    record_pid, record_port = read_instance(directory)
+    assert record_port == 9
+    assert pid_alive(record_pid)
+    quiet = Instance(directory)
+    owner, url = quiet.start_or_url(lambda _port: False, sleep=lambda _seconds: None)
+    assert owner is False
+    assert url is None
+    opened = Instance(tmp_path / "other")
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "instance.port").write_text(
+        f"{os.getpid()} 4321\n", encoding="ascii"
+    )
+    owner, url = opened.start_or_url(
+        lambda port: port == 4321, sleep=lambda _seconds: None
+    )
+    assert owner is False
+    assert url == "http://127.0.0.1:4321/"
+
+
+def test_failures_keep_the_typed_query(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    missing = app.handle("POST", "/explain", {"query": "zzzznomatchqq"})
+    assert 'value="zzzznomatchqq"' in missing.body
+    assert 'class="failure"' in missing.body
+    assert NO_MATCH in missing.body
+    fresh = app.handle("GET", "/", {})
+    assert 'class="failure"' not in fresh.body
+    assert 'id="query" name="query" autocomplete="off" autofocus' in fresh.body

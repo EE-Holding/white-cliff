@@ -25,6 +25,10 @@ SEC_ODD = "sec.gov did not answer. Try again."
 EMPTY_QUERY = "Enter a company name or ticker."
 ONLY_SEC = "White Cliff only contacts sec.gov."
 REFUSED = "White Cliff did not accept that request."
+LOOKING = "Looking this up…"
+CLOSED = "White Cliff has closed. Open it again to keep going."
+WHAT_SEARCH = "Enter a company name or ticker and press Explain."
+WHAT_SAVE = "Enter your name and email and press Save."
 
 __all__ = [
     "BUSY",
@@ -32,7 +36,9 @@ __all__ = [
     "CLOSE_INTRO",
     "DISCLAIMER",
     "EMPTY_QUERY",
+    "CLOSED",
     "ENTER_BOTH",
+    "LOOKING",
     "NO_10KQ",
     "NO_INTERNET",
     "NO_MATCH",
@@ -41,4 +47,6 @@ __all__ = [
     "SEC_ODD",
     "SEC_WHY",
     "SEVERAL",
+    "WHAT_SAVE",
+    "WHAT_SEARCH",
 ]
