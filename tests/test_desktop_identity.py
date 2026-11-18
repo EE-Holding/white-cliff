@@ -1,5 +1,6 @@
 """Name and email stay in the per-user app data file."""
 
+import os
 from pathlib import Path
 
 from white_cliff.identity import app_data_dir, cache_dir, erase_identity, load_identity, save_identity
@@ -76,6 +77,23 @@ def test_missing_or_broken_file_has_no_identity(tmp_path):
     assert load_identity(path) is None
     path.write_text('{"name": "Only"}', encoding="utf-8")
     assert load_identity(path) is None
+
+
+def test_identity_temp_file_is_created_owner_only(tmp_path, monkeypatch):
+    path = tmp_path / "identity.json"
+    modes = []
+    real_open = os.open
+
+    def spy(file, flags, mode=0o777, *, dir_fd=None):
+        if str(file).endswith(".tmp"):
+            modes.append(mode)
+        return real_open(file, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr("white_cliff.identity.os.open", spy)
+    save_identity(path, NAME, EMAIL)
+    assert modes == [0o600]
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert not path.with_suffix(".tmp").exists()
 
 
 def test_rejected_details_are_not_written(tmp_path):

@@ -80,14 +80,27 @@ def save_identity(path: Path, name: str, email: str) -> Identity | None:
     identity = _checked(name, email)
     if identity is None:
         return None
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"name": identity.name, "email": identity.email}, indent=2) + "\n"
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(payload, encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
-    os.chmod(path, 0o600)
+    _write_private(path, payload)
     return identity
+
+
+def _write_private(path: Path, payload: str) -> None:
+    """Create the temp file owner-only, then replace the real file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.chmod(temporary, 0o600)
+        data = payload.encode("utf-8")
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+    finally:
+        os.close(fd)
+    os.replace(temporary, path)
+    os.chmod(path, 0o600)
 
 
 def erase_identity(path: Path) -> None:

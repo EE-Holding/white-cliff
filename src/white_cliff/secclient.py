@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -70,6 +71,39 @@ def _default_transport(url: str, user_agent: str) -> tuple[int, bytes, dict[str,
         return exc.code, body, headers
 
 
+class RateLimiter:
+    """One shared pace for every request in this process."""
+
+    def __init__(self, rate: float = 10, sleep=time.sleep, clock=time.monotonic) -> None:
+        if rate <= 0 or rate > 10:
+            raise ValueError("rate exceeds 10 per second")
+        self.interval = 1.0 / float(rate)
+        self.limit = int(rate)
+        self.sleep = sleep
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._next: float | None = None
+        self._stamps: list[float] = []
+
+    def run(self, fn):
+        """Run fn once this process still has room in the last second."""
+        with self._lock:
+            while True:
+                current = self.clock()
+                self._stamps = [stamp for stamp in self._stamps if current - stamp < 1.0]
+                wait = 0.0
+                if self._next is not None and current < self._next:
+                    wait = self._next - current
+                if len(self._stamps) >= self.limit:
+                    wait = max(wait, 1.0 - (current - self._stamps[0]))
+                if wait > 0:
+                    self.sleep(wait)
+                    continue
+                self._stamps.append(current)
+                self._next = current + self.interval
+                return fn()
+
+
 def _header(headers: dict[str, str], name: str) -> str:
     for key, value in headers.items():
         if key.lower() == name.lower():
@@ -85,6 +119,7 @@ class SecClient:
         sleep=time.sleep,
         clock=time.monotonic,
         rate: float = 10,
+        limiter: RateLimiter | None = None,
     ) -> None:
         if (
             not isinstance(user_agent, str)
@@ -101,6 +136,7 @@ class SecClient:
         self.sleep = sleep
         self.clock = clock
         self.interval = 1.0 / float(rate)
+        self.limiter = limiter
         self._next: float | None = None
 
     def _acquire(self) -> None:
@@ -110,15 +146,23 @@ class SecClient:
             current = self.clock()
         self._next = current + self.interval
 
+    def _request(self, url: str):
+        def once():
+            return self.transport(url, self.user_agent)
+
+        if self.limiter is not None:
+            return self.limiter.run(once)
+        self._acquire()
+        return once()
+
     def get(self, url: str, hops: int = 0) -> bytes:
         if not host_allowed(url):
             raise DisallowedHost()
         delay = 1.0
         waited = 0.0
         for _ in range(6):
-            self._acquire()
             try:
-                status, body, headers = self.transport(url, self.user_agent)
+                status, body, headers = self._request(url)
             except (OSError, TimeoutError):
                 raise SecUnreachable() from None
             if status in _REDIRECTS:

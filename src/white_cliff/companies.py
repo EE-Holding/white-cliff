@@ -11,6 +11,7 @@ from typing import Sequence
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 _ACCESSION = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+_EXTRA_PAGE = re.compile(r"^CIK(\d{10})-submissions-\d{3}\.json$")
 _FORMS = frozenset({"10-K", "10-Q"})
 _SUFFIXES = (
     " incorporated",
@@ -118,8 +119,34 @@ def _ordered(companies: Sequence[Company]) -> tuple[Company, ...]:
     return tuple(rows[:8])
 
 
+def _ticker_key(value: str) -> str:
+    return value.casefold().replace(".", "-")
+
+
+def _collapse(companies: Sequence[Company]) -> tuple[Company, ...]:
+    """One row per CIK, so two share classes of one company show once."""
+    groups: dict[str, list[Company]] = {}
+    order: list[str] = []
+    for company in companies:
+        if company.cik not in groups:
+            groups[company.cik] = []
+            order.append(company.cik)
+        groups[company.cik].append(company)
+    collapsed: list[Company] = []
+    for cik in order:
+        rows = groups[cik]
+        tickers: list[str] = []
+        for row in rows:
+            if row.ticker not in tickers:
+                tickers.append(row.ticker)
+        tickers.sort(key=str.casefold)
+        ticker = "/".join(tickers) if len(tickers) > 1 else tickers[0]
+        collapsed.append(Company(cik=cik, ticker=ticker, title=rows[0].title))
+    return tuple(collapsed)
+
+
 def _one_or_several(companies: Sequence[Company]) -> OneMatch | SeveralMatches:
-    chosen = _ordered(companies)
+    chosen = _ordered(_collapse(companies))
     if len(chosen) == 1:
         return OneMatch(chosen[0])
     return SeveralMatches(chosen)
@@ -147,7 +174,9 @@ def resolve_company(query: str, companies: Sequence[Company]) -> OneMatch | Seve
     if not raw:
         return NoMatch(())
     folded = raw.casefold()
-    ticker_hits = [company for company in companies if company.ticker.casefold() == folded]
+    ticker_hits = [
+        company for company in companies if _ticker_key(company.ticker) == _ticker_key(folded)
+    ]
     if ticker_hits:
         return _one_or_several(ticker_hits)
     norm = normalize_name(raw)
@@ -170,40 +199,88 @@ def resolve_company(query: str, companies: Sequence[Company]) -> OneMatch | Seve
     return NoMatch(_close(raw, companies))
 
 
-def select_latest(payload: dict, cik: str) -> PeriodicFiling | None:
-    recent = {}
+def extra_submission_names(payload: dict, cik: str) -> tuple[str, ...]:
+    """Names of older submission pages for this CIK, and no other company."""
+    digits = "".join(char for char in str(cik) if char.isdigit()).zfill(10)
     filings = payload.get("filings") if isinstance(payload, dict) else None
+    files = filings.get("files") if isinstance(filings, dict) else None
+    if not isinstance(files, list):
+        return ()
+    names: list[str] = []
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        match = _EXTRA_PAGE.fullmatch(name)
+        if match and match.group(1) == digits:
+            names.append(name)
+    return tuple(names)
+
+
+def _recent_map(payload: dict) -> dict:
+    if isinstance(payload.get("form"), list):
+        return payload
+    filings = payload.get("filings")
     if isinstance(filings, dict) and isinstance(filings.get("recent"), dict):
-        recent = filings["recent"]
-    forms = recent.get("form") or []
-    dates = recent.get("filingDate") or []
-    periods = recent.get("reportDate") or []
-    accessions = recent.get("accessionNumber") or []
-    documents = recent.get("primaryDocument") or []
-    if not isinstance(forms, list):
-        return None
+        return filings["recent"]
+    return {}
+
+
+def _inline_ok(flags: object, index: int) -> bool:
+    if not isinstance(flags, list) or index >= len(flags):
+        return True
+    flag = flags[index]
+    return flag not in (0, False) and str(flag) != "0"
+
+
+def select_latest(
+    payload: dict,
+    cik: str,
+    extra_pages: Sequence[dict] | None = None,
+) -> PeriodicFiling | None:
+    pages = []
+    first = _recent_map(payload) if isinstance(payload, dict) else {}
+    if first:
+        pages.append(first)
+    for extra in extra_pages or []:
+        if isinstance(extra, dict):
+            page = _recent_map(extra)
+            if page:
+                pages.append(page)
     digits = "".join(char for char in str(cik) if char.isdigit()).zfill(10)
     best: PeriodicFiling | None = None
-    best_date = ""
-    for index, form in enumerate(forms):
-        if form not in _FORMS:
+    best_key = ("", "")
+    for recent in pages:
+        forms = recent.get("form") or []
+        dates = recent.get("filingDate") or []
+        periods = recent.get("reportDate") or []
+        accessions = recent.get("accessionNumber") or []
+        documents = recent.get("primaryDocument") or []
+        accepted = recent.get("acceptanceDateTime") or []
+        inline = recent.get("isInlineXBRL")
+        if not isinstance(forms, list):
             continue
-        if index >= len(dates) or index >= len(accessions) or index >= len(documents):
-            continue
-        filed = str(dates[index])
-        period = str(periods[index]) if index < len(periods) else ""
-        accession = str(accessions[index])
-        document = str(documents[index])
-        if _ACCESSION.fullmatch(accession) is None or _SAFE_NAME.fullmatch(document) is None:
-            continue
-        if best is None or filed > best_date:
-            best_date = filed
-            best = PeriodicFiling(
-                form=str(form),
-                filed=filed,
-                period=period,
-                accession=accession,
-                cik=digits,
-                document=document,
-            )
+        for index, form in enumerate(forms):
+            if form not in _FORMS or not _inline_ok(inline, index):
+                continue
+            if index >= len(dates) or index >= len(accessions) or index >= len(documents):
+                continue
+            filed = str(dates[index])
+            period = str(periods[index]) if index < len(periods) else ""
+            accession = str(accessions[index])
+            document = str(documents[index])
+            if _ACCESSION.fullmatch(accession) is None or _SAFE_NAME.fullmatch(document) is None:
+                continue
+            when = str(accepted[index]) if index < len(accepted) else ""
+            key = (period, when)
+            if best is None or key > best_key:
+                best_key = key
+                best = PeriodicFiling(
+                    form=str(form),
+                    filed=filed,
+                    period=period,
+                    accession=accession,
+                    cik=digits,
+                    document=document,
+                )
     return best

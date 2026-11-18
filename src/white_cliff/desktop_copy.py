@@ -24,6 +24,7 @@ ENTER_BOTH = "Enter your name and a full email address."
 SEC_ODD = "sec.gov did not answer. Try again."
 EMPTY_QUERY = "Enter a company name or ticker."
 ONLY_SEC = "White Cliff only contacts sec.gov."
+REFUSED = "White Cliff did not accept that request."
 
 __all__ = [
     "BUSY",
@@ -36,6 +37,7 @@ __all__ = [
     "NO_INTERNET",
     "NO_MATCH",
     "ONLY_SEC",
+    "REFUSED",
     "SEC_ODD",
     "SEC_WHY",
     "SEVERAL",

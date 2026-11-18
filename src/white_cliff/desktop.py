@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from white_cliff.companies import (
     PeriodicFiling,
     SeveralMatches,
     TICKERS_URL,
+    extra_submission_names,
     parse_tickers,
     resolve_company,
     select_latest,
@@ -31,6 +33,7 @@ from white_cliff.desktop_copy import (
     NO_INTERNET,
     NO_MATCH,
     ONLY_SEC,
+    REFUSED,
     SEC_ODD,
     SEVERAL,
 )
@@ -46,7 +49,14 @@ from white_cliff.present import (
     result_page,
     search_page,
 )
-from white_cliff.secclient import DisallowedHost, SecBusy, SecClient, SecStatus, SecUnreachable
+from white_cliff.secclient import (
+    DisallowedHost,
+    RateLimiter,
+    SecBusy,
+    SecClient,
+    SecStatus,
+    SecUnreachable,
+)
 
 
 class EmptyQuery(Exception):
@@ -70,7 +80,7 @@ def should_quit(
     now: float,
     *,
     startup: float = 120,
-    idle: float = 15,
+    idle: float = 30 * 60,
 ) -> bool:
     if last_seen is None:
         return now - started >= startup
@@ -121,6 +131,8 @@ class Desktop:
         self.sleep = sleep
         self.clock = clock
         self.last_seen: float | None = None
+        self.token = secrets.token_urlsafe(32)
+        self.limiter = RateLimiter(sleep=sleep, clock=clock)
 
     @classmethod
     def create(cls, transport=None, sleep=time.sleep, clock=time.monotonic):
@@ -138,8 +150,8 @@ class Desktop:
             return Page(303, "", location="/")
         if method == "GET" and path == "/identity":
             if load_identity(self.identity_file) is None:
-                return Page(200, first_run_page())
-            return Page(200, edit_page())
+                return Page(200, first_run_page(token=self.token))
+            return Page(200, edit_page(token=self.token))
         if method == "POST" and path == "/explain":
             return self._lookup(form.get("query", ""), None)
         if method == "POST" and path == "/pick":
@@ -150,8 +162,8 @@ class Desktop:
 
     def _home(self) -> Page:
         if load_identity(self.identity_file) is None:
-            return Page(200, first_run_page())
-        return Page(200, search_page())
+            return Page(200, first_run_page(token=self.token))
+        return Page(200, search_page(token=self.token))
 
     def _save(self, form: dict[str, str]) -> Page:
         saved = save_identity(
@@ -160,7 +172,7 @@ class Desktop:
             form.get("email", ""),
         )
         if saved is None:
-            return Page(200, first_run_page(rejected=True))
+            return Page(200, first_run_page(rejected=True, token=self.token))
         return Page(303, "", location="/")
 
     def _client(self) -> SecClient | None:
@@ -172,42 +184,43 @@ class Desktop:
             transport=self.transport,
             sleep=self.sleep,
             clock=self.clock,
+            limiter=self.limiter,
         )
 
     def _lookup(self, query: str, cik: str | None) -> Page:
         client = self._client()
         if client is None:
-            return Page(200, first_run_page())
+            return Page(200, first_run_page(token=self.token))
         try:
             if cik:
                 filing, explained = self._explain_cik(client, cik)
             else:
                 found = self._search(client, query)
                 if isinstance(found, SeveralMatches):
-                    return Page(200, choices_page(SEVERAL, found.companies))
+                    return Page(200, choices_page(SEVERAL, found.companies, token=self.token))
                 if isinstance(found, NoMatch):
                     if found.close:
-                        return Page(200, choices_page(CLOSE_INTRO, found.close))
-                    return Page(200, error_page(NO_MATCH))
+                        return Page(200, choices_page(CLOSE_INTRO, found.close, token=self.token))
+                    return Page(200, error_page(NO_MATCH, token=self.token))
                 if not isinstance(found, OneMatch):
-                    return Page(200, error_page(NO_MATCH))
+                    return Page(200, error_page(NO_MATCH, token=self.token))
                 filing, explained = self._explain_cik(client, found.company.cik)
         except EmptyQuery:
-            return Page(200, error_page(EMPTY_QUERY))
+            return Page(200, error_page(EMPTY_QUERY, token=self.token))
         except SecUnreachable:
-            return Page(200, error_page(NO_INTERNET))
+            return Page(200, error_page(NO_INTERNET, token=self.token))
         except SecBusy:
-            return Page(200, error_page(BUSY))
+            return Page(200, error_page(BUSY, token=self.token))
         except NoPeriodic:
-            return Page(200, error_page(NO_10KQ))
+            return Page(200, error_page(NO_10KQ, token=self.token))
         except DisallowedHost:
-            return Page(200, error_page(ONLY_SEC))
+            return Page(200, error_page(ONLY_SEC, token=self.token))
         except (SecStatus, json.JSONDecodeError, UnicodeError):
-            return Page(200, error_page(SEC_ODD))
+            return Page(200, error_page(SEC_ODD, token=self.token))
         except (OutputRefused, ValueError):
-            return Page(200, error_page(CANNOT_EXPLAIN))
+            return Page(200, error_page(CANNOT_EXPLAIN, token=self.token))
         except Exception:
-            return Page(200, error_page(CANNOT_EXPLAIN))
+            return Page(200, error_page(CANNOT_EXPLAIN, token=self.token))
         return Page(
             200,
             result_page(
@@ -216,6 +229,7 @@ class Desktop:
                 period=filing.period,
                 filed=filing.filed,
                 url=filing.url,
+                token=self.token,
             ),
         )
 
@@ -229,7 +243,11 @@ class Desktop:
     def _explain_cik(self, client: SecClient, cik: str):
         payload = client.get(submissions_url(cik))
         data = json.loads(payload)
-        filing = select_latest(data, cik)
+        extras = []
+        for name in extra_submission_names(data, cik):
+            extra_url = f"https://data.sec.gov/submissions/{name}"
+            extras.append(json.loads(client.get(extra_url)))
+        filing = select_latest(data, cik, extras)
         if filing is None:
             raise NoPeriodic()
         body = client.get(filing.url)
@@ -237,6 +255,20 @@ class Desktop:
         loaded = load_directory(directory)
         explained = explain_filing(loaded)
         return filing, explained
+
+
+def _cookie_value(header: str, name: str) -> str:
+    for part in header.split(";"):
+        key, sep, value = part.strip().partition("=")
+        if sep and key == name:
+            return value
+    return ""
+
+
+def _same(left: str, right: str) -> bool:
+    if not left or not right or len(left) != len(right):
+        return False
+    return secrets.compare_digest(left, right)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -251,38 +283,69 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._respond("POST")
 
+    def _expected_origin(self) -> str:
+        port = self.server.server_address[1]
+        return f"http://127.0.0.1:{port}"
+
+    def _post_allowed(self, form: dict[str, str]) -> bool:
+        site = (self.headers.get("Sec-Fetch-Site") or "").casefold()
+        if site in {"cross-site", "same-site"}:
+            return False
+        expected = self._expected_origin()
+        origin = self.headers.get("Origin")
+        if origin is None:
+            referer = self.headers.get("Referer", "")
+            if referer != expected and not referer.startswith(expected + "/"):
+                return False
+        elif origin != expected:
+            return False
+        posted = form.get("token", "")
+        cookie = _cookie_value(self.headers.get("Cookie", ""), "wc")
+        return _same(posted, self.desktop.token) and _same(cookie, self.desktop.token)
+
+    def _send(self, status: int, body: bytes, location: str = "", cookie: bool = True) -> None:
+        self.send_response(status)
+        if location:
+            self.send_header("Location", location)
+        if body:
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        if cookie:
+            token = self.desktop.token
+            self.send_header(
+                "Set-Cookie",
+                f"wc={token}; HttpOnly; SameSite=Strict; Path=/",
+            )
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
     def _respond(self, method: str) -> None:
         if not loopback_host(self.headers.get("Host", "")):
-            self.send_response(403)
-            self.end_headers()
+            self._send(403, error_page(REFUSED).encode("utf-8"), cookie=False)
             return
         try:
             length = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
             length = 0
         if length < 0 or length > 10000:
-            self.send_response(400)
-            self.end_headers()
+            self._send(400, error_page(REFUSED).encode("utf-8"), cookie=False)
             return
         raw = self.rfile.read(length) if length else b""
         parsed = urllib.parse.parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True)
         form = {key: values[-1] for key, values in parsed.items()}
         path = urllib.parse.urlsplit(self.path).path
+        if method == "POST" and not self._post_allowed(form):
+            self._send(403, error_page(REFUSED).encode("utf-8"), cookie=False)
+            return
         try:
             page = self.desktop.handle(method, path, form)
         except Exception:
-            page = Page(200, error_page(CANNOT_EXPLAIN))
-        body = page.body.encode("utf-8")
-        self.send_response(page.status)
-        if page.location:
-            self.send_header("Location", page.location)
-        if body:
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if body:
-            self.wfile.write(body)
+            page = Page(200, error_page(CANNOT_EXPLAIN, token=self.desktop.token))
+        self._send(page.status, page.body.encode("utf-8"), page.location)
 
 
 def make_server(desktop: Desktop) -> ThreadingHTTPServer:

@@ -1,12 +1,16 @@
 """First run, erase, and a lookup that never leaves sec.gov."""
 
 import html
+import http.client
 import json
 import re
+import threading
+import urllib.parse
 from pathlib import Path
 
 import pytest
 
+from white_cliff.advice import advice_reason
 from white_cliff.desktop import Desktop, loopback_host, make_server, should_quit
 from white_cliff.desktop_copy import (
     BUSY,
@@ -15,9 +19,11 @@ from white_cliff.desktop_copy import (
     NO_10KQ,
     NO_INTERNET,
     NO_MATCH,
+    REFUSED,
     SEC_WHY,
     SEVERAL,
 )
+from white_cliff.desktop_main import run_until_closed
 from white_cliff.disclaimer import OutputRefused
 from white_cliff.identity import app_data_dir, cache_dir
 from white_cliff.pipeline import explain_filing, load_directory
@@ -253,8 +259,8 @@ def test_server_binds_loopback_and_quits_when_idle():
     assert not loopback_host("example.com")
     assert should_quit(0, None, 119) is False
     assert should_quit(0, None, 120) is True
-    assert should_quit(0, 50, 64) is False
-    assert should_quit(0, 50, 65) is True
+    assert should_quit(0, 0, (30 * 60) - 1) is False
+    assert should_quit(0, 0, 30 * 60) is True
 
 
 def test_desktop_source_contacts_only_sec_hosts():
@@ -289,3 +295,285 @@ def test_make_server_listens_on_loopback_only(monkeypatch, tmp_path):
         assert server.server_address[0] == "127.0.0.1"
     finally:
         server.server_close()
+
+
+def _headers(response: http.client.HTTPResponse) -> dict[str, str]:
+    return {key.lower(): value for key, value in response.getheaders()}
+
+
+def _exchange(port: int, method: str, path: str, body: bytes = b"", headers=None):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request(method, path, body=body, headers=headers or {})
+    response = connection.getresponse()
+    payload = response.read()
+    status, fields = response.status, _headers(response)
+    connection.close()
+    return status, fields, payload
+
+
+def _assert_unchanged(path: Path, before: bytes) -> None:
+    assert path.read_bytes() == before
+
+
+def test_cross_origin_posts_leave_the_identity_unchanged(monkeypatch, tmp_path):
+    app = _app(monkeypatch, tmp_path)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    before = app.identity_file.read_bytes()
+    server = make_server(app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    origin = f"http://127.0.0.1:{port}"
+    stolen = urllib.parse.urlencode(
+        {"name": "Stolen Name", "email": "stolen@example.com"}
+    ).encode("ascii")
+    try:
+        status, fields, body = _exchange(port, "GET", "/")
+        assert status == 200
+        assert fields["x-frame-options"] == "DENY"
+        assert fields["content-security-policy"] == "frame-ancestors 'none'"
+        cookie = fields["set-cookie"]
+        assert "HttpOnly" in cookie
+        assert "SameSite=Strict" in cookie
+        token = cookie.split(";", 1)[0].split("=", 1)[1]
+        match = re.search(r'name="token" value="([^"]*)"', body.decode("utf-8"))
+        assert match and match.group(1) == token
+
+        def attack(extra, payload=stolen):
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                **extra,
+            }
+            code, attack_fields, attack_body = _exchange(
+                port, "POST", "/identity", payload, headers
+            )
+            assert code == 403
+            assert REFUSED.encode("utf-8") in attack_body
+            assert b"stolen@example.com" not in attack_body
+            assert attack_fields["x-frame-options"] == "DENY"
+            assert "frame-ancestors 'none'" in attack_fields["content-security-policy"]
+            _assert_unchanged(app.identity_file, before)
+            return code
+
+        attack(
+            {
+                "Origin": "https://evil.example",
+                "Sec-Fetch-Site": "cross-site",
+                "Sec-Fetch-Mode": "navigate",
+            }
+        )
+        attack(
+            {
+                "Origin": "http://127.0.0.1:9",
+                "Sec-Fetch-Site": "same-site",
+                "Sec-Fetch-Mode": "no-cors",
+                "Content-Type": "text/plain",
+            }
+        )
+        attack({"Origin": "null"})
+        attack({"Origin": origin, "Sec-Fetch-Site": "same-origin"})
+        attack(
+            {
+                "Origin": origin,
+                "Sec-Fetch-Site": "same-origin",
+                "Cookie": f"wc={token}",
+            },
+            urllib.parse.urlencode(
+                {"name": NAME, "email": "stolen@example.com", "token": "wrong-token"}
+            ).encode("ascii"),
+        )
+        armed = urllib.parse.urlencode(
+            {"name": NAME, "email": "stolen@example.com", "token": token}
+        ).encode("ascii")
+        attack(
+            {
+                "Origin": origin,
+                "Sec-Fetch-Site": "cross-site",
+                "Cookie": f"wc={token}",
+            },
+            armed,
+        )
+        attack(
+            {
+                "Origin": origin,
+                "Sec-Fetch-Site": "same-site",
+                "Sec-Fetch-Mode": "no-cors",
+                "Cookie": f"wc={token}",
+            },
+            armed,
+        )
+        code, _, _ = _exchange(
+            port,
+            "POST",
+            "/identity/erase",
+            b"",
+            {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+        )
+        assert code == 403
+        _assert_unchanged(app.identity_file, before)
+
+        changed = urllib.parse.urlencode(
+            {"name": NAME, "email": "other@example.com", "token": token}
+        ).encode("ascii")
+        code, _, _ = _exchange(
+            port,
+            "POST",
+            "/identity",
+            changed,
+            {
+                "Origin": origin,
+                "Referer": origin + "/",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "navigate",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": f"wc={token}",
+            },
+        )
+        assert code == 303
+        assert b"other@example.com" in app.identity_file.read_bytes()
+        kept = app.identity_file.read_bytes()
+        code, _, _ = _exchange(
+            port,
+            "POST",
+            "/identity",
+            stolen,
+            {
+                "Origin": "https://evil.example",
+                "Sec-Fetch-Site": "cross-site",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        assert code == 403
+        assert app.identity_file.read_bytes() == kept
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_parallel_lookups_share_one_locked_limiter(monkeypatch, tmp_path):
+    _home(monkeypatch, tmp_path)
+    calls = []
+    state = {"now": 0.0}
+    clock_lock = threading.Lock()
+    tickers = (FIXTURES / "company_tickers.json").read_bytes()
+
+    def clock():
+        with clock_lock:
+            return state["now"]
+
+    def sleep(seconds):
+        with clock_lock:
+            state["now"] += float(seconds)
+
+    def transport(url, user_agent):
+        calls.append(clock())
+        host = url.split("/", 3)[2]
+        assert host in {"www.sec.gov", "data.sec.gov"}
+        return 200, tickers, {}
+
+    app = Desktop.create(transport=transport, sleep=sleep, clock=clock)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    assert type(app.limiter._lock) is type(threading.Lock())
+    assert app._client().limiter is app.limiter
+    errors = []
+
+    def run():
+        try:
+            app.handle("POST", "/explain", {"query": "zzzznomatchqq"})
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(30)]
+    for worker in threads:
+        worker.start()
+    for worker in threads:
+        worker.join()
+    assert errors == []
+    assert len(calls) == 30
+    ordered = sorted(calls)
+    for start in ordered:
+        count = sum(1 for stamp in ordered if start <= stamp < start + 1)
+        assert count <= 10
+
+
+def test_refused_pick_list_name_falls_back_to_ticker_and_cik(monkeypatch, tmp_path):
+    hostile = "<script>alert(1)</script>"
+    payload = json.dumps(
+        {
+            "0": {"cik_str": 99, "ticker": "EVIL", "title": hostile},
+            "1": {"cik_str": 98, "ticker": "LONG", "title": hostile},
+        }
+    ).encode("utf-8")
+
+    def transport(url, user_agent):
+        return 200, payload, {}
+
+    app = _app(monkeypatch, tmp_path, transport)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    page = app.handle("POST", "/explain", {"query": hostile})
+    assert SEVERAL in page.body
+    assert hostile not in page.body
+    assert "alert(1)" not in page.body
+    assert "EVIL" in page.body
+    assert "0000000099" in page.body
+    assert "LONG" in page.body
+    assert "0000000098" in page.body
+    assert advice_reason(re.sub(r"<[^>]+>", " ", page.body).replace(DISCLAIMER, " ")) is None
+
+
+def test_an_extra_submission_page_is_read(monkeypatch, tmp_path):
+    base = _Transport()
+    base.apple["filings"]["recent"] = {
+        "accessionNumber": ["0000320193-20-000001"],
+        "filingDate": ["2020-05-01"],
+        "reportDate": ["2020-03-28"],
+        "form": ["10-Q"],
+        "primaryDocument": ["old.htm"],
+        "isInlineXBRL": [1],
+    }
+    base.apple["filings"]["files"] = [{"name": "CIK0000320193-submissions-001.json"}]
+    extra = {
+        "form": ["10-K"],
+        "filingDate": ["2026-10-31"],
+        "reportDate": ["2026-09-26"],
+        "acceptanceDateTime": ["2026-10-31T10:00:00.000Z"],
+        "accessionNumber": ["0000320193-26-000026"],
+        "primaryDocument": ["aapl-20260926.htm"],
+        "isInlineXBRL": [1],
+    }
+
+    def transport(url, user_agent):
+        if url.endswith("CIK0000320193-submissions-001.json"):
+            base.calls.append((url, user_agent))
+            return 200, json.dumps(extra).encode("utf-8"), {}
+        return base(url, user_agent)
+
+    app = _app(monkeypatch, tmp_path, transport)
+    app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
+    page = app.handle("POST", "/explain", {"query": "AAPL"})
+    assert any(url.endswith("CIK0000320193-submissions-001.json") for url, _ua in base.calls)
+    assert "10-K" in page.body
+    assert "aapl-20260926.htm" in page.body
+
+
+def test_ctrl_c_exits_without_a_traceback():
+    class _Server:
+        def __init__(self):
+            self.shut = False
+
+        def shutdown(self):
+            self.shut = True
+
+        def server_close(self):
+            self.shut = True
+
+    desktop = type("Desktop", (), {"last_seen": None})()
+    server = _Server()
+
+    def sleep(_seconds):
+        raise KeyboardInterrupt
+
+    code = run_until_closed(server, desktop, sleep=sleep, clock=lambda: 0)
+    assert code == 0
+    assert server.shut

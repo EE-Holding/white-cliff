@@ -105,7 +105,11 @@ def test_how_to_open_says_the_first_lookup_is_live():
     source = (ROOT / "src" / "white_cliff" / "data" / "how-to-open.md").read_text(encoding="utf-8")
     assert text == source
     assert text.startswith(DISCLAIMER)
-    assert "Your first lookup is the first live one; we tested with saved filings." in text
+    live = "The first lookup is the first live one; the app was tested with saved filings."
+    assert live in text
+    rest = text.replace(live, "")
+    assert re.search(r"\b(I|we|our|ours|me|my|myself)\b", rest) is None
+    assert "from here" not in text
 
 
 def test_error_page_is_the_sentence():

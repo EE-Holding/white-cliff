@@ -7,6 +7,7 @@ import re
 from typing import Sequence
 
 from white_cliff.desktop_copy import DISCLAIMER, ENTER_BOTH, SEC_WHY
+from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import Explained
 
 _DATA_LINK = re.compile(
@@ -44,20 +45,29 @@ def _change_link() -> str:
     return '<p><a href="/identity">Change my name and email</a></p>\n'
 
 
-def _search_form() -> str:
+def _hidden(token: str) -> str:
+    if not token:
+        return ""
+    safe = html.escape(token, quote=True)
+    return f'<input type="hidden" name="token" value="{safe}">\n'
+
+
+def _search_form(token: str = "") -> str:
     return (
         '<form method="post" action="/explain">\n'
-        '<p><label for="query">Company name or ticker</label></p>\n'
+        + _hidden(token)
+        + '<p><label for="query">Company name or ticker</label></p>\n'
         '<p><input id="query" name="query" autocomplete="off"></p>\n'
         '<p><button type="submit">Explain</button></p>\n'
         "</form>\n"
     )
 
 
-def _identity_form() -> str:
+def _identity_form(token: str = "") -> str:
     return (
         '<form method="post" action="/identity">\n'
-        '<p><label for="name">Your name</label></p>\n'
+        + _hidden(token)
+        + '<p><label for="name">Your name</label></p>\n'
         '<p><input id="name" name="name" autocomplete="name"></p>\n'
         '<p><label for="email">Your email</label></p>\n'
         '<p><input id="email" name="email" type="email" autocomplete="email"></p>\n'
@@ -66,41 +76,57 @@ def _identity_form() -> str:
     )
 
 
-def first_run_page(*, rejected: bool = False) -> str:
+def first_run_page(*, rejected: bool = False, token: str = "") -> str:
     note = f"<p>{ENTER_BOTH}</p>\n" if rejected else ""
-    return _shell(note + f"<p>{html.escape(SEC_WHY)}</p>\n" + _identity_form())
+    return _shell(note + f"<p>{html.escape(SEC_WHY)}</p>\n" + _identity_form(token))
 
 
-def edit_page() -> str:
+def edit_page(token: str = "") -> str:
     erase = (
         '<form method="post" action="/identity/erase">\n'
-        '<p><button type="submit">Erase</button></p>\n'
+        + _hidden(token)
+        + '<p><button type="submit">Erase</button></p>\n'
         "</form>\n"
     )
     back = '<p><a href="/">Company name or ticker</a></p>\n'
-    return _shell(f"<p>{html.escape(SEC_WHY)}</p>\n" + _identity_form() + erase + back)
+    return _shell(f"<p>{html.escape(SEC_WHY)}</p>\n" + _identity_form(token) + erase + back)
 
 
-def search_page() -> str:
-    return _shell(_change_link() + _search_form())
+def search_page(token: str = "") -> str:
+    return _shell(_change_link() + _search_form(token))
 
 
-def error_page(sentence: str) -> str:
-    return _shell(f"<p>{html.escape(sentence)}</p>\n" + _change_link() + _search_form())
+def error_page(sentence: str, token: str = "") -> str:
+    return _shell(f"<p>{html.escape(sentence)}</p>\n" + _change_link() + _search_form(token))
 
 
-def choices_page(heading: str, companies: Sequence[object]) -> str:
+def _choice_label(company: object) -> str:
+    title = str(getattr(company, "title", "") or "")
+    ticker = str(getattr(company, "ticker", "") or "")
+    cik = str(getattr(company, "cik", "") or "")
+    shown = acceptable_name(f"{title} ({ticker})")
+    if shown is None:
+        shown = acceptable_name(f"{ticker} {cik}")
+    if shown is None:
+        shown = acceptable_name(cik)
+    if shown is None:
+        return "A company on the SEC list"
+    return shown
+
+
+def choices_page(heading: str, companies: Sequence[object], token: str = "") -> str:
     buttons: list[str] = []
     for company in companies:
-        label = html.escape(f"{company.title} ({company.ticker})")
-        cik = html.escape(str(company.cik), quote=True)
+        label = html.escape(_choice_label(company))
+        cik = html.escape(str(getattr(company, "cik", "")), quote=True)
         buttons.append(
             '<form method="post" action="/pick">\n'
-            f'<p><button type="submit" name="cik" value="{cik}">{label}</button></p>\n'
+            + _hidden(token)
+            + f'<p><button type="submit" name="cik" value="{cik}">{label}</button></p>\n'
             "</form>\n"
         )
     body = f"<p>{html.escape(heading)}</p>\n" + "".join(buttons)
-    return _shell(body + _change_link() + _search_form())
+    return _shell(body + _change_link() + _search_form(token))
 
 
 def _link_numbers(page: str) -> str:
@@ -144,10 +170,11 @@ def result_page(
     period: str,
     filed: str,
     url: str,
+    token: str = "",
 ) -> str:
     inner = (
         _change_link()
-        + _search_form()
+        + _search_form(token)
         + _filing_line(form, period, filed, url)
         + _explanation_body(explained.html)
     )

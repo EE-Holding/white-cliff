@@ -6,7 +6,7 @@ Download one zip on a Mac, or one program on Windows. Unzip the Mac file. Double
 
 The first time, a page asks for your name and your email. After that, type a company name or ticker and press Explain.
 
-Your first lookup is the first live one; we tested with saved filings.
+The first lookup is the first live one; the app was tested with saved filings.
 
 The download is not signed. macOS and Windows ask you to confirm before it opens.
 
@@ -20,7 +20,7 @@ Then open the Apple menu, choose System Settings, and click Privacy & Security. 
 
 Apple's guide says the Open Anyway button is there for about an hour after you try to open the app. If the button is missing, double-click the app again, then go back to Privacy & Security.
 
-I am not sure of the exact warning words on every Mac. Apple's current guide uses System Settings, Privacy & Security, and Open Anyway. On macOS Sonoma and earlier, Control-click and Open sometimes worked. I am not sure that shortcut still works on the current macOS.
+The exact warning words differ by macOS version. The current path is System Settings, Privacy & Security, and Open Anyway. On macOS Sonoma and earlier, Control-click and Open was another path. On the current macOS, use Open Anyway.
 
 After this, double-clicking White Cliff opens it. Your browser shows a private page on this computer. Close that tab and White Cliff quits.
 
@@ -32,7 +32,7 @@ Windows shows a blue window titled "Windows protected your PC". Click More info.
 
 Your browser shows a private page on this computer. Close that tab and White Cliff quits.
 
-I am not sure what you see if Smart App Control is turned on. On those PCs the window can say the app was blocked and there is no Run anyway button. The More info path above is the usual SmartScreen window, and I could not click through a real Windows PC from here.
+If Smart App Control is turned on, the window can say the app was blocked and show no Run anyway button. The More info path above is the usual SmartScreen window.
 
 ## What you see in the page
 
