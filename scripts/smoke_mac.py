@@ -221,13 +221,10 @@ def _shot(
                 )
                 if isinstance(raw, (int, float)) and raw > height:
                     height = int(raw)
+                _window(fresh, width, height)
                 result = fresh.call(
                     "Page.captureScreenshot",
-                    {
-                        "format": "png",
-                        "captureBeyondViewport": True,
-                        "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
-                    },
+                    {"format": "png", "optimizeForSpeed": True},
                     timeout=60,
                 )
                 data = base64.b64decode(result["data"])
