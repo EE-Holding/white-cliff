@@ -195,10 +195,11 @@ def _shot(
 ) -> Path:
     last: Exception | None = None
     for _ in range(2):
-        fresh = DevTools(page.ws_url)
+        fresh = page if full else DevTools(page.ws_url)
         try:
-            fresh.call("Page.enable")
-            fresh.call("Runtime.enable")
+            if not full:
+                fresh.call("Page.enable")
+                fresh.call("Runtime.enable")
             _window(fresh, width, height)
             deadline = time.time() + 2
             while time.time() < deadline:
@@ -256,7 +257,8 @@ def _shot(
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
         finally:
-            fresh.close()
+            if fresh is not page:
+                fresh.close()
     raise PageError(last)
 
 
@@ -373,10 +375,6 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
 
 def _fit(page: DevTools, width: int, height: int) -> None:
     """Set the window and wait until the page has that width, before anything is paused."""
-    try:
-        page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError:
-        pass
     deadline = time.time() + 12
     while time.time() < deadline:
         _window(page, width, height)
