@@ -64,24 +64,56 @@ def _checked(name: str, email: str) -> Identity | None:
     return identity
 
 
-def load_identity(path: Path) -> Identity | None:
+def _read_json(path: Path) -> dict:
     if not path.is_file():
-        return None
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeError):
-        return None
+        return {}
     if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def load_identity(path: Path) -> Identity | None:
+    data = _read_json(path)
+    if not data:
         return None
     return _checked(data.get("name", ""), data.get("email", ""))
+
+
+def load_language(path: Path) -> str:
+    """The saved language. English when the file has none."""
+    code = _read_json(path).get("language", "en")
+    if code not in {"en", "de"}:
+        return "en"
+    return code
+
+
+def save_language(path: Path, code: str) -> None:
+    """Store the language beside the name and email. It is not sent anywhere."""
+    if code not in {"en", "de"}:
+        return
+    data = _read_json(path)
+    kept = {}
+    identity = _checked(str(data.get("name", "")), str(data.get("email", "")))
+    if identity is not None:
+        kept["name"] = identity.name
+        kept["email"] = identity.email
+    kept["language"] = code
+    _write_private(path, json.dumps(kept, indent=2) + "\n")
 
 
 def save_identity(path: Path, name: str, email: str) -> Identity | None:
     identity = _checked(name, email)
     if identity is None:
         return None
-    payload = json.dumps({"name": identity.name, "email": identity.email}, indent=2) + "\n"
-    _write_private(path, payload)
+    data = _read_json(path)
+    payload = {"name": identity.name, "email": identity.email}
+    if data.get("language") in {"en", "de"}:
+        payload["language"] = data["language"]
+    _write_private(path, json.dumps(payload, indent=2) + "\n")
     return identity
 
 

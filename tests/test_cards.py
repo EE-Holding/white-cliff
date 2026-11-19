@@ -237,9 +237,10 @@ def test_the_page_frame_reads_the_english_table_and_stays_on_sec():
     assert EN["erase"] in edit_page("token")
     for text in (page, opened, first):
         assert EN["app_name"] in text
-        assert "Deutsch" not in text
+        assert "Language / Sprache" in text
+        assert ">English<" in text
+        assert ">Deutsch<" in text
         assert "Entwurf" not in text
-        assert "Language / Sprache" not in text
         assert "@font-face" not in text
         assert "<img" not in text
         assert "fonts.googleapis" not in text

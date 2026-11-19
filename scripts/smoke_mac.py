@@ -284,6 +284,18 @@ def _wait_node(page: DevTools, selector: str, timeout: float) -> int:
     raise PageError(selector)
 
 
+def _press(page: DevTools, selector: str) -> None:
+    """Click through the page's own script, so a corner control is not missed."""
+    _wait_node(page, selector, 20)
+    shown = json.dumps(selector)
+    _eval(
+        page,
+        "(() => { const node = document.querySelector("
+        + shown
+        + "); node.scrollIntoView({block: 'center'}); node.click(); return true; })()",
+    )
+
+
 def _click(page: DevTools, selector: str) -> None:
     node = _wait_node(page, selector, 20)
     page.call("DOM.focus", {"nodeId": node})
@@ -563,6 +575,7 @@ def drive(
         else:
             raise PageError("the reduced-motion steps were not shown")
         _wait_result(page, out_dir, heading, suffix, loading=False, capture=False)
+        _german_shots(page, out_dir, url, query, heading)
     finally:
         page.close()
         if chrome.poll() is None:
@@ -571,6 +584,89 @@ def drive(
                 chrome.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 os.killpg(chrome.pid, signal.SIGKILL)
+
+
+def _wait_first_run(page: DevTools, timeout: float = 20) -> None:
+    """The erase control posts, then the browser opens a new first-run page."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            path = _eval(page, "location.pathname") or ""
+            gone = _node(page, 'form[action="/identity/erase"]') is None
+            ready = _node(page, "#name") is not None
+        except PageError:
+            path, gone, ready = "", False, False
+        if path in {"/", ""} and gone and ready:
+            return
+        time.sleep(0.05)
+    raise PageError("the first-run page did not replace the saved name")
+
+
+def _wait_text(page: DevTools, needle: str, timeout: float = 20) -> None:
+    deadline = time.time() + timeout
+    last = ""
+    while time.time() < deadline:
+        try:
+            last = _eval(page, "document.body ? document.body.innerText : ''") or ""
+        except PageError:
+            last = ""
+        if needle in last:
+            return
+        time.sleep(0.05)
+    raise PageError(last[:400] or "the expected text did not appear")
+
+
+def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:
+    """German result, first run, and loading, at 1280 and 420."""
+    try:
+        page.call("Emulation.setEmulatedMedia", {"features": []})
+    except PageError:
+        pass
+    _press(page, 'button[lang="de"]')
+    _wait_text(page, "Umsatz")
+    if _eval(page, "document.documentElement.lang") != "de":
+        raise PageError("the first paint was not German")
+    time.sleep(1.0)
+    _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200)
+    _shot(page, out_dir, f"smoke-{ARCH}-11-de-result-420.png", width=420, height=1800)
+    _window(page, 1280, 1600)
+    page.call("Page.navigate", {"url": url + "identity"})
+    _wait_node(page, 'form[action="/identity/erase"] button', 20)
+    _click(page, 'form[action="/identity/erase"] button')
+    _wait_first_run(page)
+    _window(page, 1280, 1600)
+    _press(page, 'button[lang="de"]')
+    _wait_text(page, "Die SEC verlangt")
+    _wait_node(page, "#name", 20)
+    time.sleep(0.4)
+    _shot(page, out_dir, f"smoke-{ARCH}-12-de-first-1280.png", width=1280, height=1600)
+    _shot(page, out_dir, f"smoke-{ARCH}-13-de-first-420.png", width=420, height=1600)
+    _window(page, 1280, 1600)
+    _fill(page, "#name", TEST_NAME)
+    _fill(page, "#email", test_email())
+    _click(page, 'form[action="/identity"] button')
+    _wait_node(page, "#query", 20)
+    _fill(page, "#query", query)
+    _window(page, 1280, 1800)
+    _click(page, 'form[action="/explain"] button')
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        try:
+            if _loading(page):
+                _hold(page)
+                try:
+                    _grab(page, out_dir, f"smoke-{ARCH}-14-de-loading-1280.png")
+                    _window(page, 420, 1800)
+                    _grab(page, out_dir, f"smoke-{ARCH}-15-de-loading-420.png")
+                finally:
+                    _release(page)
+                break
+        except PageError:
+            _release(page)
+        time.sleep(0.02)
+    else:
+        raise PageError("the German loading steps were not shown")
+    _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
 
 
 def _wait_result(

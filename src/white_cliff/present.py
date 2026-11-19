@@ -23,6 +23,8 @@ from white_cliff.desktop_copy import (
 )
 from white_cliff.disclaimer import ISSUE_URL, OutputRefused
 from white_cliff.explain import acceptable_name
+from white_cliff.german import format_measure, format_raw
+from white_cliff.i18n import focus_language, german, phrase, shown_copy, ui
 from white_cliff.pipeline import Explained
 from white_cliff.strings import EN
 
@@ -50,6 +52,8 @@ _SCALE = {
 
 def shown_amount(raw: str) -> str:
     """The filing amount, with separators and a dollar sign. No new rounding."""
+    if german():
+        return format_raw(raw)
     text = " ".join(html.unescape(raw).split())
     per_share = _PER_SHARE.fullmatch(text)
     if per_share is not None:
@@ -110,6 +114,21 @@ def _plain_date(iso: str) -> str:
 
 def plain_report(form: str, period: str) -> str:
     when = _plain_date(period)
+    if german():
+        from white_cliff.wording import long_date
+
+        dated = long_date(period) if period else ""
+        if form == "10-Q":
+            if dated:
+                return phrase("PR.report_10q").replace("{date}", dated)
+            return phrase("PR.report_10q_nodate")
+        if form == "10-K":
+            if dated:
+                return phrase("PR.report_10k").replace("{date}", dated)
+            return phrase("PR.report_10k_nodate")
+        if dated:
+            return phrase("PR.report_other").replace("{date}", dated)
+        return ""
     if form == "10-Q":
         if when:
             return f"Quarterly report for the three months ended {when}."
@@ -123,23 +142,52 @@ def plain_report(form: str, period: str) -> str:
     return ""
 
 
-def _shell(inner: str, *, result: bool = False) -> str:
-    closed = html.escape(CLOSED, quote=True)
-    looking = html.escape(LOOKING, quote=True)
-    finding = html.escape(FINDING, quote=True)
-    filing_list = html.escape(FILING_LIST, quote=True)
-    reading = html.escape(READING, quote=True)
-    reading_prior = html.escape(READING_PRIOR, quote=True)
+def _language_control(token: str) -> str:
+    """The English/Deutsch switch. It sits after the disclaimer."""
+
+    def segment(code: str, label: str) -> str:
+        pressed = "true" if (code == "de") == german() else "false"
+        return (
+            '<form method="post" action="/language">\n'
+            + _hidden(token)
+            + f'<input type="hidden" name="language" value="{code}">\n'
+            + f'<button type="submit" lang="{code}" aria-pressed="{pressed}">'
+            + html.escape(label)
+            + "</button>\n"
+            + "</form>\n"
+        )
+
+    return (
+        '<div class="lang" role="group" aria-label="Language / Sprache">\n'
+        + segment("en", "English")
+        + segment("de", "Deutsch")
+        + "</div>\n"
+    )
+
+
+def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
+    closed = html.escape(shown_copy(CLOSED), quote=True)
+    looking = html.escape(shown_copy(LOOKING), quote=True)
+    finding = html.escape(shown_copy(FINDING), quote=True)
+    filing_list = html.escape(shown_copy(FILING_LIST), quote=True)
+    reading = html.escape(shown_copy(READING), quote=True)
+    reading_prior = html.escape(shown_copy(READING_PRIOR), quote=True)
     body = '<body class="result">\n' if result else "<body>\n"
+    lang = "de" if german() else "en"
+    marked = ' data-lang-set="1"' if focus_language.get() else ""
+    disclaimer = f'<p class="disclaimer">{DISCLAIMER}</p>\n'
+    if german():
+        disclaimer += f'<p class="disclaimer" lang="de">{html.escape(phrase("§1.DISCLAIMER"))}</p>\n'
     page = (
         "<!DOCTYPE html>\n"
-        '<html lang="en">\n'
+        f'<html lang="{lang}"{marked}>\n'
         "<head>\n"
-        f"<title>{html.escape(EN['app_name'])}</title>\n"
+        f"<title>{html.escape(ui('app_name'))}</title>\n"
         "</head>\n"
         f"{body}"
-        f'<p class="disclaimer">{DISCLAIMER}</p>\n'
-        f'<div class="top"><p class="app">{html.escape(EN["app_name"])}</p></div>\n'
+        f"{disclaimer}"
+        f'<div class="top"><p class="app">{html.escape(ui("app_name"))}</p>'
+        f"{_language_control(token)}</div>\n"
         "<style>\n"
         ":root { --bg: #ffffff; --ink: #1d1d1f; --ink-2: #3a3a3c; --ink-3: #555559; "
         "--accent: #0a4b8f; --line: #86868b; --hairline: #e6e6e8; --panel: #f5f5f7; "
@@ -160,12 +208,24 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "padding-left: 32px; padding-right: 32px; }\n"
         ".disclaimer { margin: 0; padding-top: 40px; color: var(--ink-2); "
         "font-size: 18px; line-height: 27px; }\n"
+        ".disclaimer + .disclaimer { padding-top: 8px; }\n"
         ".top { display: flex; align-items: center; justify-content: space-between; "
         "gap: 16px; padding-top: 24px; }\n"
         ".app { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--ink-2); }\n"
+        ".lang { display: flex; align-items: stretch; background: #e3e3e8; "
+        "border-radius: 12px; padding: 3px; }\n"
+        ".lang form { margin: 0; }\n"
+        ".lang button { margin: 0; min-height: 44px; min-width: 104px; "
+        "padding: 0 12px; border: 0; border-radius: 10px; background: transparent; "
+        "color: var(--ink); font-size: 18px; line-height: 27px; font-weight: 600; "
+        "box-shadow: none; "
+        "transition: background 200ms var(--ease-standard), box-shadow 200ms var(--ease-standard); }\n"
+        '.lang button[aria-pressed="true"] { background: #ffffff; '
+        "box-shadow: 0 1px 3px rgba(0,0,0,.12); }\n"
         ".column { padding-top: 40px; padding-bottom: 80px; "
         "animation: fade 200ms var(--ease-standard) both; }\n"
         "body.result .column { animation: none; }\n"
+        "html[data-lang-set] .column { animation: fade 200ms var(--ease-standard) both; }\n"
         "h1 { font-size: 48px; line-height: 52px; font-weight: 700; letter-spacing: -0.025em; "
         "margin: 0; }\n"
         ".quiet { color: var(--ink-2); font-size: 21px; line-height: 32px; margin: 8px 0 0; }\n"
@@ -313,10 +373,12 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "  form.search, form.pick { padding: 20px; }\n"
         "  .search-row { flex-direction: column; }\n"
         "  .search-row button { width: 100%; }\n"
+        "  .lang button { min-width: 92px; }\n"
         "}\n"
         "@media (prefers-reduced-motion: reduce) {\n"
-        "  .column, .failure, .steps, .steps.open, .steps.leave, body.result .hero, .card, .fill, "
-        "  .detail, button.explain svg "
+        "  .column, html[data-lang-set] .column, .failure, .steps, .steps.open, .steps.leave, "
+        "  body.result .hero, .card, .fill, "
+        "  .detail, button.explain svg, .lang button "
         "  { animation: none; transition: none; }\n"
         "  .card, .fill { opacity: 1; transform: none; }\n"
         "  .arc { animation: none; display: none; }\n"
@@ -440,6 +502,12 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "          return;\n"
         "        }\n"
         "        return response.text().then(function (html) {\n"
+        '          if (action === "/language") {\n'
+        "            document.open();\n"
+        "            document.write(html);\n"
+        "            document.close();\n"
+        "            return;\n"
+        "          }\n"
         '          var success = html.indexOf("class=\\"figure\\"") !== -1;\n'
         "          if (success && panel) { finish(html); return; }\n"
         "          if (panel) panel.classList.add(\"leave\");\n"
@@ -461,6 +529,10 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "      });\n"
         "    });\n"
         "  });\n"
+        '  if (document.documentElement.getAttribute("data-lang-set") === "1") {\n'
+        '    var chosen = document.querySelector(".lang button[aria-pressed=\\"true\\"]");\n'
+        "    if (chosen) chosen.focus();\n"
+        "  }\n"
         "  setInterval(function () {\n"
         '    fetch("/stay", {cache: "no-store", credentials: "same-origin"}).catch(function () {\n'
         "      say(closed);\n"
@@ -494,7 +566,7 @@ def _shell(inner: str, *, result: bool = False) -> str:
 
 
 def _change_link() -> str:
-    return f'<p class="change"><a href="/identity">{html.escape(EN["change_identity"])}</a></p>\n'
+    return f'<p class="change"><a href="/identity">{html.escape(ui("change_identity"))}</a></p>\n'
 
 
 def _hidden(token: str) -> str:
@@ -537,12 +609,12 @@ def _steps_panel() -> str:
         return (
             f'<li class="waiting" data-step="{number}">'
             + _indicator()
-            + f'<span class="step-label" data-template="{template}">{html.escape(text)}</span></li>'
+            + f'<span class="step-label" data-template="{template}">{html.escape(shown_copy(text))}</span></li>'
         )
 
     return (
         '<div class="steps" id="steps" hidden role="status">\n'
-        f'<p class="steps-title">{html.escape(LOOKING)}</p>\n'
+        f'<p class="steps-title">{html.escape(shown_copy(LOOKING))}</p>\n'
         "<ol>\n"
         + item(1, FINDING, "FINDING")
         + item(2, FILING_LIST, "FILING_LIST")
@@ -571,10 +643,10 @@ def _search_form(
         '<form class="search" method="post" action="/explain">\n'
         + _hidden(token)
         + _notice(notice)
-        + f'<p><label for="query">{html.escape(EN["company_or_ticker"])}</label></p>\n'
+        + f'<p><label for="query">{html.escape(ui("company_or_ticker"))}</label></p>\n'
         + '<div class="search-row">'
         + f'<input id="query" name="query" autocomplete="off"{_value(query)}{auto}>'
-        + f'<button type="submit">{html.escape(EN["explain"])}</button>'
+        + f'<button type="submit">{html.escape(ui("explain"))}</button>'
         + "</div>\n"
         + _steps_panel()
         + "</form>\n"
@@ -592,11 +664,11 @@ def _identity_form(
         '<form class="search" method="post" action="/identity">\n'
         + _hidden(token)
         + _notice(notice)
-        + f'<p><label for="name">{html.escape(EN["your_name"])}</label></p>\n'
+        + f'<p><label for="name">{html.escape(ui("your_name"))}</label></p>\n'
         + f'<p><input id="name" name="name" autocomplete="name" autofocus{_value(name)}></p>\n'
-        + f'<p><label for="email">{html.escape(EN["your_email"])}</label></p>\n'
+        + f'<p><label for="email">{html.escape(ui("your_email"))}</label></p>\n'
         + f'<p><input id="email" name="email" type="email" autocomplete="email"{_value(email)}></p>\n'
-        + f'<p><button type="submit">{html.escape(EN["save"])}</button></p>\n'
+        + f'<p><button type="submit">{html.escape(ui("save"))}</button></p>\n'
         + "</form>\n"
     )
 
@@ -609,10 +681,11 @@ def first_run_page(
     email: str = "",
     notice: str = "",
 ) -> str:
-    note = notice or (ENTER_BOTH if rejected else "")
+    note = shown_copy(notice or (ENTER_BOTH if rejected else ""))
     return _shell(
-        f"<p>{html.escape(SEC_WHY)}</p>\n"
-        + _identity_form(token, note, name=name, email=email)
+        f"<p>{html.escape(shown_copy(SEC_WHY))}</p>\n"
+        + _identity_form(token, note, name=name, email=email),
+        token=token,
     )
 
 
@@ -626,23 +699,27 @@ def edit_page(
     erase = (
         '<form method="post" action="/identity/erase">\n'
         + _hidden(token)
-        + f'<p><button type="submit">{html.escape(EN["erase"])}</button></p>\n'
+        + f'<p><button type="submit">{html.escape(ui("erase"))}</button></p>\n'
         + "</form>\n"
     )
     return _shell(
-        f"<p>{html.escape(SEC_WHY)}</p>\n"
-        + _identity_form(token, notice, name=name, email=email)
+        f"<p>{html.escape(shown_copy(SEC_WHY))}</p>\n"
+        + _identity_form(token, shown_copy(notice), name=name, email=email)
         + erase
-        + _change_link()
+        + _change_link(),
+        token=token,
     )
 
 
 def search_page(token: str = "") -> str:
-    return _shell(_search_form(token) + _change_link())
+    return _shell(_search_form(token) + _change_link(), token=token)
 
 
 def error_page(sentence: str, token: str = "", query: str = "") -> str:
-    return _shell(_search_form(token, notice=sentence, query=query) + _change_link())
+    return _shell(
+        _search_form(token, notice=shown_copy(sentence), query=query) + _change_link(),
+        token=token,
+    )
 
 
 _RATING_WORDS = (
@@ -694,7 +771,7 @@ def _choice_label(company: object) -> str:
     if shown is None:
         shown = _ticker_cik(ticker, cik) or None
     if shown is None:
-        return EN["company_fallback"]
+        return ui("company_fallback")
     return shown
 
 
@@ -718,15 +795,52 @@ def choices_page(
             + "</button>\n"
             + "</form>\n"
         )
-    body = f'<p class="notice">{html.escape(heading)}</p>\n' + "".join(buttons)
-    return _shell(body + _search_form(token, focus=False, query=query) + _change_link())
+    body = f'<p class="notice">{html.escape(shown_copy(heading))}</p>\n' + "".join(buttons)
+    return _shell(
+        body + _search_form(token, focus=False, query=query) + _change_link(),
+        token=token,
+    )
 
 
 def _plain_label(lead: str) -> str:
     text = " ".join(_TAG.sub(" ", html.unescape(lead)).split())
     text = re.sub(r"\s+was$", "", text)
     text = re.sub(r"\s+for the (fiscal year|quarter)$", "", text)
-    return text.strip()
+    text = text.strip()
+    if not german():
+        return text
+    return _german_label(text)
+
+
+def _german_label(text: str) -> str:
+    """A known card label from the cleared table. An unknown label stays the filing's words."""
+    from white_cliff.lexicon import STRINGS
+
+    exact = {
+        english: german_text
+        for ident, (english, german_text) in STRINGS.items()
+        if ident.startswith("LBL.") and "{" not in english
+    }
+    exact.update(
+        {
+            "Gross margin": phrase("LBL.gross_margin"),
+            "Operating margin": phrase("LBL.operating_margin"),
+            "Net margin": phrase("LBL.net_margin"),
+            "Revenue year over year": phrase("LBL.yoy"),
+        }
+    )
+    if text in exact:
+        return exact[text]
+    if text.endswith(" minus cash and cash equivalents"):
+        debt = text[: -len(" minus cash and cash equivalents")]
+        debt = exact.get(debt, debt)
+        return phrase("LBL.net_debt").replace("{debt_label}", debt)
+    shorter = re.sub(r" for the (year to date|reported period)$", "", text)
+    if text != shorter and shorter == "Operating cash flow" and "year to date" in text:
+        return phrase("LBL.ocf_ytd")
+    if shorter in exact:
+        return exact[shorter]
+    return text
 
 
 def _anchor_from_href(href: str) -> str:
@@ -776,7 +890,19 @@ _CHEVRON = (
 )
 
 
-def _rows(explained_html: str, additions=None) -> str:
+def _stored_amount(store, identifier: str) -> str:
+    if store is None or not identifier:
+        return ""
+    if store.has_fact(identifier):
+        fact = store.get(identifier)
+        return format_measure(fact.value, fact.unit)
+    if store.has_calc(identifier):
+        calc = store.get_calc(identifier)
+        return format_measure(calc.value, calc.unit)
+    return ""
+
+
+def _rows(explained_html: str, additions=None, store=None) -> str:
     pieces: list[str] = []
     grid: list[str] = []
     index = 0
@@ -793,11 +919,15 @@ def _rows(explained_html: str, additions=None) -> str:
         if match is None:
             continue
         label = _plain_label(match.group(1))
+        identifier = _anchor_from_href(match.group(3))
         amount = shown_amount(match.group(2))
+        if german():
+            stored = _stored_amount(store, identifier)
+            if stored:
+                amount = stored
         href = html.escape(html.unescape(match.group(3)), quote=True)
         if not label:
             continue
-        identifier = _anchor_from_href(match.group(3))
         before = ""
         after = ""
         button = ""
@@ -808,7 +938,7 @@ def _rows(explained_html: str, additions=None) -> str:
                 control = html.escape("explain-" + identifier, quote=True)
                 button = (
                     f'<button type="button" class="explain tap" aria-expanded="false" '
-                    f'aria-controls="{control}">{html.escape(EN["explain"])}{_CHEVRON}</button>'
+                    f'aria-controls="{control}">{html.escape(ui("explain"))}{_CHEVRON}</button>'
                 )
         if before:
             flush()
@@ -833,7 +963,7 @@ def _rows(explained_html: str, additions=None) -> str:
 
 def _report_link() -> str:
     href = html.escape(ISSUE_URL, quote=True)
-    return f'<p class="change"><a href="{href}">{html.escape(EN["report_error"])}</a></p>\n'
+    return f'<p class="change"><a href="{href}">{html.escape(ui("report_error"))}</a></p>\n'
 
 
 def _company_name(
@@ -892,10 +1022,10 @@ def result_page(
     filing = ""
     if url.startswith("https://www.sec.gov/") or url.startswith("https://data.sec.gov/"):
         href = html.escape(url, quote=True)
-        filing = f'<p class="filing"><a href="{href}">{html.escape(EN["the_filing"])}</a></p>\n'
+        filing = f'<p class="filing"><a href="{href}">{html.escape(ui("the_filing"))}</a></p>\n'
     inner = (
         hero
-        + _rows(explained.html, additions)
+        + _rows(explained.html, additions, explained.store)
         + additions.quality
         + filing
         + '<div class="next">\n'
@@ -904,4 +1034,4 @@ def result_page(
         + _change_link()
         + "</div>\n"
     )
-    return _shell(inner, result=True)
+    return _shell(inner, result=True, token=token)

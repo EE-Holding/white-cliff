@@ -1,4 +1,4 @@
-"""English strings for the page frame. The code reads this table and no other language."""
+"""English strings for the page frame. German uses the cleared language table."""
 
 from white_cliff.disclaimer import DISCLAIMER
 

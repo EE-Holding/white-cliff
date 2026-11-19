@@ -50,7 +50,16 @@ from white_cliff.desktop_copy import (
 )
 from white_cliff.disclaimer import OutputRefused
 from white_cliff.fetch import strip_edgar_script
-from white_cliff.identity import app_data_dir, cache_dir, erase_identity, load_identity, save_identity
+from white_cliff.i18n import focus_language, reset_language, set_language
+from white_cliff.identity import (
+    app_data_dir,
+    cache_dir,
+    erase_identity,
+    load_identity,
+    load_language,
+    save_identity,
+    save_language,
+)
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.present import (
     choices_page,
@@ -152,6 +161,7 @@ class Desktop:
         self.step_n = 0
         self.reading = READING
         self.steps: list[str] = []
+        self.screen: tuple[str, dict] = ("home", {})
 
     @classmethod
     def create(cls, transport=None, sleep=time.sleep, clock=time.monotonic):
@@ -160,6 +170,24 @@ class Desktop:
     def handle(self, method: str, path: str, form: dict[str, str]) -> Page:
         self.last_seen = self.clock()
         path = path.split("?", 1)[0] or "/"
+        language_token = set_language(load_language(self.identity_file))
+        try:
+            return self._dispatch(method, path, form)
+        finally:
+            reset_language(language_token)
+
+    def _dispatch(self, method: str, path: str, form: dict[str, str]) -> Page:
+        if method == "POST" and path == "/language":
+            choice = form.get("language", "en")
+            if choice not in {"en", "de"}:
+                choice = "en"
+            save_language(self.identity_file, choice)
+            set_language(choice)
+            marker = focus_language.set(True)
+            try:
+                return Page(200, self._render_screen())
+            finally:
+                focus_language.reset(marker)
         if path == "/stay":
             return Page(204, "")
         if method == "GET" and path == "/progress":
@@ -172,8 +200,8 @@ class Desktop:
             return Page(303, "", location="/")
         if method == "GET" and path == "/identity":
             if load_identity(self.identity_file) is None:
-                return Page(200, first_run_page(token=self.token))
-            return Page(200, edit_page(token=self.token))
+                return self._remember("first")
+            return self._remember("edit")
         if method == "POST" and path == "/explain":
             return self._lookup(form.get("query", ""), None)
         if method == "POST" and path == "/pick":
@@ -182,10 +210,33 @@ class Desktop:
             return self._home()
         return self._home()
 
+    def _remember(self, kind: str, **kwargs) -> Page:
+        self.screen = (kind, kwargs)
+        return Page(200, self._render_screen())
+
+    def _render_screen(self) -> str:
+        kind, kwargs = self.screen
+        token = self.token
+        if kind == "first":
+            return first_run_page(token=token, **kwargs)
+        if kind == "edit":
+            return edit_page(token, **kwargs)
+        if kind == "search":
+            return search_page(token)
+        if kind == "choices":
+            return choices_page(kwargs["heading"], kwargs["companies"], token, kwargs.get("query", ""))
+        if kind == "error":
+            return error_page(kwargs["sentence"], token=token, query=kwargs.get("query", ""))
+        if kind == "result":
+            return result_page(token=token, **kwargs)
+        if load_identity(self.identity_file) is None:
+            return first_run_page(token=token)
+        return search_page(token)
+
     def _home(self) -> Page:
         if load_identity(self.identity_file) is None:
-            return Page(200, first_run_page(token=self.token))
-        return Page(200, search_page(token=self.token))
+            return self._remember("first")
+        return self._remember("search")
 
     def _save(self, form: dict[str, str]) -> Page:
         saved = save_identity(
@@ -197,16 +248,8 @@ class Desktop:
             name = form.get("name", "")
             email = form.get("email", "")
             if load_identity(self.identity_file) is None:
-                return Page(
-                    200,
-                    first_run_page(
-                        rejected=True, token=self.token, name=name, email=email
-                    ),
-                )
-            return Page(
-                200,
-                edit_page(self.token, name=name, email=email, notice=ENTER_BOTH),
-            )
+                return self._remember("first", rejected=True, name=name, email=email)
+            return self._remember("edit", name=name, email=email, notice=ENTER_BOTH)
         return Page(303, "", location="/")
 
     def _client(self) -> SecClient | None:
@@ -238,7 +281,7 @@ class Desktop:
     def _lookup(self, query: str, cik: str | None) -> Page:
         client = self._client()
         if client is None:
-            return Page(200, first_run_page(token=self.token))
+            return self._remember("first")
         self.steps = []
         self.step_n = 0
         self.reading = READING
@@ -248,15 +291,13 @@ class Desktop:
             else:
                 found = self._search(client, query)
                 if isinstance(found, SeveralMatches):
-                    return Page(
-                        200,
-                        choices_page(SEVERAL, found.companies, self.token, query),
+                    return self._remember(
+                        "choices", heading=SEVERAL, companies=found.companies, query=query
                     )
                 if isinstance(found, NoMatch):
                     if found.close:
-                        return Page(
-                            200,
-                            choices_page(CLOSE_INTRO, found.close, self.token, query),
+                        return self._remember(
+                            "choices", heading=CLOSE_INTRO, companies=found.close, query=query
                         )
                     return self._fail(NO_MATCH, query)
                 if not isinstance(found, OneMatch):
@@ -285,27 +326,24 @@ class Desktop:
             return self._fail(CANNOT_EXPLAIN, query)
         except Exception:
             return self._fail(CANNOT_EXPLAIN, query)
-        return Page(
-            200,
-            result_page(
-                explained,
-                form=filing.form,
-                period=filing.period,
-                filed=filing.filed,
-                url=filing.url,
-                token=self.token,
-                company=company,
-                ticker=ticker,
-                cik=filing.cik,
-                focus=loaded.focus,
-                fiscal_year_end=loaded.fiscal_year_end,
-                prior_facts=prior.store.facts() if prior is not None else None,
-                prior_end=prior.period_end if prior is not None else None,
-            ),
+        return self._remember(
+            "result",
+            explained=explained,
+            form=filing.form,
+            period=filing.period,
+            filed=filing.filed,
+            url=filing.url,
+            company=company,
+            ticker=ticker,
+            cik=filing.cik,
+            focus=loaded.focus,
+            fiscal_year_end=loaded.fiscal_year_end,
+            prior_facts=prior.store.facts() if prior is not None else None,
+            prior_end=prior.period_end if prior is not None else None,
         )
 
     def _fail(self, sentence: str, query: str) -> Page:
-        return Page(200, error_page(sentence, token=self.token, query=query))
+        return self._remember("error", sentence=sentence, query=query)
 
     def _search(self, client: SecClient, query: str):
         if not query.strip():
