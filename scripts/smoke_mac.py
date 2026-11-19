@@ -49,7 +49,16 @@ class PageError(RuntimeError):
 class DevTools:
     def __init__(self, ws_url: str) -> None:
         self.ws_url = ws_url
-        parsed = urllib.parse.urlsplit(ws_url)
+        self._connect()
+
+    def _connect(self) -> None:
+        old = getattr(self, "sock", None)
+        if old is not None:
+            try:
+                old.close()
+            except OSError:
+                pass
+        parsed = urllib.parse.urlsplit(self.ws_url)
         self.sock = socket.create_connection((parsed.hostname, parsed.port or 80), timeout=10)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         path = parsed.path or "/"
@@ -78,6 +87,15 @@ class DevTools:
         self._next = 0
 
     def call(self, method: str, params: dict | None = None, timeout: float = 20):
+        try:
+            return self._call(method, params, timeout)
+        except (BrokenPipeError, ConnectionError, TimeoutError):
+            self._connect()
+            self._call("Page.enable", {}, timeout)
+            self._call("Runtime.enable", {}, timeout)
+            return self._call(method, params, timeout)
+
+    def _call(self, method: str, params: dict | None = None, timeout: float = 20):
         self._next += 1
         ident = self._next
         payload = json.dumps({"id": ident, "method": method, "params": params or {}}).encode()
