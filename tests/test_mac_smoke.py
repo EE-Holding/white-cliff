@@ -1,7 +1,9 @@
 """The Mac jobs smoke the built app, and the driver clicks the real buttons."""
 
 import importlib.util
+import os
 import re
+import signal
 import struct
 import threading
 from pathlib import Path
@@ -80,6 +82,86 @@ def test_both_mac_jobs_smoke_the_built_binary():
         if match.group(0).rsplit("@", 1)[1].lower() not in _ALLOWED_HOSTS
     ]
     assert offenders == []
+
+
+def _ink(driver, data: bytes, x: int, y: int) -> bool:
+    width, height, color, _depth, rows = driver._png_rows(data)
+    if y >= height or x >= width:
+        return False
+    channels = {0: 1, 2: 3, 6: 4}[color]
+    pixel = rows[y][x * channels : (x + 1) * channels]
+    return bool(pixel) and min(pixel[:3]) < 180
+
+
+def _band(driver, data: bytes, top: int, bottom: int) -> bool:
+    width, height, color, _depth, rows = driver._png_rows(data)
+    channels = {0: 1, 2: 3, 6: 4}[color]
+    for y in range(top, min(bottom, height), 2):
+        for x in range(8, min(width, 280), 2):
+            pixel = rows[y][x * channels : (x + 1) * channels]
+            if pixel and min(pixel[:3]) < 180:
+                return True
+    return False
+
+
+def test_intel_photo_shows_the_live_window(tmp_path):
+    """A copied document drops a canvas painted by script and the typed ticker."""
+    driver = _driver()
+    if driver.chrome_binary() is None:
+        pytest.skip("chrome is not installed")
+    page_path = tmp_path / "page.html"
+    page_path.write_text(
+        "<!doctype html><style>"
+        "html,body{margin:0;background:#fff}"
+        "canvas{position:absolute;left:0;top:0}"
+        "input{position:absolute;left:0;top:160px;font-size:64px;width:420px;height:80px;"
+        "border:0;background:#fff}"
+        "</style><canvas id=c width=100 height=100></canvas><input id=q>",
+        encoding="utf-8",
+    )
+    chrome, page = driver._open_chrome(page_path.as_uri())
+    try:
+        driver._eval(
+            page,
+            """(() => {
+              const canvas = document.getElementById("c");
+              const pen = canvas.getContext("2d");
+              pen.fillStyle = "#000";
+              pen.fillRect(0, 0, 100, 100);
+              const field = document.getElementById("q");
+              field.value = "NVDA";
+              return field.value;
+            })()""",
+        )
+        painted = driver._intel_photo(
+            page, tmp_path, "painted.png", 1100, 400, keep_scroll=False, reveal=False
+        )
+        driver._eval(
+            page,
+            """(() => {
+              const canvas = document.getElementById("c");
+              const pen = canvas.getContext("2d");
+              pen.fillStyle = "#fff";
+              pen.fillRect(0, 0, 100, 100);
+              document.getElementById("q").value = "";
+              return true;
+            })()""",
+        )
+        cleared = driver._intel_photo(
+            page, tmp_path, "cleared.png", 1100, 400, keep_scroll=False, reveal=False
+        )
+    finally:
+        page.close()
+        if chrome.poll() is None:
+            os.killpg(chrome.pid, signal.SIGTERM)
+    painted_bytes = painted.read_bytes()
+    cleared_bytes = cleared.read_bytes()
+    assert struct.unpack(">I", painted_bytes[16:20])[0] == 1100
+    assert struct.unpack(">I", cleared_bytes[16:20])[0] == 1100
+    assert _ink(driver, painted_bytes, 20, 20)
+    assert not _ink(driver, cleared_bytes, 20, 20)
+    assert _band(driver, painted_bytes, 160, 240)
+    assert not _band(driver, cleared_bytes, 160, 240)
 
 
 def test_launch_resolves_a_relative_binary(tmp_path, monkeypatch):

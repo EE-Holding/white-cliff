@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import platform
-import re
 import shutil
 import signal
 import socket
@@ -21,11 +20,7 @@ import urllib.request
 import zlib
 from pathlib import Path
 
-from white_cliff.disclaimer import DISCLAIMER
-from white_cliff.lexicon import STRINGS
-
 TEST_NAME = "White Cliff Test"
-GERMAN_DISCLAIMER = STRINGS["§1.DISCLAIMER"][1]
 ARCH = platform.machine()
 
 
@@ -53,16 +48,7 @@ class PageError(RuntimeError):
 class DevTools:
     def __init__(self, ws_url: str) -> None:
         self.ws_url = ws_url
-        self._connect()
-
-    def _connect(self) -> None:
-        old = getattr(self, "sock", None)
-        if old is not None:
-            try:
-                old.close()
-            except OSError:
-                pass
-        parsed = urllib.parse.urlsplit(self.ws_url)
+        parsed = urllib.parse.urlsplit(ws_url)
         self.sock = socket.create_connection((parsed.hostname, parsed.port or 80), timeout=10)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
         path = parsed.path or "/"
@@ -89,17 +75,9 @@ class DevTools:
             raise PageError(data[:200])
         self._buf = data.split(b"\r\n\r\n", 1)[1]
         self._next = 0
+        self._events: list[dict] = []
 
     def call(self, method: str, params: dict | None = None, timeout: float = 20):
-        try:
-            return self._call(method, params, timeout)
-        except (BrokenPipeError, ConnectionError, TimeoutError):
-            self._connect()
-            self._call("Page.enable", {}, timeout)
-            self._call("Runtime.enable", {}, timeout)
-            return self._call(method, params, timeout)
-
-    def _call(self, method: str, params: dict | None = None, timeout: float = 20):
         self._next += 1
         ident = self._next
         payload = json.dumps({"id": ident, "method": method, "params": params or {}}).encode()
@@ -114,7 +92,27 @@ class DevTools:
                 if "error" in data:
                     raise PageError(data["error"])
                 return data.get("result", {})
+            if data.get("method"):
+                self._events.append(data)
         raise PageError(method)
+
+    def next_event(self, method: str, timeout: float) -> dict:
+        deadline = time.time() + timeout
+        while True:
+            for index, event in enumerate(self._events):
+                if event.get("method") == method:
+                    return self._events.pop(index)
+            if time.time() >= deadline:
+                raise PageError(method)
+            try:
+                message = self._read(deadline)
+            except TimeoutError:
+                continue
+            if not message:
+                continue
+            data = json.loads(message)
+            if data.get("method"):
+                self._events.append(data)
 
     def close(self) -> None:
         sock = getattr(self, "sock", None)
@@ -332,61 +330,61 @@ def _wide(page: DevTools, width: int) -> bool:
         return False
 
 
-_DEBUG_PORT = 0
-_CHROME_ERR: Path | None = None
-
-
-def _document_html(page: DevTools) -> str:
-    root = page.call("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
-    found = page.call("DOM.querySelector", {"nodeId": root, "selector": "html"})
-    node = int(found.get("nodeId") or 0)
-    if not node:
-        raise PageError("the page had no document")
-    return page.call("DOM.getOuterHTML", {"nodeId": node})["outerHTML"]
-
-
-def _open_tab() -> tuple[DevTools, str]:
-    """A new tab. Its screenshot cannot tile the Intel window or stick the next size."""
-    last: Exception | None = None
-    url = f"http://127.0.0.1:{_DEBUG_PORT}/json/new?about:blank"
-    for method in ("PUT", "GET"):
-        try:
-            request = urllib.request.Request(url, method=method)
-            with urllib.request.urlopen(request, timeout=5) as response:
-                info = json.loads(response.read().decode("utf-8"))
-            if isinstance(info, list):
-                info = info[0]
-            return DevTools(info["webSocketDebuggerUrl"]), str(info["id"])
-        except (OSError, KeyError, json.JSONDecodeError, PageError) as exc:
-            last = exc
-    raise PageError(last)
-
-
-def _close_tab(target_id: str) -> None:
-    url = f"http://127.0.0.1:{_DEBUG_PORT}/json/close/{target_id}"
+def _place(page: DevTools, width: int, height: int) -> None:
+    """Match the screen to this viewport. The Intel display is 906px wide."""
+    height_px = min(int(height), 900)
     try:
-        urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=5).read()
-    except OSError:
+        page.call("Emulation.clearDeviceMetricsOverride")
+    except PageError:
         pass
+    try:
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": int(width),
+                "height": height_px,
+                "deviceScaleFactor": 1,
+                "mobile": False,
+                "screenWidth": int(width),
+                "screenHeight": height_px,
+            },
+        )
+    except PageError:
+        _window(page, width, height_px)
 
 
-def _static_ring(html: str) -> str:
-    """The reduced-motion ring, written into the copy so the first paint is already still."""
-    html = html.replace(
-        '<circle class="arc"',
-        '<circle class="arc" style="display:none"',
-        1,
-    )
-    html = html.replace(
-        '<circle class="dot"',
-        '<circle class="dot" style="display:block"',
-        1,
-    )
-    return html.replace(
-        '<circle class="track"',
-        '<circle class="track" style="stroke:#0a4b8f;stroke-width:4"',
-        1,
-    )
+def _live_frame(page: DevTools) -> bytes:
+    """One frame of this window.
+
+    A surface screenshot repeats the Intel page beside itself and then leaves
+    the next layout at the 906px display.
+    """
+    page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+    event: dict | None = None
+    try:
+        event = page.next_event("Page.screencastFrame", 5)
+        if not _PAUSED:
+            try:
+                event = page.next_event("Page.screencastFrame", 0.4)
+            except (PageError, TimeoutError):
+                pass
+        params = (event or {}).get("params") or {}
+        session = params.get("sessionId")
+        if session is not None:
+            try:
+                page.call("Page.screencastFrameAck", {"sessionId": session})
+            except (PageError, TimeoutError, OSError):
+                pass
+    finally:
+        try:
+            page.call("Page.stopScreencast")
+        except (PageError, TimeoutError, OSError):
+            pass
+    params = (event or {}).get("params") or {}
+    encoded = params.get("data")
+    if not isinstance(encoded, str) or not encoded:
+        raise PageError("the window had no frame")
+    return base64.b64decode(encoded)
 
 
 def _intel_photo(
@@ -400,102 +398,33 @@ def _intel_photo(
     reveal: bool,
     motion: str = "",
 ) -> Path:
-    """Copy the page into a new tab and photograph that viewport once."""
-    html = _document_html(page)
-    if motion == "reduce":
-        html = _static_ring(html)
-    scroll_y = 0
-    if keep_scroll and not _PAUSED:
-        try:
-            scroll_y = int(_eval(page, "window.scrollY") or 0)
-        except (PageError, TimeoutError, OSError):
-            scroll_y = 0
+    """Photograph the live window. A copied document hides a paint fault and the typed ticker."""
+    del reveal
     wanted = int(width or _css_width(page) or 1100)
+    height_px = min(int(height or 900), 900)
     last: Exception | None = None
-    for _ in range(2):
-        tab, target_id = _open_tab()
+    for attempt in range(2):
+        fresh = DevTools(page.ws_url)
         try:
-            tab.call("Page.enable")
-            tab.call("Runtime.enable")
-            frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
-            tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
-            height_px = min(int(height or 900), 900)
-            tab.call(
-                "Emulation.setDeviceMetricsOverride",
-                {
-                    "width": wanted,
-                    "height": height_px,
-                    "deviceScaleFactor": 1,
-                    "mobile": False,
-                    "screenWidth": wanted,
-                    "screenHeight": height_px,
-                },
-            )
-            if motion or (reveal and not _PAUSED):
-                _motion(tab, motion or "reduce")
-            elif not motion:
-                _motion(tab, "no-preference")
+            fresh.call("Page.enable")
+            fresh.call("Runtime.enable")
+            if not _PAUSED:
+                if attempt or (width and not _wide(fresh, wanted)):
+                    _place(fresh, wanted, height_px)
+                    deadline = time.time() + 2
+                    while time.time() < deadline and not _wide(fresh, wanted):
+                        time.sleep(0.05)
+                if not _wide(fresh, wanted):
+                    raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted}")
+                if motion:
+                    _motion(fresh, motion)
+                if not keep_scroll:
+                    _eval(fresh, "window.scrollTo(0, 0)")
                 _eval(
-                    tab,
-                    """(() => {
-                      const arc = document.querySelector("li.active .arc");
-                      const dot = document.querySelector("li.active .dot");
-                      const track = document.querySelector("li.active .track");
-                      if (arc) {
-                        arc.style.display = "inline";
-                        arc.style.transform = "rotate(140deg)";
-                      }
-                      if (dot) dot.style.display = "none";
-                      if (track) {
-                        track.style.stroke = "#d2d2d7";
-                        track.style.strokeWidth = "3px";
-                      }
-                      return true;
-                    })()""",
+                    fresh,
+                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
                 )
-            if motion:
-                shown = ""
-                deadline = time.time() + 2
-                while time.time() < deadline:
-                    shown = _eval(
-                        tab,
-                        """(() => {
-                          const arc = document.querySelector("li.active .arc");
-                          return arc ? getComputedStyle(arc).display : "";
-                        })()""",
-                    )
-                    if shown == "none":
-                        break
-                    time.sleep(0.05)
-                else:
-                    raise PageError("reduced motion was not emulated")
-                _eval(
-                    tab,
-                    """(() => {
-                      const arc = document.querySelector("li.active .arc");
-                      const dot = document.querySelector("li.active .dot");
-                      if (arc) arc.style.display = "none";
-                      if (dot) dot.style.display = "block";
-                      return true;
-                    })()""",
-                )
-            if scroll_y:
-                _eval(tab, f"window.scrollTo(0, {scroll_y})")
-            _eval(
-                tab,
-                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-            )
-            deadline = time.time() + 2
-            while time.time() < deadline and not _wide(tab, wanted):
-                time.sleep(0.05)
-            if not _wide(tab, wanted):
-                raise PageError(f"the window stayed at {_css_width(tab)}, wanted {wanted}")
-            result = tab.call(
-                "Page.captureScreenshot",
-                {"format": "png"},
-                timeout=60,
-            )
-            data = base64.b64decode(result["data"])
+            data = _live_frame(fresh)
             got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
             if len(data) < 1000 or got != wanted:
                 raise PageError(f"{name} is {got}px wide, wanted {wanted}")
@@ -510,8 +439,7 @@ def _intel_photo(
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
         finally:
-            tab.close()
-            _close_tab(target_id)
+            fresh.close()
     raise PageError(last)
 
 
@@ -593,509 +521,6 @@ def _shot(
             if fresh is not page:
                 fresh.close()
     raise PageError(last)
-
-
-def _print_preview(page: DevTools, out_dir: Path, *, shot: str | None = None) -> None:
-    """Print the open page. The optional shot is the 1280 print preview."""
-    tab = page
-    target_id = ""
-    try:
-        if _intel():
-            html = _document_html(page)
-            tab, target_id = _open_tab()
-            tab.call("Page.enable")
-            tab.call("Runtime.enable")
-            frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
-            tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
-        _window(tab, 1280, 2200)
-        tab.call("Emulation.setEmulatedMedia", {"media": "print"})
-        deadline = time.time() + 2
-        while time.time() < deadline:
-            hidden = _eval(tab, "getComputedStyle(document.querySelector('.top')).display")
-            if hidden == "none" and _wide(tab, 1280):
-                break
-            time.sleep(0.05)
-        else:
-            raise PageError("print styles were not applied")
-        _eval(tab, "window.scrollTo(0, 0)")
-        if shot is not None:
-            image = tab.call(
-                "Page.captureScreenshot",
-                {"format": "png", "optimizeForSpeed": True},
-                timeout=60,
-            )
-            data = base64.b64decode(image["data"])
-            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-            if got != 1280:
-                raise PageError(f"print preview is {got}px wide")
-            path = out_dir / shot
-            path.write_bytes(data)
-        printed = tab.call(
-            "Page.printToPDF",
-            {
-                "printBackground": True,
-                "displayHeaderFooter": False,
-                "paperWidth": 8.5,
-                "paperHeight": 11,
-            },
-            timeout=60,
-        )
-        pdf = base64.b64decode(printed["data"])
-        _require_disclaimer_on_every_page(tab, pdf)
-    finally:
-        try:
-            tab.call("Emulation.setEmulatedMedia", {"media": "screen"})
-        except PageError:
-            pass
-        if target_id:
-            tab.close()
-            _close_tab(target_id)
-
-
-_WORD = re.compile(r"[A-Za-z]{3,}")
-_COMMON = frozenset(
-    "the and for was from with million quarter filing this that are not year "
-    "rose percent company report".split()
-)
-
-
-def _same_line(text: str) -> str:
-    for mark in ("\u00ad", "\u200b", "\ufeff", "\u2060"):
-        text = text.replace(mark, "")
-    return " ".join(text.split())
-
-
-def _disclaimer_text(text: str) -> str:
-    """The disclaimer compared byte for byte, with whitespace collapsed and nothing else changed."""
-    return " ".join(text.split())
-
-
-def _page_can_be_read(text: str) -> bool:
-    """Glyph ids that did not decode are not a page we can read."""
-    flat = _same_line(text)
-    if sum(char.isalpha() for char in flat) < 40:
-        return False
-    if "sec.gov" in flat:
-        return True
-    words = _WORD.findall(flat)
-    if len(words) < 6:
-        return False
-    return sum(word.lower() in _COMMON for word in words) >= 2
-
-
-def _page_kind(text: str) -> str:
-    flat = _same_line(text)
-    if sum(char.isalpha() for char in flat) < 40 and "sec.gov" not in flat:
-        return "blank"
-    if _page_can_be_read(text):
-        return "readable"
-    return "unreadable"
-
-
-def _read_disclaimer_pages(texts: list[str], *, german: bool = False) -> str:
-    """Empty only when every page can be read and carries the full line.
-
-    A PDF whose pages cannot be read at all is 'unreadable'. A mix of readable
-    and unreadable pages is a failure, not a reason to skip the unreadable ones.
-    """
-    kinds = [_page_kind(text) for text in texts]
-    if not any(kind == "readable" for kind in kinds):
-        return "unreadable"
-    if any(kind == "unreadable" for kind in kinds):
-        return "a printed page could not be read"
-    pages = [text for text, kind in zip(texts, kinds) if kind == "readable"]
-    if len(pages) < 2:
-        return "the print summary was one page"
-    lines = [DISCLAIMER]
-    if german:
-        lines.append(GERMAN_DISCLAIMER)
-    for text in pages:
-        folded = _disclaimer_text(text)
-        for line in lines:
-            if _disclaimer_text(line) not in folded:
-                sample = re.sub(r"\S+@\S+", "", _same_line(text))[:80]
-                return f"a printed page does not carry the disclaimer ({sample})"
-    return ""
-
-
-def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
-    """The full disclaimer is on each page. Some PDFs hide that writing in a font map."""
-    lang = _eval(tab, "document.documentElement.lang")
-    german = lang == "de"
-    verdict = _read_disclaimer_pages(_pdf_page_texts(pdf), german=german)
-    if verdict == "":
-        return
-    if verdict != "unreadable":
-        raise PageError(verdict)
-    page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
-    if page_count < 2:
-        raise PageError("the print summary was one page")
-    header = _eval(
-        tab,
-        """(() => {
-          const head = document.querySelector("thead.print-head");
-          if (!head) return {text: "", display: "", lang: document.documentElement.lang};
-          return {
-            text: head.innerText,
-            display: getComputedStyle(head).display,
-            lang: document.documentElement.lang
-          };
-        })()""",
-    )
-    if not isinstance(header, dict):
-        raise PageError("a printed page does not carry the disclaimer")
-    german = header.get("lang") == "de" or german
-    text = str(header.get("text") or "")
-    lines = [DISCLAIMER]
-    if german:
-        lines.append(GERMAN_DISCLAIMER)
-    if any(_disclaimer_text(line) not in _disclaimer_text(text) for line in lines):
-        raise PageError("a printed page does not carry the disclaimer")
-    if header.get("display") != "table-header-group":
-        raise PageError("the disclaimer does not repeat on each printed page")
-
-
-def _pdf_objects(data: bytes) -> dict[int, tuple[bytes, bytes | None]]:
-    """Object number to (dictionary, decoded stream). A stream stays with the page that draws it."""
-    integers = {
-        int(match.group(1)): int(match.group(2))
-        for match in re.finditer(rb"(\d+)\s+\d+\s+obj\s+(\d+)\s+endobj", data)
-    }
-    objects: dict[int, tuple[bytes, bytes | None]] = {}
-    cursor = 0
-    while True:
-        match = re.search(rb"(\d+)\s+\d+\s+obj\b", data[cursor:])
-        if match is None:
-            break
-        number = int(match.group(1))
-        start = cursor + match.end()
-        endobj = data.find(b"endobj", start)
-        if endobj < 0:
-            break
-        window = data[start:endobj]
-        stream_at = re.search(rb"stream\r?\n", window)
-        if stream_at is None:
-            objects[number] = (window, None)
-            cursor = endobj + len(b"endobj")
-            continue
-        dictionary = window[: stream_at.start()]
-        raw_at = start + stream_at.end()
-        indirect = re.search(rb"/Length\s+(\d+)\s+\d+\s+R", dictionary)
-        direct = re.search(rb"/Length\s+(\d+)\b", dictionary)
-        if indirect:
-            length = integers.get(int(indirect.group(1)), 0)
-            raw = data[raw_at : raw_at + length]
-            cursor = data.find(b"endobj", raw_at + length)
-        elif direct:
-            length = int(direct.group(1))
-            raw = data[raw_at : raw_at + length]
-            cursor = data.find(b"endobj", raw_at + length)
-        else:
-            endstream = data.find(b"endstream", raw_at)
-            raw = data[raw_at:endstream].strip(b"\r\n")
-            cursor = data.find(b"endobj", endstream)
-        if cursor < 0:
-            break
-        decoded: bytes | None
-        if b"FlateDecode" in dictionary or raw.startswith((b"\x78\x9c", b"\x78\xda", b"\x78\x01")):
-            try:
-                decoded = zlib.decompress(raw)
-            except zlib.error:
-                decoded = None
-        else:
-            decoded = raw
-        objects[number] = (dictionary, decoded)
-        cursor += len(b"endobj")
-    return objects
-
-
-def _pdf_xobjects(dictionary: bytes, objects: dict[int, tuple[bytes, bytes | None]]) -> dict[str, int]:
-    found = re.search(rb"/XObject\s*<<([^>]*)>>", dictionary, re.S)
-    if found is None:
-        indirect = re.search(rb"/XObject\s+(\d+)\s+\d+\s+R", dictionary)
-        if indirect and int(indirect.group(1)) in objects:
-            found = re.search(
-                rb"<<([^>]*)>>",
-                objects[int(indirect.group(1))][0],
-                re.S,
-            )
-    if found is None:
-        return {}
-    return {
-        name.decode(): int(number)
-        for name, number in re.findall(rb"/([A-Za-z0-9]+)\s+(\d+)\s+\d+\s+R", found.group(1))
-    }
-
-
-def _pdf_resource_map(dictionary: bytes, objects: dict[int, tuple[bytes, bytes | None]]) -> dict[str, int]:
-    """Form names this page can paint, including names inherited from its page tree."""
-    mapping = _pdf_xobjects(dictionary, objects)
-    resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
-    if resource and int(resource.group(1)) in objects:
-        mapping = _pdf_xobjects(objects[int(resource.group(1))][0], objects) or mapping
-    seen: set[int] = set()
-    parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", dictionary)
-    while parent and int(parent.group(1)) not in seen and int(parent.group(1)) in objects:
-        number = int(parent.group(1))
-        seen.add(number)
-        parent_dict = objects[number][0]
-        mapping = mapping or _pdf_resource_map(parent_dict, objects)
-        parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", parent_dict)
-    return mapping
-
-
-def _pdf_page_streams(data: bytes) -> list[bytes]:
-    """One blob per page: the page contents plus each form that page paints."""
-    objects = _pdf_objects(data)
-    pages: list[tuple[int, bytes]] = []
-    for number, (dictionary, _stream) in objects.items():
-        if re.search(rb"/Type\s*/Page(?!s)", dictionary) is None:
-            continue
-        array = re.search(rb"/Contents\s*\[([^\]]*)\]", dictionary)
-        if array is not None:
-            contents = [int(item) for item in re.findall(rb"(\d+)\s+\d+\s+R", array.group(1))]
-        else:
-            single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
-            contents = [int(single.group(1))] if single else []
-        mapping = _pdf_resource_map(dictionary, objects)
-        chunks: list[bytes] = []
-        seen: set[int] = set()
-
-        def paint(obj_num: int, names: dict[str, int]) -> None:
-            if obj_num in seen or obj_num not in objects:
-                return
-            seen.add(obj_num)
-            form_dict, blob = objects[obj_num]
-            if b"/Subtype /Image" in form_dict or b"/Subtype/Image" in form_dict:
-                return
-            local = _pdf_xobjects(form_dict, objects) or names
-            if blob:
-                chunks.append(blob)
-            if not blob:
-                return
-            for name in re.findall(rb"/([A-Za-z0-9]+)\s+Do\b", blob):
-                paint(local.get(name.decode(), -1), local)
-
-        for content in contents:
-            paint(content, mapping)
-        if chunks:
-            pages.append((number, b"\n".join(chunks)))
-    if pages:
-        return [blob for _number, blob in sorted(pages)]
-    streams = [
-        blob
-        for _dictionary, blob in objects.values()
-        if blob and b"792" in blob and (b"Tj" in blob or b"TJ" in blob)
-    ]
-    return streams
-
-
-def _pdf_page_texts(data: bytes) -> list[str]:
-    """Visible writing on each letter page. Each font keeps its own glyph map."""
-    objects = _pdf_objects(data)
-    streams = [blob for _dictionary, blob in objects.values() if blob]
-
-    def character(hex_digits: str) -> str:
-        if len(hex_digits) > 4:
-            return "".join(
-                chr(int(hex_digits[index : index + 4], 16))
-                for index in range(0, len(hex_digits) - 3, 4)
-            )
-        code = int(hex_digits, 16)
-        return chr(code) if code <= 0x10FFFF else ""
-
-    def font_map(blob: bytes) -> dict[int, str]:
-        cmap: dict[int, str] = {}
-        for match in re.finditer(rb"beginbfrange\s+(.*?)endbfrange", blob, re.S):
-            body = match.group(1)
-            for row in re.finditer(
-                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
-                body,
-            ):
-                left, right = int(row.group(1), 16), int(row.group(2), 16)
-                dest = int(row.group(3), 16)
-                for offset, src in enumerate(range(left, right + 1)):
-                    code = dest + offset
-                    if code <= 0x10FFFF:
-                        cmap[src] = chr(code)
-            for row in re.finditer(
-                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]*)\]",
-                body,
-            ):
-                left = int(row.group(1), 16)
-                for offset, dest in enumerate(re.findall(rb"<([0-9A-Fa-f]+)>", row.group(3))):
-                    cmap[left + offset] = character(dest.decode())
-        for match in re.finditer(rb"beginbfchar\s+(.*?)endbfchar", blob, re.S):
-            for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", match.group(1)):
-                cmap[int(row.group(1), 16)] = character(row.group(2).decode())
-        return cmap
-
-    maps = [font_map(stream) for stream in streams if b"beginbfchar" in stream or b"beginbfrange" in stream]
-    maps = [cmap for cmap in maps if cmap]
-
-    def literal(body: bytes) -> str:
-        chars: list[str] = []
-        index = 0
-        while index < len(body):
-            byte = body[index]
-            if byte == 0x5C and index + 1 < len(body):
-                index += 1
-                nxt = body[index]
-                named = {
-                    ord("n"): "\n",
-                    ord("r"): "\r",
-                    ord("t"): "\t",
-                    ord("("): "(",
-                    ord(")"): ")",
-                    ord("\\"): "\\",
-                }
-                if nxt in named:
-                    chars.append(named[nxt])
-                elif 48 <= nxt <= 55:
-                    digits = bytes([nxt])
-                    while index + 1 < len(body) and len(digits) < 3 and 48 <= body[index + 1] <= 55:
-                        index += 1
-                        digits += bytes([body[index]])
-                    chars.append(chr(int(digits, 8)))
-                else:
-                    chars.append(chr(nxt))
-            else:
-                chars.append(chr(byte))
-            index += 1
-        return "".join(chars)
-
-    def glyphs(hex_text: str, cmap: dict[int, str] | None, width: int) -> str:
-        raw = bytes.fromhex(hex_text)
-        chars = []
-        for index in range(0, len(raw) - width + 1, width):
-            code = int.from_bytes(raw[index : index + width], "big")
-            if cmap is None:
-                chars.append(chr(code) if code <= 0x10FFFF else "\ufffd")
-            else:
-                chars.append(cmap.get(code, "\ufffd"))
-        return "".join(chars)
-
-    def page_fonts(dictionary: bytes) -> dict[str, dict[int, str]]:
-        found = re.search(rb"/Font\s*<<([^>]*)>>", dictionary, re.S)
-        if found is None:
-            resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
-            if resource and int(resource.group(1)) in objects:
-                return page_fonts(objects[int(resource.group(1))][0])
-            parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", dictionary)
-            if parent and int(parent.group(1)) in objects:
-                return page_fonts(objects[int(parent.group(1))][0])
-            return {}
-        found_maps: dict[str, dict[int, str]] = {}
-        for name, number in re.findall(rb"/([A-Za-z0-9]+)\s+(\d+)\s+\d+\s+R", found.group(1)):
-            font, _blob = objects[int(number)]
-            link = re.search(rb"/ToUnicode\s+(\d+)\s+\d+\s+R", font)
-            blob = objects[int(link.group(1))][1] if link else None
-            found_maps[name.decode()] = font_map(blob or b"")
-        return found_maps
-
-    def decode_typed(stream: bytes, fonts: dict[str, dict[int, str]]) -> str:
-        """Each glyph uses the font named before it. ActualText is the source writing."""
-        parts: list[str] = []
-        current: dict[int, str] = {}
-        actual: str | None = None
-        used = False
-        line_y: float | None = None
-        tokens = re.compile(
-            rb"/([A-Za-z0-9]+)\s+[\d.]+\s+Tf"
-            rb"|1 0 0 -1 [\d.]+ ([\d.]+) Tm"
-            rb"|/ActualText\s*\(((?:\\.|[^\\)])*)\)"
-            rb"|EMC\b"
-            rb"|<([0-9A-Fa-f]+)>\s*Tj"
-            rb"|\(((?:\\.|[^\\)])*)\)\s*Tj"
-        )
-
-        def break_line(y: float) -> None:
-            nonlocal line_y
-            written = "".join(parts)
-            if line_y is not None and y != line_y and written and not written[-1].isspace():
-                parts.append(" ")
-            line_y = y
-
-        for match in tokens.finditer(stream):
-            if match.group(1):
-                current = fonts.get(match.group(1).decode(), {})
-                continue
-            if match.group(2):
-                break_line(float(match.group(2)))
-                continue
-            if match.group(3) is not None:
-                actual = literal(match.group(3))
-                used = False
-                continue
-            if match.group(0).startswith(b"EMC"):
-                actual = None
-                continue
-            if actual is not None:
-                if not used:
-                    parts.append(actual)
-                    used = True
-                continue
-            if match.group(4) is not None:
-                raw = bytes.fromhex(match.group(4).decode())
-                parts.append(
-                    "".join(
-                        current.get(int.from_bytes(raw[index : index + 2], "big"), "")
-                        for index in range(0, len(raw) - 1, 2)
-                    )
-                )
-                continue
-            if match.group(5) is not None:
-                parts.append(literal(match.group(5)))
-        return "".join(parts)
-
-    shown = re.compile(
-        rb"<[0-9A-Fa-f]+>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ",
-        re.S,
-    )
-    page_dicts = [
-        dictionary
-        for _number, (dictionary, _stream) in sorted(objects.items())
-        if re.search(rb"/Type\s*/Page(?!s)", dictionary)
-    ]
-    pages = []
-    phrase = "This tool explains the numbers"
-    for index, stream in enumerate(_pdf_page_streams(data)):
-        if index < len(page_dicts) and (b" Tf" in stream or b"/ActualText" in stream):
-            typed = decode_typed(stream, page_fonts(page_dicts[index]))
-            if phrase in _same_line(typed) or "Dieses Werkzeug" in typed:
-                pages.append(typed)
-                continue
-        plain: list[str] = []
-        coded: list[str] = []
-        for item in shown.finditer(stream):
-            token = item.group(0)
-            if token.endswith(b"TJ"):
-                for part in re.finditer(rb"<[0-9A-Fa-f]+>|\((?:\\.|[^\\)])*\)", token):
-                    raw = part.group(0)
-                    if raw.startswith(b"<"):
-                        coded.append(raw[1:-1].decode())
-                    else:
-                        plain.append(literal(raw[1:-1]))
-            elif token.lstrip().startswith(b"("):
-                plain.append(literal(token[: token.rfind(b"Tj")].strip()[1:-1]))
-            else:
-                coded.append(token[: token.rfind(b"Tj")].strip()[1:-1].decode())
-        base = "".join(plain)
-        chosen = base
-        candidates = []
-        for cmap in maps:
-            for width in (2, 1):
-                candidates.append(base + "".join(glyphs(item, cmap, width) for item in coded))
-        for width in (2, 1):
-            candidates.append(base + "".join(glyphs(item, None, width) for item in coded))
-        for candidate in candidates:
-            if phrase in _same_line(candidate):
-                chosen = candidate
-                break
-            if candidate.count(" ") > chosen.count(" "):
-                chosen = candidate
-        pages.append(chosen)
-    return pages
 
 
 def _layout(page: DevTools, *, columns: int, width: float | None) -> None:
@@ -1343,15 +768,9 @@ def _distinct(directory: Path) -> None:
             raise PageError(f"{path.name} is blank")
         digest = hashlib.sha256(data).hexdigest()
         previous = seen.get(digest)
-        if previous and not _settled_pair(previous, path.name):
+        if previous:
             raise PageError(f"{path.name} is the same picture as {previous}")
         seen[digest] = path.name
-
-
-def _settled_pair(first: str, second: str) -> bool:
-    """The first result and the 1100 result are one settled viewport."""
-    kinds = {first.split("-", 2)[-1], second.split("-", 2)[-1]}
-    return kinds == {"3-nvda.png", "8-result-1100.png"}
 
 
 def _loading(page: DevTools) -> bool:
@@ -1387,7 +806,7 @@ def _reduced_steps(page: DevTools) -> bool:
           const dot = document.querySelector("li.active .dot");
           const arcHidden = !arc || getComputedStyle(arc).display === "none";
           const dotShown = !!dot && getComputedStyle(dot).display !== "none";
-          return active === 1 && done >= 2 && arcHidden && dotShown;
+          return active === 1 && done >= 1 && arcHidden && dotShown;
         })()
         """,
     )
@@ -1457,12 +876,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT
-    _DEBUG_PORT = port
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
-    global _CHROME_ERR
-    _CHROME_ERR = Path(stderr_name)
     stderr_path = Path(stderr_name)
     stderr_file = os.fdopen(stderr_fd, "wb")
     command = [
@@ -1470,7 +885,6 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         "--headless=old",
         "--no-sandbox",
         "--disable-gpu",
-        "--disable-gpu-compositing",
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
@@ -1564,7 +978,6 @@ def drive(
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
-        _print_preview(page, out_dir, shot=f"smoke-{ARCH}-21-print-1280.png")
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
@@ -1766,7 +1179,6 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
         raise PageError("the first paint was not German")
     time.sleep(1.0)
     _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200, full=True)
-    _print_preview(page, out_dir)
     _panel_shot(page, out_dir, f"smoke-{ARCH}-18-de-balance-1280.png", 1280, "balance")
     _panel_shot(page, out_dir, f"smoke-{ARCH}-19-de-checks-1280.png", 1280, "checks")
     _panel_shot(page, out_dir, f"smoke-{ARCH}-20-de-explain-1280.png", 1280, "explain")
@@ -1992,13 +1404,8 @@ def main() -> int:
         stop(proc, log)
         proc, url, log = _start(binary, home)
         _confirm_german(url)
-    except (PageError, OSError) as exc:
+    except PageError as exc:
         print(exc, file=sys.stderr)
-        err = globals().get("_CHROME_ERR")
-        if err is not None and Path(err).is_file():
-            detail = Path(err).read_text(encoding="utf-8", errors="replace").strip()
-            if detail:
-                print(detail[-4000:], file=sys.stderr)
         return 1
     finally:
         if proc is not None and log is not None:
