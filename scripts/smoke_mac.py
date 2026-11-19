@@ -977,11 +977,9 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         "about:blank",
     ]
     if _intel():
-        # The Intel runner's screen is 800px. The old headless window cannot
-        # grow past it, so the frame stays near 800. The newer headless uses
-        # the requested window as the screen.
+        # Headless defaults to an 800x600 screen, so a 1100 window stays near 800.
         command[command.index("--headless=old")] = "--headless=new"
-        command.insert(command.index("--force-device-scale-factor=1") + 1, "--high-dpi-support=1")
+        command.insert(command.index("--window-size=1100,2200"), "--screen-info={1400x2400}")
     chrome = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
