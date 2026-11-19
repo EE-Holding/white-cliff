@@ -359,6 +359,12 @@ def _intel_photo(
 ) -> Path:
     """Copy the page into a new tab and photograph that viewport once."""
     html = _document_html(page)
+    if not reveal and not motion:
+        hold = (
+            "<style>.card,.fill{animation-delay:-200ms !important;"
+            "animation-play-state:paused !important;}</style>"
+        )
+        html = html.replace("</head>", hold + "</head>", 1)
     scroll_y = 0
     if keep_scroll and not _PAUSED:
         try:
@@ -372,11 +378,6 @@ def _intel_photo(
         try:
             tab.call("Page.enable")
             tab.call("Runtime.enable")
-            if motion or (reveal and not _PAUSED):
-                try:
-                    _motion(tab, motion or "reduce")
-                except PageError:
-                    pass
             frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
             tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
             height_px = min(int(height or 900), 900)
@@ -391,6 +392,15 @@ def _intel_photo(
                     "screenHeight": height_px,
                 },
             )
+            if motion or (reveal and not _PAUSED):
+                _motion(tab, motion or "reduce")
+            if motion:
+                matches = _eval(
+                    tab,
+                    "window.matchMedia('(prefers-reduced-motion: reduce)').matches",
+                )
+                if matches is not True:
+                    raise PageError("reduced motion was not emulated")
             if scroll_y:
                 _eval(tab, f"window.scrollTo(0, {scroll_y})")
             _eval(
