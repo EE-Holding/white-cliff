@@ -340,6 +340,29 @@ def _wide(page: DevTools, width: int) -> bool:
         return False
 
 
+def _place(page: DevTools, width: int, height: int) -> None:
+    """Match the screen to this viewport. The Intel display is narrower than the layout."""
+    height_px = min(int(height), 900)
+    try:
+        page.call("Emulation.clearDeviceMetricsOverride")
+    except PageError:
+        pass
+    try:
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": int(width),
+                "height": height_px,
+                "deviceScaleFactor": 1,
+                "mobile": False,
+                "screenWidth": int(width),
+                "screenHeight": height_px,
+            },
+        )
+    except PageError:
+        _window(page, width, height_px)
+
+
 def _settled(page: DevTools) -> None:
     """Wait until a card's rise has painted. The next card stays invisible during its delay."""
     _eval(
@@ -422,10 +445,11 @@ def _intel_photo(
             fresh.call("Page.enable")
             fresh.call("Runtime.enable")
             if not _PAUSED:
-                _window(fresh, wanted, height_px)
-                deadline = time.time() + 2
-                while time.time() < deadline and not _wide(fresh, wanted):
-                    time.sleep(0.05)
+                if attempt or (width and not _wide(fresh, wanted)):
+                    _place(fresh, wanted, height_px)
+                    deadline = time.time() + 2
+                    while time.time() < deadline and not _wide(fresh, wanted):
+                        time.sleep(0.05)
                 if not _wide(fresh, wanted):
                     raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted}")
                 if motion:
@@ -438,8 +462,6 @@ def _intel_photo(
                     "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
                 )
             data = _live_frame(fresh)
-            if not _PAUSED:
-                _window(fresh, wanted, height_px)
             got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
             if len(data) < 1000 or got != wanted:
                 raise PageError(f"{name} is {got}px wide, wanted {wanted}")
