@@ -278,9 +278,33 @@ def _intel() -> bool:
     return sys.platform == "darwin" and ARCH == "x86_64"
 
 
+def _fit_window(page: DevTools, width: int, height: int) -> None:
+    """Ask for the real window. The Intel display otherwise leaves the frame near 777px."""
+    if not _intel():
+        return
+    try:
+        found = page.call("Browser.getWindowForTarget")
+        page.call(
+            "Browser.setWindowBounds",
+            {
+                "windowId": found["windowId"],
+                "bounds": {
+                    "left": 0,
+                    "top": 0,
+                    "width": int(width),
+                    "height": int(min(height, 1400)),
+                    "windowState": "normal",
+                },
+            },
+        )
+    except (PageError, KeyError, TypeError):
+        pass
+
+
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
     """Emulate the layout. The real window cannot be wider than the Intel display."""
     del reset
+    _fit_window(page, width, height)
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
@@ -441,7 +465,15 @@ def _intel_photo(
                     while time.time() < deadline and not _wide(fresh, wanted):
                         time.sleep(0.05)
                 if not _wide(fresh, wanted):
-                    raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted}")
+                    detail = ""
+                    try:
+                        detail = _eval(
+                            fresh,
+                            "JSON.stringify({inner:innerWidth,dpr:devicePixelRatio,screen:screen.width})",
+                        )
+                    except (PageError, TimeoutError, OSError):
+                        detail = ""
+                    raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted} {detail}")
                 if motion:
                     _motion(fresh, motion)
                 if not keep_scroll:
@@ -934,6 +966,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         "--window-size=1100,2200",
         "about:blank",
     ]
+    if _intel():
+        command.insert(command.index("--force-device-scale-factor=1") + 1, "--high-dpi-support=1")
     chrome = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
