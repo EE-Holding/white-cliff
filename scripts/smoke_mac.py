@@ -706,7 +706,15 @@ def _wait_text(page: DevTools, needle: str, timeout: float = 20) -> None:
 
 def _share_card(page: DevTools, directory: Path, name: str, width: int, height: int) -> None:
     """One named picture of the German share-count card at this width."""
-    _fit(page, width, max(height, 1100))
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        _window(page, width, max(height, 1100))
+        try:
+            if _eval(page, "window.innerWidth") == width:
+                break
+        except PageError:
+            pass
+        time.sleep(0.1)
     _eval(page, "window.scrollTo(0, 0)")
     box = _eval(
         page,
@@ -761,8 +769,8 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
         raise PageError("the first paint was not German")
     time.sleep(1.0)
     _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200, full=True)
-    _shot(page, out_dir, f"smoke-{ARCH}-11-de-result-420.png", width=420, height=1800, full=True)
     _share_card(page, out_dir, f"smoke-{ARCH}-16-de-shares-1280.png", 1280, 900)
+    _shot(page, out_dir, f"smoke-{ARCH}-11-de-result-420.png", width=420, height=1800, full=True)
     _share_card(page, out_dir, f"smoke-{ARCH}-17-de-shares-420.png", 420, 900)
     page.call("Page.navigate", {"url": url})
     _wait_text(page, "Unternehmensname oder Tickersymbol")
