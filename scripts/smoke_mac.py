@@ -618,7 +618,7 @@ def drive(
         result_shot = out_dir / f"smoke-{ARCH}-3-nvda.png"
         if loading_shot.read_bytes() == result_shot.read_bytes():
             raise PageError("the loading picture is the result page")
-        _window(page, 1280, 2200)
+        _fit(page, 1280, 2200)
         _layout(page, columns=2, width=1160)
         text_left = _eval(
             page,
@@ -632,10 +632,10 @@ def drive(
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
-        _window(page, 1100, 2200)
+        _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
-        _window(page, 640, 1600)
+        _fit(page, 640, 1600)
         _layout(page, columns=1, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600, full=True)
         _shot(page, out_dir, f"smoke-{ARCH}-7-result-420.png", width=420, height=1800, full=True)
