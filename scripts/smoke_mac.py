@@ -382,34 +382,23 @@ def _settled(page: DevTools) -> None:
     )
 
 
-def _ack_frame(page: DevTools, event: dict | None) -> None:
-    params = (event or {}).get("params") or {}
-    session = params.get("sessionId")
-    if session is None:
-        return
-    try:
-        page.call("Page.screencastFrameAck", {"sessionId": session})
-    except (PageError, TimeoutError, OSError):
-        pass
-
-
 def _live_frame(page: DevTools) -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
-    the next layout at the 906px display. The first screencast frame can be the
-    one from before the latest paint, so a later frame replaces it.
+    the next layout at the 906px display. Acknowledging the first frame asks
+    for another, and that one comes back at the real window width.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
     event: dict | None = None
     try:
         event = page.next_event("Page.screencastFrame", 5)
-        _ack_frame(page, event)
-        if not _PAUSED:
+        params = (event or {}).get("params") or {}
+        session = params.get("sessionId")
+        if session is not None:
             try:
-                event = page.next_event("Page.screencastFrame", 0.6)
-                _ack_frame(page, event)
-            except (PageError, TimeoutError):
+                page.call("Page.screencastFrameAck", {"sessionId": session})
+            except (PageError, TimeoutError, OSError):
                 pass
     finally:
         try:
