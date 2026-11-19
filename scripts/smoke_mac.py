@@ -258,24 +258,22 @@ def _intel() -> bool:
 
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """Emulate the layout. On Intel the screen matches it, so the viewport is not tiled."""
+    """Emulate the layout. The real window cannot be wider than the Intel display."""
     del reset
-    height_px = min(int(height), 900)
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
         pass
-    metrics = {
-        "width": int(width),
-        "height": height_px,
-        "deviceScaleFactor": 1,
-        "mobile": False,
-    }
-    if _intel():
-        metrics["screenWidth"] = int(width)
-        metrics["screenHeight"] = height_px
     try:
-        page.call("Emulation.setDeviceMetricsOverride", metrics)
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": int(width),
+                "height": min(int(height), 900),
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
+        )
     except PageError:
         pass
 
@@ -293,9 +291,11 @@ def _css_width(page: DevTools) -> int:
                 raw = view.get("clientWidth")
                 if isinstance(raw, (int, float)) and raw:
                     return int(raw)
+    if _PAUSED:
+        return 0
     try:
         raw = _eval(page, "document.documentElement.clientWidth")
-    except PageError:
+    except (PageError, TimeoutError, OSError):
         return 0
     return int(raw) if isinstance(raw, (int, float)) else 0
 
@@ -309,6 +309,123 @@ def _wide(page: DevTools, width: int) -> bool:
         return False
 
 
+_DEBUG_PORT = 0
+
+
+def _document_html(page: DevTools) -> str:
+    root = page.call("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+    found = page.call("DOM.querySelector", {"nodeId": root, "selector": "html"})
+    node = int(found.get("nodeId") or 0)
+    if not node:
+        raise PageError("the page had no document")
+    return page.call("DOM.getOuterHTML", {"nodeId": node})["outerHTML"]
+
+
+def _open_tab() -> tuple[DevTools, str]:
+    """A new tab. Its screenshot cannot tile the Intel window or stick the next size."""
+    last: Exception | None = None
+    url = f"http://127.0.0.1:{_DEBUG_PORT}/json/new?about:blank"
+    for method in ("PUT", "GET"):
+        try:
+            request = urllib.request.Request(url, method=method)
+            with urllib.request.urlopen(request, timeout=5) as response:
+                info = json.loads(response.read().decode("utf-8"))
+            if isinstance(info, list):
+                info = info[0]
+            return DevTools(info["webSocketDebuggerUrl"]), str(info["id"])
+        except (OSError, KeyError, json.JSONDecodeError, PageError) as exc:
+            last = exc
+    raise PageError(last)
+
+
+def _close_tab(target_id: str) -> None:
+    url = f"http://127.0.0.1:{_DEBUG_PORT}/json/close/{target_id}"
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=5).read()
+    except OSError:
+        pass
+
+
+def _intel_photo(
+    page: DevTools,
+    directory: Path,
+    name: str,
+    width: int,
+    height: int,
+    *,
+    keep_scroll: bool,
+    reveal: bool,
+) -> Path:
+    """Copy the page into a new tab and photograph that viewport once."""
+    html = _document_html(page)
+    scroll_y = 0
+    if keep_scroll and not _PAUSED:
+        try:
+            scroll_y = int(_eval(page, "window.scrollY") or 0)
+        except (PageError, TimeoutError, OSError):
+            scroll_y = 0
+    wanted = int(width or _css_width(page) or 1100)
+    last: Exception | None = None
+    for _ in range(2):
+        tab, target_id = _open_tab()
+        try:
+            tab.call("Page.enable")
+            tab.call("Runtime.enable")
+            if reveal and not _PAUSED:
+                try:
+                    _motion(tab, "reduce")
+                except PageError:
+                    pass
+            frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
+            tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
+            height_px = min(int(height or 900), 900)
+            tab.call(
+                "Emulation.setDeviceMetricsOverride",
+                {
+                    "width": wanted,
+                    "height": height_px,
+                    "deviceScaleFactor": 1,
+                    "mobile": False,
+                    "screenWidth": wanted,
+                    "screenHeight": height_px,
+                },
+            )
+            if scroll_y:
+                _eval(tab, f"window.scrollTo(0, {scroll_y})")
+            _eval(
+                tab,
+                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+            )
+            deadline = time.time() + 2
+            while time.time() < deadline and not _wide(tab, wanted):
+                time.sleep(0.05)
+            if not _wide(tab, wanted):
+                raise PageError(f"the window stayed at {_css_width(tab)}, wanted {wanted}")
+            result = tab.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=60,
+            )
+            data = base64.b64decode(result["data"])
+            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+            if len(data) < 1000 or got != wanted:
+                raise PageError(f"{name} is {got}px wide, wanted {wanted}")
+            if height:
+                png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
+                if png_height > height:
+                    data = _crop_png(data, height)
+            path = directory / name
+            path.write_bytes(data)
+            print(f"screenshot {path}", flush=True)
+            return path
+        except (PageError, TimeoutError, OSError) as exc:
+            last = exc
+        finally:
+            tab.close()
+            _close_tab(target_id)
+    raise PageError(last)
+
+
 def _shot(
     page: DevTools,
     directory: Path,
@@ -318,6 +435,14 @@ def _shot(
     *,
     full: bool = False,
 ) -> Path:
+    if _intel():
+        if full:
+            try:
+                _motion(page, "reduce")
+            except PageError:
+                pass
+        _window(page, width, height)
+        return _intel_photo(page, directory, name, width, height, keep_scroll=False, reveal=full)
     last: Exception | None = None
     asked = height
     for _ in range(2):
@@ -539,6 +664,8 @@ def _spinning(page: DevTools) -> bool:
 def _grab(page: DevTools, directory: Path, name: str, width: int = 0, height: int = 0, top: int = 0) -> Path:
     """Photograph the page as it is. A new connection, and no clip, so a paused page still works."""
     del top
+    if _intel():
+        return _intel_photo(page, directory, name, width, height, keep_scroll=True, reveal=True)
     last: Exception | None = None
     for _ in range(2):
         fresh = DevTools(page.ws_url)
@@ -652,8 +779,13 @@ def _reduced_steps(page: DevTools) -> bool:
     return raw is True
 
 
+_PAUSED = False
+
+
 def _hold(page: DevTools) -> None:
     """Stop the page while the picture is taken, so the result cannot replace the steps."""
+    global _PAUSED
+    _PAUSED = True
     try:
         page.call("Debugger.enable")
         page.call("Debugger.pause")
@@ -662,6 +794,7 @@ def _hold(page: DevTools) -> None:
 
 
 def _release(page: DevTools) -> None:
+    global _PAUSED
     try:
         page.call("Debugger.resume")
     except PageError:
@@ -670,6 +803,7 @@ def _release(page: DevTools) -> None:
         page.call("Debugger.disable")
     except PageError:
         pass
+    _PAUSED = False
 
 
 def _reduced_motion(page: DevTools) -> None:
@@ -708,6 +842,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
+    global _DEBUG_PORT
+    _DEBUG_PORT = port
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
     stderr_path = Path(stderr_name)
