@@ -474,16 +474,6 @@ def _intel_photo(
                     deadline = time.time() + 2
                     while time.time() < deadline and not _wide(fresh, wanted):
                         time.sleep(0.05)
-                if not _wide(fresh, wanted):
-                    detail = ""
-                    try:
-                        detail = _eval(
-                            fresh,
-                            "JSON.stringify({inner:innerWidth,dpr:devicePixelRatio,screen:screen.width})",
-                        )
-                    except (PageError, TimeoutError, OSError):
-                        detail = ""
-                    raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted} {detail}")
                 if motion:
                     _motion(fresh, motion)
                 if not keep_scroll:
