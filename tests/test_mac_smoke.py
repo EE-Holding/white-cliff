@@ -59,6 +59,12 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert "smoke-{ARCH}-15-de-loading-420.png" in driver
     assert "smoke-{ARCH}-16-de-shares-1280.png" in driver
     assert "smoke-{ARCH}-17-de-shares-420.png" in driver
+    assert "smoke-{ARCH}-18-de-balance-1280.png" in driver
+    assert "smoke-{ARCH}-19-de-checks-1280.png" in driver
+    assert "smoke-{ARCH}-20-de-explain-1280.png" in driver
+    assert "German did not survive a restart" in driver
+    assert "fromSurface" in driver
+    assert "captureBeyondViewport" not in driver
     assert "getBoundingClientRect" in driver
     assert "prefers-reduced-motion" in driver
     assert "Page.navigate" in driver
@@ -134,6 +140,9 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
         f"smoke-{driver.ARCH}-15-de-loading-420.png",
         f"smoke-{driver.ARCH}-16-de-shares-1280.png",
         f"smoke-{driver.ARCH}-17-de-shares-420.png",
+        f"smoke-{driver.ARCH}-18-de-balance-1280.png",
+        f"smoke-{driver.ARCH}-19-de-checks-1280.png",
+        f"smoke-{driver.ARCH}-20-de-explain-1280.png",
     ):
         assert (tmp_path / name).stat().st_size > 1000
     wide = (tmp_path / f"smoke-{driver.ARCH}-6-result-640.png").read_bytes()
@@ -160,6 +169,12 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     de_shares_narrow = (tmp_path / f"smoke-{driver.ARCH}-17-de-shares-420.png").read_bytes()
     assert struct.unpack(">I", de_shares[16:20])[0] == 1280
     assert struct.unpack(">I", de_shares_narrow[16:20])[0] == 420
+    balance = (tmp_path / f"smoke-{driver.ARCH}-18-de-balance-1280.png").read_bytes()
+    checks = (tmp_path / f"smoke-{driver.ARCH}-19-de-checks-1280.png").read_bytes()
+    formula = (tmp_path / f"smoke-{driver.ARCH}-20-de-explain-1280.png").read_bytes()
+    assert struct.unpack(">I", balance[16:20])[0] == 1280
+    assert struct.unpack(">I", checks[16:20])[0] == 1280
+    assert struct.unpack(">I", formula[16:20])[0] == 1280
     assert de_loading != de_loading_narrow
     result = (tmp_path / f"smoke-{driver.ARCH}-3-nvda.png").read_bytes()
     reduced = (tmp_path / f"smoke-{driver.ARCH}-5-reduced.png").read_bytes()

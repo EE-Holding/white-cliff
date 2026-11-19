@@ -50,7 +50,7 @@ def _names(text: str) -> list[str]:
 
 
 def test_each_english_id_has_one_german_string():
-    assert len(STRINGS) == 252
+    assert len(STRINGS) == 266
     assert len(SUPERSEDED) == 25
     for ident, (english, deutsch) in STRINGS.items():
         assert english
@@ -170,6 +170,17 @@ def test_a_missing_prior_quarter_uses_the_german_one_clause_line():
     )
     assert "betrug" not in html_text.casefold()
     assert "für das Vorquartal ist für diesen Bericht nicht verfügbar." in html_text
+
+
+def test_a_corrupt_identity_file_is_kept_before_the_language_is_saved(tmp_path):
+    path = tmp_path / "identity.json"
+    path.write_bytes(b"{not json")
+    save_language(path, "de")
+    backup = tmp_path / "identity.json.bak"
+    assert backup.read_bytes() == b"{not json"
+    assert backup.stat().st_mode & 0o777 == 0o600
+    assert load_language(path) == "de"
+    assert '"language": "de"' in path.read_text(encoding="utf-8")
 
 
 def test_the_saved_language_survives_a_new_app(tmp_path):

@@ -16,6 +16,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+import zlib
 from pathlib import Path
 
 TEST_NAME = "White Cliff Test"
@@ -161,14 +162,118 @@ class DevTools:
         return payload.decode("utf-8")
 
 
-def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
-    """Give headless Chrome a real window. Old headless rejects the metrics call."""
-    try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
+def _paeth(left: int, up: int, up_left: int) -> int:
+    estimate = left + up - up_left
+    if abs(estimate - left) <= abs(estimate - up) and abs(estimate - left) <= abs(estimate - up_left):
+        return left
+    if abs(estimate - up) <= abs(estimate - up_left):
+        return up
+    return up_left
+
+
+def _png_rows(data: bytes) -> tuple[int, int, int, int, list[bytes]]:
+    """Decode one screenshot. Chrome writes an 8-bit RGB or RGBA PNG."""
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise PageError("the picture is not a PNG")
+    pos = 8
+    width = height = bit_depth = color = 0
+    body = b""
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos : pos + 4])[0]
+        kind = data[pos + 4 : pos + 8]
+        chunk = data[pos + 8 : pos + 8 + length]
+        if kind == b"IHDR":
+            width, height, bit_depth, color = struct.unpack(">IIBB", chunk[:10])
+        elif kind == b"IDAT":
+            body += chunk
+        elif kind == b"IEND":
+            break
+        pos += 12 + length
+    channels = {0: 1, 2: 3, 6: 4}.get(color)
+    if channels is None or bit_depth != 8:
+        raise PageError("the picture uses an unexpected PNG layout")
+    raw = zlib.decompress(body)
+    stride = width * channels
+    rows: list[bytes] = []
+    index = 0
+    previous = bytearray(stride)
+    for _ in range(height):
+        filter_type = raw[index]
+        index += 1
+        row = bytearray(raw[index : index + stride])
+        index += stride
+        if filter_type == 1:
+            for column in range(stride):
+                left = row[column - channels] if column >= channels else 0
+                row[column] = (row[column] + left) & 255
+        elif filter_type == 2:
+            for column in range(stride):
+                row[column] = (row[column] + previous[column]) & 255
+        elif filter_type == 3:
+            for column in range(stride):
+                left = row[column - channels] if column >= channels else 0
+                row[column] = (row[column] + ((left + previous[column]) // 2)) & 255
+        elif filter_type == 4:
+            for column in range(stride):
+                left = row[column - channels] if column >= channels else 0
+                up_left = previous[column - channels] if column >= channels else 0
+                row[column] = (row[column] + _paeth(left, previous[column], up_left)) & 255
+        elif filter_type != 0:
+            raise PageError("the picture uses an unknown PNG filter")
+        rows.append(bytes(row))
+        previous = row
+    return width, height, color, bit_depth, rows
+
+
+def _png_bytes(width: int, height: int, color: int, bit_depth: int, rows: list[bytes]) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
         )
-        return
+
+    raw = b"".join(b"\x00" + row for row in rows)
+    header = struct.pack(">IIBBBBB", width, height, bit_depth, color, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw, 6))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _crop_png(data: bytes, height: int) -> bytes:
+    width, total, color, bit_depth, rows = _png_rows(data)
+    if height >= total:
+        return data
+    return _png_bytes(width, height, color, bit_depth, rows[:height])
+
+
+def _stack_pngs(parts: list[bytes], total_height: int) -> bytes:
+    """Join viewport pictures into one page. The last picture is cropped so nothing repeats."""
+    decoded = [_png_rows(part) for part in parts]
+    width = decoded[0][0]
+    if any(item[0] != width for item in decoded):
+        raise PageError("the page pictures are not the same width")
+    color, bit_depth = decoded[0][2], decoded[0][3]
+    rows: list[bytes] = []
+    for _width, _height, _color, _depth, part_rows in decoded:
+        rows.extend(part_rows)
+    if len(rows) > total_height:
+        rows = rows[:total_height]
+    if len(rows) < total_height:
+        raise PageError(f"the page picture is {len(rows)}px tall and the page is {total_height}px")
+    return _png_bytes(width, len(rows), color, bit_depth, rows)
+
+
+def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
+    """Size the real window and the layout viewport together, so the picture is not tiled."""
+    width = int(width)
+    height = int(height)
+    try:
+        page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
         pass
     try:
@@ -182,6 +287,94 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
         )
     except PageError:
         pass
+    try:
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
+        )
+    except PageError:
+        pass
+
+
+def _capture(page: DevTools) -> bytes:
+    """The viewport as it is laid out. No clip, so a resize cannot be thrown away."""
+    try:
+        result = page.call(
+            "Page.captureScreenshot",
+            {"format": "png", "fromSurface": False, "optimizeForSpeed": True},
+            timeout=60,
+        )
+    except PageError:
+        result = page.call(
+            "Page.captureScreenshot",
+            {"format": "png", "optimizeForSpeed": True},
+            timeout=60,
+        )
+    return base64.b64decode(result["data"])
+
+
+def _screen_height(page: DevTools) -> int:
+    """A window taller than the display is photographed as repeated tiles on Intel."""
+    try:
+        raw = _eval(page, "screen.availHeight || screen.height || 0")
+        screen = int(raw) if isinstance(raw, (int, float)) else 0
+    except PageError:
+        screen = 0
+    if screen < 500:
+        screen = 864
+    return max(400, min(screen - 64, 900))
+
+
+def _tiled(data: bytes) -> bool:
+    """True when one screen-sized picture has been repeated to fill a taller window."""
+    try:
+        _width, height, _color, _depth, rows = _png_rows(data)
+    except PageError:
+        return False
+    if height < 1000:
+        return False
+    for period in range(700, min(height - 40, 1200)):
+        if rows[40:70] != rows[period : period + 30]:
+            continue
+        if len(set(rows[40])) <= 8:
+            continue
+        return True
+    return False
+
+
+def _paint(page: DevTools) -> None:
+    _eval(
+        page,
+        """
+        new Promise((resolve) => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; resolve(true); } };
+          requestAnimationFrame(() => requestAnimationFrame(finish));
+          setTimeout(finish, 200);
+        })
+        """,
+    )
+
+
+def _frame(page: DevTools) -> bytes:
+    """The current viewport. The first frame of a tall window can be a repeated tile."""
+    _paint(page)
+    data = _capture(page)
+    if not _tiled(data):
+        return data
+    time.sleep(0.2)
+    _paint(page)
+    return _capture(page)
+
+
+def _picture(page: DevTools, width: int, height: int) -> bytes:
+    """Size the window, then photograph that viewport."""
+    _fit(page, width, height)
+    data = _frame(page)
+    if not _tiled(data):
+        return data
+    _fit(page, width, _screen_height(page))
+    return _frame(page)
 
 
 def _shot(
@@ -195,67 +388,56 @@ def _shot(
 ) -> Path:
     last: Exception | None = None
     for _ in range(2):
-        fresh = page if full else DevTools(page.ws_url)
         try:
-            if not full:
-                fresh.call("Page.enable")
-                fresh.call("Runtime.enable")
-            _window(fresh, width, height)
-            deadline = time.time() + 2
-            while time.time() < deadline:
+            if full:
                 try:
-                    if _eval(fresh, "window.innerWidth") == width:
-                        break
+                    _motion(page, "reduce")
                 except PageError:
                     pass
-                _window(fresh, width, height)
-                time.sleep(0.1)
-            fresh.call(
-                "Runtime.evaluate",
-                {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
-            )
+            view_height = _screen_height(page) if full else height
+            _fit(page, width, view_height)
+            _eval(page, "window.scrollTo(0, 0)")
             if full:
                 raw = _eval(
-                    fresh,
+                    page,
                     "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
                 )
-                if isinstance(raw, (int, float)) and raw > height:
-                    height = int(raw)
-                _window(fresh, width, height)
-                result = fresh.call(
-                    "Page.captureScreenshot",
-                    {"format": "png", "optimizeForSpeed": True},
-                    timeout=60,
-                )
-                data = base64.b64decode(result["data"])
+                total = int(raw) if isinstance(raw, (int, float)) else view_height
+                view = int(_eval(page, "window.innerHeight") or 0)
+                data = _frame(page)
+                if view < total:
+                    rows: list[bytes] = []
+                    color = bit_depth = 0
+                    seen = 0
+                    while seen < total:
+                        _eval(page, f"window.scrollTo(0, {seen})")
+                        time.sleep(0.05)
+                        actual = int(_eval(page, "window.scrollY") or 0)
+                        _width, _png_height, color, bit_depth, part = _png_rows(_frame(page))
+                        if _width != width:
+                            raise PageError(f"{name} is {_width}px wide, wanted {width}")
+                        start = max(seen - actual, 0)
+                        rows.extend(part[start:])
+                        seen = actual + len(part)
+                        if not part or seen <= actual:
+                            break
+                    if len(rows) < total:
+                        if rows and total - len(rows) <= 4:
+                            rows.extend([rows[-1]] * (total - len(rows)))
+                        else:
+                            raise PageError(f"{name} is {len(rows)}px tall and the page is {total}px")
+                    data = _png_bytes(width, total, color, bit_depth, rows[:total])
             else:
-                result = fresh.call(
-                    "Page.captureScreenshot",
-                    {"format": "png", "optimizeForSpeed": True},
-                    timeout=8,
-                )
-                data = base64.b64decode(result["data"])
-                got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-                if len(data) < 1000 or got != width:
-                    result = fresh.call(
-                        "Page.captureScreenshot",
-                        {
-                            "format": "png",
-                            "captureBeyondViewport": True,
-                            "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
-                        },
-                        timeout=20,
-                    )
-                    data = base64.b64decode(result["data"])
+                data = _picture(page, width, height)
+            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+            if len(data) < 1000 or got != width:
+                raise PageError(f"{name} is {got}px wide, wanted {width}")
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
-        finally:
-            if fresh is not page:
-                fresh.close()
     raise PageError(last)
 
 
@@ -410,31 +592,27 @@ def _spinning(page: DevTools) -> bool:
 
 
 def _grab(page: DevTools, directory: Path, name: str, width: int = 0, height: int = 0, top: int = 0) -> Path:
-    """Photograph the page as it is. A new connection, and no window change, so it stays fast."""
+    """Photograph the current viewport. Nothing here evaluates script, so a paused page still works."""
+    del top
     last: Exception | None = None
     for _ in range(2):
-        fresh = DevTools(page.ws_url)
         try:
-            fresh.call("Page.enable")
-            fresh.call("Runtime.enable")
             if width:
-                _window(fresh, width, max(height, 900))
-            options: dict = {"format": "png", "optimizeForSpeed": True}
-            if width and height:
-                options["captureBeyondViewport"] = True
-                options["clip"] = {"x": 0, "y": top, "width": width, "height": height, "scale": 1}
-            result = fresh.call("Page.captureScreenshot", options, timeout=20)
-            data = base64.b64decode(result["data"])
-            if len(data) < 1000:
-                raise PageError(f"{name} was empty")
+                _window(page, width, max(height, 900))
+            data = _capture(page)
+            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+            if len(data) < 1000 or (width and got != width):
+                raise PageError(f"{name} is {got}px wide, wanted {width}")
+            if height:
+                png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
+                if png_height > height:
+                    data = _crop_png(data, height)
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
-        finally:
-            fresh.close()
     raise PageError(last)
 
 
@@ -737,11 +915,16 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
             "JSON.stringify([...document.querySelectorAll('h3.label')].map((item) => item.textContent))",
         )
         raise PageError(f"the German share card was not on the page: {labels}")
-    _grab(page, directory, name, width, max(int(box["height"]) + 8, 280), top=max(int(box["top"]) - 8, 0))
+    _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
+    _grab(page, directory, name, width, max(int(box["height"]) + 16, 280))
 
 
 def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: int) -> None:
     """Photograph the spinning steps after the window is already this wide."""
+    try:
+        _motion(page, "no-preference")
+    except PageError:
+        pass
     deadline = time.time() + 60
     while time.time() < deadline:
         try:
@@ -761,6 +944,62 @@ def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: in
     raise PageError("the German loading steps were not shown")
 
 
+def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: str) -> None:
+    """One German panel at 1280: balance-sheet cards, the checks, or an open formula."""
+    _fit(page, width, 900)
+    if kind == "explain":
+        opened = _eval(
+            page,
+            """
+            (() => {
+              const card = [...document.querySelectorAll("article.card")].find((item) =>
+                item.textContent.includes("Formel:"));
+              if (!card) return false;
+              const button = card.querySelector("button.explain");
+              if (button) button.click();
+              return true;
+            })()
+            """,
+        )
+        if opened is not True:
+            raise PageError("the German formula line was not on the page")
+        _wait_text(page, "Formel:")
+    script = {
+        "balance": """
+            (() => {
+              const cards = [...document.querySelectorAll("article.card")].filter((item) =>
+                /Finanzschulden|Zahlungsmittel/.test(item.textContent));
+              if (cards.length < 3) return null;
+              const first = cards[0].getBoundingClientRect();
+              const last = cards[cards.length - 1].getBoundingClientRect();
+              return {top: first.top + window.scrollY, height: Math.ceil(last.bottom - first.top)};
+            })()
+        """,
+        "checks": """
+            (() => {
+              const panel = document.querySelector("section.quality");
+              if (!panel) return null;
+              const found = panel.getBoundingClientRect();
+              return {top: found.top + window.scrollY, height: Math.ceil(found.height)};
+            })()
+        """,
+        "explain": """
+            (() => {
+              const card = [...document.querySelectorAll("article.card")].find((item) =>
+                item.textContent.includes("Formel:"));
+              if (!card) return null;
+              const found = card.getBoundingClientRect();
+              return {top: found.top + window.scrollY, height: Math.ceil(found.height)};
+            })()
+        """,
+    }[kind]
+    box = _eval(page, script)
+    if not isinstance(box, dict):
+        raise PageError(f"the German {kind} picture was not on the page")
+    _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
+    _grab(page, directory, name, width, max(int(box["height"]) + 16, 280))
+
+
 def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:
     """German result, first run, and loading, at 1280 and 420."""
     try:
@@ -773,6 +1012,9 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
         raise PageError("the first paint was not German")
     time.sleep(1.0)
     _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200, full=True)
+    _panel_shot(page, out_dir, f"smoke-{ARCH}-18-de-balance-1280.png", 1280, "balance")
+    _panel_shot(page, out_dir, f"smoke-{ARCH}-19-de-checks-1280.png", 1280, "checks")
+    _panel_shot(page, out_dir, f"smoke-{ARCH}-20-de-explain-1280.png", 1280, "explain")
     _share_card(page, out_dir, f"smoke-{ARCH}-16-de-shares-1280.png", 1280, 900)
     _shot(page, out_dir, f"smoke-{ARCH}-11-de-result-420.png", width=420, height=1800, full=True)
     _share_card(page, out_dir, f"smoke-{ARCH}-17-de-shares-420.png", 420, 900)
@@ -882,9 +1124,17 @@ def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
     return _start(binary)
 
 
-def _start(binary: str) -> tuple[subprocess.Popen, str, object]:
+def _start(binary: str, home: Path | None = None) -> tuple[subprocess.Popen, str, object]:
     binary = str(Path(binary).resolve())
-    home = Path(tempfile.mkdtemp(prefix="white-cliff-home-"))
+    if home is None:
+        home = Path(tempfile.mkdtemp(prefix="white-cliff-home-"))
+    else:
+        for stale in (
+            home / "opened-url",
+            home / "Library" / "Application Support" / "White Cliff" / "instance.port",
+        ):
+            if stale.is_file():
+                stale.unlink()
     url_file = home / "opened-url"
     recorder = home / "record-url"
     recorder.write_text(
@@ -948,6 +1198,28 @@ def stop(proc: subprocess.Popen, log) -> None:
     log.close()
 
 
+def _confirm_german(url: str) -> None:
+    """The saved German choice is still the page language after the app is started again."""
+    chrome, page = _open_chrome(url)
+    try:
+        deadline = time.time() + 20
+        lang = ""
+        while time.time() < deadline:
+            try:
+                lang = _eval(page, "document.documentElement.lang") or ""
+            except PageError:
+                lang = ""
+            if lang:
+                break
+            time.sleep(0.1)
+        if lang != "de":
+            raise PageError("German did not survive a restart")
+    finally:
+        page.close()
+        if chrome.poll() is None:
+            os.killpg(chrome.pid, signal.SIGTERM)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: smoke_mac.py BINARY", file=sys.stderr)
@@ -960,7 +1232,11 @@ def main() -> int:
     log = None
     try:
         proc, url, log = launch(binary)
+        home = Path(log.name).parent
         drive(url, Path.cwd())
+        stop(proc, log)
+        proc, url, log = _start(binary, home)
+        _confirm_german(url)
     except PageError as exc:
         print(exc, file=sys.stderr)
         return 1

@@ -91,13 +91,37 @@ def load_language(path: Path) -> str:
     return code
 
 
+def _backup_private(path: Path) -> None:
+    """Keep an unreadable identity file. The copy is owner-only."""
+    backup = path.with_name(path.name + ".bak")
+    payload = path.read_bytes()
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.chmod(backup, 0o600)
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+    finally:
+        os.close(fd)
+    os.chmod(backup, 0o600)
+
+
 def save_language(path: Path, code: str) -> None:
     """Store the language beside the name and email. It is not sent anywhere."""
     if code not in {"en", "de"}:
         return
-    data = _read_json(path)
-    if not isinstance(data, dict):
-        data = {}
+    data: dict = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            _backup_private(path)
+            loaded = {}
+        if not isinstance(loaded, dict):
+            _backup_private(path)
+            loaded = {}
+        data = loaded
     data["language"] = code
     _write_private(path, json.dumps(data, indent=2) + "\n")
 

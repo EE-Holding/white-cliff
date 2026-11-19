@@ -226,7 +226,7 @@ def test_bars_share_a_zero_and_keep_the_value_ratio():
     label = re.search(r'aria-label="([^"]+)"', html_text).group(1)
     assert label.startswith(EN["bar_chart"] + " ")
     assert "Prior quarter" in label and "$100" in label and "$25" in label
-    assert html_text.count('class="bd"') == 3
+    assert html_text.count('class="bd"') == 2
 
 
 def test_a_quote_in_the_bar_label_is_escaped():

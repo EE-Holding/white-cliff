@@ -134,9 +134,10 @@ def _candidates(facts: list[Fact], concept: str, end: str, low: int, high: int) 
 
 
 def _near(facts: list[Fact], concept: str, end: str, low: int, high: int) -> Fact | None:
+    """One fact for the period. Scale words of the same unit are one group, so the finer figure wins."""
     grouped: dict[str, list[Fact]] = {}
     for fact in _candidates(facts, concept, end, low, high):
-        grouped.setdefault(fact.unit, []).append(fact)
+        grouped.setdefault(_base(fact.unit), []).append(fact)
     if not grouped:
         return None
     unit = sorted(grouped, key=lambda item: (-len(grouped[item]), item))[0]
@@ -653,6 +654,20 @@ def _difference_facts(revenue: Fact, cost: Fact) -> Fact:
     )
 
 
+def _tax_rate(tax: Fact, pretax: Fact) -> Decimal | None:
+    """Income tax over pre-tax income, using each figure's scale. None when the two are not one measure."""
+    if pretax.value == 0 or _base(tax.unit) != _base(pretax.unit):
+        return None
+    whole = pretax.value * (Decimal(10) ** pretax.scale)
+    part = tax.value * (Decimal(10) ** tax.scale)
+    if whole == 0:
+        return None
+    rate = part / whole * Decimal(100)
+    if _one(rate) == 0 and tax.value != 0 and pretax.value != 0 and abs(rate) >= Decimal("0.05"):
+        return None
+    return rate
+
+
 def check_tax(facts: list[Fact], *, form: str, period_end: str) -> CheckResult:
     tax = _shared_duration(facts, ("IncomeTaxExpenseBenefit",), form=form, end=period_end, figure="Income tax")
     if isinstance(tax, str):
@@ -664,8 +679,10 @@ def check_tax(facts: list[Fact], *, form: str, period_end: str) -> CheckResult:
     pre_now, pre_then = pretax
     if pre_now.value <= 0 or pre_then.value <= 0:
         return _not("C8", "A tax rate isn't meaningful on a pre-tax loss.")
-    rate_now_raw = tax_now.value / pre_now.value * Decimal(100)
-    rate_then_raw = tax_then.value / pre_then.value * Decimal(100)
+    rate_now_raw = _tax_rate(tax_now, pre_now)
+    rate_then_raw = _tax_rate(tax_then, pre_then)
+    if rate_now_raw is None or rate_then_raw is None:
+        return _not("C8", DIFFERENT)
     delta = rate_now_raw - rate_then_raw
     outcome = "unusual" if abs(delta) >= TAX_POINTS else "consistent"
     return CheckResult(

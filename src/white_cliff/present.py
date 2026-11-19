@@ -830,7 +830,6 @@ def _german_label(text: str) -> str:
             "Operating margin": phrase("LBL.operating_margin"),
             "Net margin": phrase("LBL.net_margin"),
             "Revenue year over year": phrase("LBL.yoy"),
-            "Net debt": phrase("LBL.net_debt").replace("{debt_label}", phrase("LBL.debt")),
         }
     )
     if text in exact:
@@ -852,6 +851,8 @@ def _german_label(text: str) -> str:
         return phrase("LBL.ocf_ytd")
     if shorter in exact:
         return exact[shorter]
+    if "per share" in text.casefold():
+        return f"„{text}“"
     return text
 
 
