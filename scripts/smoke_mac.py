@@ -184,7 +184,15 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
         pass
 
 
-def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height: int = 2200) -> Path:
+def _shot(
+    page: DevTools,
+    directory: Path,
+    name: str,
+    width: int = 1100,
+    height: int = 2200,
+    *,
+    full: bool = False,
+) -> Path:
     last: Exception | None = None
     for _ in range(2):
         fresh = DevTools(page.ws_url)
@@ -205,6 +213,13 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
                 "Runtime.evaluate",
                 {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
             )
+            if full:
+                raw = _eval(
+                    fresh,
+                    "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
+                )
+                if isinstance(raw, (int, float)) and raw > height:
+                    height = int(raw)
             result = fresh.call(
                 "Page.captureScreenshot",
                 {"format": "png", "optimizeForSpeed": True},
@@ -212,7 +227,7 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
             )
             data = base64.b64decode(result["data"])
             got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-            if len(data) < 1000 or got != width:
+            if full or len(data) < 1000 or got != width:
                 result = fresh.call(
                     "Page.captureScreenshot",
                     {
@@ -220,7 +235,7 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
                         "captureBeyondViewport": True,
                         "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
                     },
-                    timeout=8,
+                    timeout=20,
                 )
                 data = base64.b64decode(result["data"])
             path = directory / name
@@ -345,18 +360,55 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
         raise PageError(f"{selector} showed {value!r}")
 
 
-def _grab(page: DevTools, directory: Path, name: str) -> Path:
+def _fit(page: DevTools, width: int, height: int) -> None:
+    """Set the window and wait until the page has that width, before anything is paused."""
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        _window(page, width, height)
+        try:
+            if _eval(page, "window.innerWidth") == width:
+                return
+        except PageError:
+            pass
+        time.sleep(0.05)
+    raise PageError("the window did not take the requested width")
+
+
+def _motion(page: DevTools, value: str) -> None:
+    page.call(
+        "Emulation.setEmulatedMedia",
+        {"features": [{"name": "prefers-reduced-motion", "value": value}]},
+    )
+
+
+def _spinning(page: DevTools) -> bool:
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const arc = document.querySelector("li.active .arc");
+          return !!arc && getComputedStyle(arc).display !== "none";
+        })()
+        """,
+    )
+    return raw is True
+
+
+def _grab(page: DevTools, directory: Path, name: str, width: int = 0, height: int = 0, top: int = 0) -> Path:
     """Photograph the page as it is. A new connection, and no window change, so it stays fast."""
     last: Exception | None = None
     for _ in range(2):
         fresh = DevTools(page.ws_url)
         try:
             fresh.call("Page.enable")
-            result = fresh.call(
-                "Page.captureScreenshot",
-                {"format": "png", "optimizeForSpeed": True},
-                timeout=20,
-            )
+            fresh.call("Runtime.enable")
+            if width:
+                _window(fresh, width, max(height, 900))
+            options: dict = {"format": "png", "optimizeForSpeed": True}
+            if width and height:
+                options["captureBeyondViewport"] = True
+                options["clip"] = {"x": 0, "y": top, "width": width, "height": height, "scale": 1}
+            result = fresh.call("Page.captureScreenshot", options, timeout=20)
             data = base64.b64decode(result["data"])
             if len(data) < 1000:
                 raise PageError(f"{name} was empty")
@@ -523,6 +575,10 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     page.call("Runtime.enable")
     _window(page)
     page.call("Page.navigate", {"url": url})
+    try:
+        _motion(page, "no-preference")
+    except PageError:
+        pass
     return chrome, page
 
 
@@ -553,14 +609,25 @@ def drive(
             raise PageError("the loading picture is the result page")
         _window(page, 1280, 2200)
         _layout(page, columns=2, width=1160)
-        _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200)
+        text_left = _eval(
+            page,
+            """(() => {
+              const node = document.querySelector(".disclaimer");
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              return range.getBoundingClientRect().left;
+            })()""",
+        )
+        if abs(float(text_left) - 92) > 4:
+            raise PageError(f"the disclaimer text starts at {text_left}")
+        _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
         _window(page, 1100, 2200)
         _layout(page, columns=2, width=None)
-        _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png")
+        _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
         _window(page, 640, 1600)
         _layout(page, columns=1, width=None)
-        _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600)
-        _shot(page, out_dir, f"smoke-{ARCH}-7-result-420.png", width=420, height=1800)
+        _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600, full=True)
+        _shot(page, out_dir, f"smoke-{ARCH}-7-result-420.png", width=420, height=1800, full=True)
         _window(page)
         _reduced_motion(page)
         page.call("Page.navigate", {"url": url})
@@ -626,6 +693,51 @@ def _wait_text(page: DevTools, needle: str, timeout: float = 20) -> None:
     raise PageError(last[:400] or "the expected text did not appear")
 
 
+def _share_card(page: DevTools, directory: Path, name: str, width: int, height: int) -> None:
+    """One named picture of the German share-count card at this width."""
+    _fit(page, width, max(height, 1100))
+    _eval(page, "window.scrollTo(0, 0)")
+    box = _eval(
+        page,
+        """
+        (() => {
+          const card = [...document.querySelectorAll("article.card")].find((item) => item.textContent.includes("Aktien"));
+          if (!card) return null;
+          const found = card.getBoundingClientRect();
+          return {top: found.top + window.scrollY, height: Math.ceil(found.height)};
+        })()
+        """,
+    )
+    if not isinstance(box, dict):
+        labels = _eval(
+            page,
+            "JSON.stringify([...document.querySelectorAll('h3.label')].map((item) => item.textContent))",
+        )
+        raise PageError(f"the German share card was not on the page: {labels}")
+    _grab(page, directory, name, width, max(int(box["height"]) + 8, 280), top=max(int(box["top"]) - 8, 0))
+
+
+def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: int) -> None:
+    """Photograph the spinning steps after the window is already this wide."""
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        try:
+            loading = _loading(page)
+        except PageError:
+            loading = False
+        if loading:
+            if not _spinning(page):
+                raise PageError("the loading picture is the reduced-motion ring")
+            _hold(page)
+            try:
+                _grab(page, out_dir, name, width, height)
+            finally:
+                _release(page)
+            return
+        time.sleep(0.02)
+    raise PageError("the German loading steps were not shown")
+
+
 def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:
     """German result, first run, and loading, at 1280 and 420."""
     try:
@@ -637,8 +749,14 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
     if _eval(page, "document.documentElement.lang") != "de":
         raise PageError("the first paint was not German")
     time.sleep(1.0)
-    _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200)
-    _shot(page, out_dir, f"smoke-{ARCH}-11-de-result-420.png", width=420, height=1800)
+    _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200, full=True)
+    _shot(page, out_dir, f"smoke-{ARCH}-11-de-result-420.png", width=420, height=1800, full=True)
+    _share_card(page, out_dir, f"smoke-{ARCH}-16-de-shares-1280.png", 1280, 900)
+    _share_card(page, out_dir, f"smoke-{ARCH}-17-de-shares-420.png", 420, 900)
+    page.call("Page.navigate", {"url": url})
+    _wait_text(page, "Unternehmensname oder Tickersymbol")
+    if _eval(page, "document.documentElement.lang") != "de":
+        raise PageError("the German choice did not survive a new page")
     _window(page, 1280, 1600)
     page.call("Page.navigate", {"url": url + "identity"})
     _wait_node(page, 'form[action="/identity/erase"] button', 20)
@@ -657,25 +775,16 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
     _click(page, 'form[action="/identity"] button')
     _wait_node(page, "#query", 20)
     _fill(page, "#query", query)
-    _window(page, 1280, 1800)
+    _fit(page, 1280, 1800)
     _click(page, 'form[action="/explain"] button')
-    deadline = time.time() + 60
-    while time.time() < deadline:
-        try:
-            if _loading(page):
-                _hold(page)
-                try:
-                    _grab(page, out_dir, f"smoke-{ARCH}-14-de-loading-1280.png")
-                    _window(page, 420, 1800)
-                    _grab(page, out_dir, f"smoke-{ARCH}-15-de-loading-420.png")
-                finally:
-                    _release(page)
-                break
-        except PageError:
-            _release(page)
-        time.sleep(0.02)
-    else:
-        raise PageError("the German loading steps were not shown")
+    _loading_at(page, out_dir, f"smoke-{ARCH}-14-de-loading-1280.png", 1280, 1800)
+    _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
+    page.call("Page.navigate", {"url": url})
+    _wait_text(page, "Unternehmensname oder Tickersymbol")
+    _fill(page, "#query", query)
+    _fit(page, 420, 1800)
+    _click(page, 'form[action="/explain"] button')
+    _loading_at(page, out_dir, f"smoke-{ARCH}-15-de-loading-420.png", 420, 1800)
     _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
 
 
@@ -706,6 +815,8 @@ def _wait_result(
         if loading and not saw_loading:
             try:
                 if _loading(page):
+                    if not _spinning(page):
+                        raise PageError("the loading picture is the reduced-motion ring")
                     _hold(page)
                     try:
                         _grab(page, out_dir, f"smoke-{ARCH}-4-loading.png")
