@@ -555,7 +555,9 @@ def test_refused_pick_list_name_falls_back_to_ticker_and_cik(monkeypatch, tmp_pa
     assert "0000000099" in page.body
     assert "LONG" in page.body
     assert "0000000098" in page.body
-    assert advice_reason(re.sub(r"<[^>]+>", " ", page.body).replace(DISCLAIMER, " ")) is None
+    visible = re.sub(r"<style\b[^>]*>.*?</style>", " ", page.body, flags=re.I | re.S)
+    visible = re.sub(r"<script\b[^>]*>.*?</script>", " ", visible, flags=re.I | re.S)
+    assert advice_reason(re.sub(r"<[^>]+>", " ", visible).replace(DISCLAIMER, " ")) is None
 
 
 def test_an_extra_submission_page_is_read(monkeypatch, tmp_path):

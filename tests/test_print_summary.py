@@ -1,11 +1,14 @@
 """A local print summary. The operating system prints it. Nothing is uploaded."""
 
 import html
+import importlib.util
 import re
 import shutil
 import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
+
+import pytest
 
 from white_cliff.disclaimer import DISCLAIMER
 from white_cliff.i18n import using
@@ -331,3 +334,76 @@ def _pdf_pages(data: bytes) -> list[str]:
         ]
         pages.append("".join(texts))
     return pages
+
+
+def _driver():
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("smoke_mac", root / "scripts" / "smoke_mac.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_print_strings_use_print_ids():
+    assert STRINGS["PRINT.button"] == (PRINT_LABEL, PRINT_LABEL_DE)
+    assert STRINGS["PRINT.sources"] == (SOURCES, SOURCES_DE)
+    _filing, page = _page()
+    assert f">{PRINT_LABEL}</button>" in page
+    assert f"<h2>{SOURCES}</h2>" in page
+    with using("de"):
+        _filing, german = _page()
+    assert f">{PRINT_LABEL_DE}</button>" in german
+    assert f"<h2>{SOURCES_DE}</h2>" in german
+    assert PRINT_LABEL not in german
+    assert SOURCES not in german
+
+
+def test_readable_pdf_text_fails_when_a_page_lacks_the_disclaimer(monkeypatch):
+    driver = _driver()
+    carried = "This tool explains the numbers " + ("in the filing " * 8)
+    missing = "Revenue was one hundred million dollars in the quarter ended July."
+
+    class Header:
+        def call(self, *_args, **_kwargs):
+            raise AssertionError("the repeating header was used")
+
+    monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: [carried, missing])
+    with pytest.raises(driver.PageError, match="does not carry the disclaimer"):
+        driver._require_disclaimer_on_every_page(Header(), b"%PDF")
+
+    monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: ["", "??"])
+    monkeypatch.setattr(
+        driver,
+        "_eval",
+        lambda _tab, _expression: {
+            "text": "This tool explains the numbers in a public company filing.",
+            "display": "table-header-group",
+        },
+    )
+    driver._require_disclaimer_on_every_page(object(), b"/Type /Page /Type /Page")
+
+
+def test_a_sec_url_is_not_split_across_printed_pages():
+    css = _print_css(_page()[1])
+    rule = re.search(r"\.sources li \{[^}]*\}", css)
+    assert rule is not None
+    assert "break-inside: avoid" in rule.group(0)
+    assert "page-break-inside: avoid" in rule.group(0)
+
+
+def test_the_printed_disclaimer_is_at_least_body_text():
+    _filing, page = _page()
+    body = re.search(r"body \{[^}]*font-size:\s*(\d+)px", page)
+    assert body is not None
+    css = _print_css(page)
+    printed = re.search(r"\.print-head \.disclaimer \{[^}]*font-size:\s*(\d+)px", css)
+    assert printed is not None
+    assert int(printed.group(1)) >= int(body.group(1))
+
+
+def test_a_card_is_not_split_across_printed_pages():
+    css = _print_css(_page()[1])
+    rule = re.search(r"article\.card \{[^}]*\}", css)
+    assert rule is not None
+    assert "break-inside: avoid" in rule.group(0)
+    assert "page-break-inside: avoid" in rule.group(0)

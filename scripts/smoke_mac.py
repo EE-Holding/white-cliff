@@ -611,16 +611,31 @@ def _same_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def _read_disclaimer_pages(texts: list[str]) -> str:
+    """Empty when every readable page carries the disclaimer. 'unreadable' when none could be read."""
+    phrase = "This tool explains the numbers"
+    pages = [text for text in texts if sum(char.isalpha() for char in text) >= 40]
+    if not pages:
+        return "unreadable"
+    if len(pages) < 2:
+        return "the print summary was one page"
+    for text in pages:
+        if phrase not in _same_line(text):
+            return "a printed page does not carry the disclaimer"
+    return ""
+
+
 def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
     """The disclaimer is the first writing on each page. Some PDFs hide that writing in a font map."""
-    phrase = "This tool explains the numbers"
-    texts = _pdf_page_texts(pdf)
-    pages = [text for text in texts if sum(char.isalpha() for char in text) >= 40]
-    if len(pages) >= 2 and all(phrase in _same_line(text) for text in pages):
+    verdict = _read_disclaimer_pages(_pdf_page_texts(pdf))
+    if verdict == "":
         return
+    if verdict != "unreadable":
+        raise PageError(verdict)
     page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
-    if page_count < 2 and len(pages) < 2:
+    if page_count < 2:
         raise PageError("the print summary was one page")
+    phrase = "This tool explains the numbers"
     header = _eval(
         tab,
         """(() => {

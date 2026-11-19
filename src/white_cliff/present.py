@@ -414,7 +414,9 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "  p[data-template=\"LIMIT\"] { display: none; }\n"
         "  p.limit-once { display: block; }\n"
         "  .print-head .disclaimer { padding-top: 0; padding-bottom: 6px; max-width: none; "
-        "font-size: 12px; line-height: 16px; }\n"
+        "font-size: 21px; line-height: 32px; }\n"
+        "  .sources li { break-inside: avoid; page-break-inside: avoid; }\n"
+        "  article.card { break-inside: avoid; page-break-inside: avoid; }\n"
         "}\n"
         "</style>\n"
         f"{_print_sheet(inner, disclaimer) if result else _column(inner)}"
@@ -1048,7 +1050,7 @@ def _source_section(filing_url: str, *chunks: str) -> str:
             add(match.group(1))
     if not urls:
         return ""
-    title = "Quellen auf sec.gov" if german() else "Sources on sec.gov"
+    title = phrase("PRINT.sources")
     items = "".join(f"<li>{html.escape(url)}</li>\n" for url in urls)
     return (
         '<section class="sources">\n'
@@ -1061,7 +1063,7 @@ def _source_section(filing_url: str, *chunks: str) -> str:
 
 
 def _print_button() -> str:
-    label = "Zusammenfassung drucken" if german() else "Print summary"
+    label = phrase("PRINT.button")
     return (
         '<p class="print-row"><button type="button" class="print" onclick="window.print()">'
         + html.escape(label)
