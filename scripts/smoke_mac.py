@@ -252,8 +252,13 @@ def _crop_png(data: bytes, height: int) -> bytes:
     return _png_bytes(width, height, color, bit_depth, rows[:height])
 
 
-def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
+def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
     """Emulate the layout size. A real-window resize is clamped by the Intel screen, so it is not used."""
+    if reset:
+        try:
+            page.call("Emulation.clearDeviceMetricsOverride")
+        except PageError:
+            pass
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
@@ -268,6 +273,35 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
         )
     except PageError:
         pass
+
+
+def _css_width(page: DevTools) -> int:
+    """The layout width in CSS pixels. innerWidth stays at the Intel display size after a full-page shot."""
+    try:
+        metrics = page.call("Page.getLayoutMetrics")
+    except PageError:
+        metrics = {}
+    if isinstance(metrics, dict):
+        for key in ("cssLayoutViewport", "layoutViewport"):
+            view = metrics.get(key) or {}
+            if isinstance(view, dict):
+                raw = view.get("clientWidth")
+                if isinstance(raw, (int, float)) and raw:
+                    return int(raw)
+    try:
+        raw = _eval(page, "document.documentElement.clientWidth")
+    except PageError:
+        return 0
+    return int(raw) if isinstance(raw, (int, float)) else 0
+
+
+def _wide(page: DevTools, width: int) -> bool:
+    if _css_width(page) == width:
+        return True
+    try:
+        return _eval(page, "window.innerWidth") == width
+    except PageError:
+        return False
 
 
 def _shot(
@@ -295,11 +329,8 @@ def _shot(
             _window(fresh, width, asked)
             deadline = time.time() + 2
             while time.time() < deadline:
-                try:
-                    if _eval(fresh, "window.innerWidth") == width:
-                        break
-                except PageError:
-                    pass
+                if _wide(fresh, width):
+                    break
                 _window(fresh, width, asked)
                 time.sleep(0.1)
             fresh.call(
@@ -307,8 +338,8 @@ def _shot(
                 {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
             )
             if full:
-                seen = _eval(fresh, "window.innerWidth")
-                if seen != width:
+                if not _wide(fresh, width):
+                    seen = _css_width(fresh)
                     raise PageError(f"the window stayed at {seen}, wanted {width}")
                 raw = _eval(
                     fresh,
@@ -325,6 +356,7 @@ def _shot(
                     timeout=60,
                 )
                 data = base64.b64decode(result["data"])
+                _window(fresh, width, asked, reset=True)
             else:
                 result = fresh.call(
                     "Page.captureScreenshot",
@@ -344,6 +376,7 @@ def _shot(
                         timeout=20,
                     )
                     data = base64.b64decode(result["data"])
+                    _window(fresh, width, asked, reset=True)
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
@@ -468,38 +501,27 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
 
 
 def _fit(page: DevTools, width: int, height: int) -> None:
-    """Set the window and wait until the page has that width, before anything is paused."""
-    deadline = time.time() + 12
+    """Set the layout width. A full-page shot leaves innerWidth on the Intel display size."""
+    deadline = time.time() + 6
     while time.time() < deadline:
         _window(page, width, height)
-        try:
-            if _eval(page, "window.innerWidth") == width:
-                return
-        except PageError:
-            pass
+        if _wide(page, width):
+            return
         time.sleep(0.05)
-    try:
-        page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError:
-        pass
-    _window(page, width, height)
+    _window(page, width, height, reset=True)
     deadline = time.time() + 4
     while time.time() < deadline:
-        try:
-            if _eval(page, "window.innerWidth") == width:
-                return
-        except PageError:
-            pass
-        _window(page, width, height)
+        if _wide(page, width):
+            return
+        _window(page, width, height, reset=True)
         time.sleep(0.1)
+    layout = _css_width(page)
     seen = ""
-    screen = ""
     try:
         seen = str(_eval(page, "window.innerWidth"))
-        screen = str(_eval(page, "screen.availWidth"))
     except PageError:
-        seen = seen or "unknown"
-    raise PageError(f"the window stayed at {seen}, wanted {width}, screen {screen}")
+        seen = "unknown"
+    raise PageError(f"the window stayed at {layout}, wanted {width}, inner {seen}")
 
 
 def _motion(page: DevTools, value: str) -> None:
@@ -874,11 +896,8 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
     deadline = time.time() + 8
     while time.time() < deadline:
         _window(page, width, max(height, 1100))
-        try:
-            if _eval(page, "window.innerWidth") == width:
-                break
-        except PageError:
-            pass
+        if _wide(page, width):
+            break
         time.sleep(0.1)
     _eval(page, "window.scrollTo(0, 0)")
     box = _eval(
