@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -278,10 +279,42 @@ def _intel() -> bool:
     return sys.platform == "darwin" and ARCH == "x86_64"
 
 
+_SCREEN_LEFT: int | None = None
+
+
+def _screen_width(page: DevTools) -> int:
+    if _PAUSED:
+        return 0
+    try:
+        raw = _eval(page, "screen.width")
+    except (PageError, TimeoutError, OSError):
+        return 0
+    return int(raw) if isinstance(raw, (int, float)) else 0
+
+
 def _fit_window(page: DevTools, width: int, height: int) -> None:
-    """Ask for the real window. The Intel display otherwise leaves the frame near 777px."""
+    """Ask for the real window. A headless screen of 800px leaves the frame near 759px."""
     if not _intel():
         return
+    global _SCREEN_LEFT
+    if _SCREEN_LEFT is None:
+        screen = _screen_width(page)
+        _SCREEN_LEFT = 0
+        if screen and screen < int(width):
+            try:
+                added = page.call(
+                    "Emulation.addScreen",
+                    {
+                        "left": screen,
+                        "top": 0,
+                        "width": max(int(width), 1400),
+                        "height": max(int(height), 2400),
+                    },
+                )
+                info = added.get("screenInfo") if isinstance(added, dict) else None
+                _SCREEN_LEFT = int((info or {}).get("left") or screen)
+            except (PageError, TypeError, ValueError):
+                _SCREEN_LEFT = 0
     try:
         found = page.call("Browser.getWindowForTarget")
         page.call(
@@ -289,7 +322,7 @@ def _fit_window(page: DevTools, width: int, height: int) -> None:
             {
                 "windowId": found["windowId"],
                 "bounds": {
-                    "left": 0,
+                    "left": _SCREEN_LEFT,
                     "top": 0,
                     "width": int(width),
                     "height": int(min(height, 1400)),
@@ -312,8 +345,9 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
         "mobile": False,
     }
     if _intel():
-        # The headless screen starts at 800px. Name it before asking the window
-        # to grow, or the window is clamped and the frame stays near 777px.
+        # The headless screen starts at 800px. Grow it before the metrics
+        # override, which reports a wide screen while the frame stays near 759px.
+        _fit_window(page, width, height)
         named = dict(metrics)
         named["screenWidth"] = int(width)
         named["screenHeight"] = height_px
@@ -372,6 +406,43 @@ def _wide(page: DevTools, width: int) -> bool:
         return _eval(page, "window.innerWidth") == width
     except PageError:
         return False
+
+
+_DEBUG_PORT = 0
+
+
+def _document_html(page: DevTools) -> str:
+    root = page.call("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+    found = page.call("DOM.querySelector", {"nodeId": root, "selector": "html"})
+    node = int(found.get("nodeId") or 0)
+    if not node:
+        raise PageError("the page had no document")
+    return page.call("DOM.getOuterHTML", {"nodeId": node})["outerHTML"]
+
+
+def _open_tab() -> tuple[DevTools, str]:
+    """A new tab. Its screenshot cannot tile the Intel window or stick the next size."""
+    last: Exception | None = None
+    url = f"http://127.0.0.1:{_DEBUG_PORT}/json/new?about:blank"
+    for method in ("PUT", "GET"):
+        try:
+            request = urllib.request.Request(url, method=method)
+            with urllib.request.urlopen(request, timeout=5) as response:
+                info = json.loads(response.read().decode("utf-8"))
+            if isinstance(info, list):
+                info = info[0]
+            return DevTools(info["webSocketDebuggerUrl"]), str(info["id"])
+        except (OSError, KeyError, json.JSONDecodeError, PageError) as exc:
+            last = exc
+    raise PageError(last)
+
+
+def _close_tab(target_id: str) -> None:
+    url = f"http://127.0.0.1:{_DEBUG_PORT}/json/close/{target_id}"
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=5).read()
+    except OSError:
+        pass
 
 
 def _settled(page: DevTools) -> None:
@@ -486,7 +557,8 @@ def _intel_photo(
             data = _live_frame(fresh)
             got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
             if len(data) < 1000 or got != wanted:
-                raise PageError(f"{name} is {got}px wide, wanted {wanted}")
+                screen = 0 if _PAUSED else _screen_width(fresh)
+                raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
             if height:
                 png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
                 if png_height > height:
@@ -580,6 +652,233 @@ def _shot(
             if fresh is not page:
                 fresh.close()
     raise PageError(last)
+
+
+def _print_preview(page: DevTools, out_dir: Path) -> None:
+    """Print preview at 1280. Each printed page opens with the disclaimer."""
+    tab = page
+    target_id = ""
+    try:
+        if _intel():
+            html = _document_html(page)
+            tab, target_id = _open_tab()
+            tab.call("Page.enable")
+            tab.call("Runtime.enable")
+            frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
+            tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
+        _window(tab, 1280, 2200)
+        tab.call("Emulation.setEmulatedMedia", {"media": "print"})
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            hidden = _eval(tab, "getComputedStyle(document.querySelector('.top')).display")
+            if hidden == "none" and _wide(tab, 1280):
+                break
+            time.sleep(0.05)
+        else:
+            raise PageError("print styles were not applied")
+        _eval(tab, "window.scrollTo(0, 0)")
+        shot = tab.call(
+            "Page.captureScreenshot",
+            {"format": "png", "optimizeForSpeed": True},
+            timeout=60,
+        )
+        data = base64.b64decode(shot["data"])
+        got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+        if got != 1280:
+            raise PageError(f"print preview is {got}px wide")
+        path = out_dir / f"smoke-{ARCH}-21-print-1280.png"
+        path.write_bytes(data)
+        printed = tab.call(
+            "Page.printToPDF",
+            {
+                "printBackground": True,
+                "displayHeaderFooter": False,
+                "paperWidth": 8.5,
+                "paperHeight": 11,
+            },
+            timeout=60,
+        )
+        pdf = base64.b64decode(printed["data"])
+        _require_disclaimer_on_every_page(tab, pdf)
+    finally:
+        try:
+            tab.call("Emulation.setEmulatedMedia", {"media": "screen"})
+        except PageError:
+            pass
+        if target_id:
+            tab.close()
+            _close_tab(target_id)
+
+
+def _same_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
+    """The disclaimer is the first writing on each page. Some PDFs hide that writing in a font map."""
+    phrase = "This tool explains the numbers"
+    texts = _pdf_page_texts(pdf)
+    pages = [text for text in texts if sum(char.isalpha() for char in text) >= 40]
+    if len(pages) >= 2 and all(phrase in _same_line(text) for text in pages):
+        return
+    page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
+    if page_count < 2 and len(pages) < 2:
+        raise PageError("the print summary was one page")
+    header = _eval(
+        tab,
+        """(() => {
+          const head = document.querySelector("thead.print-head");
+          if (!head) return {text: "", display: ""};
+          return {text: head.innerText, display: getComputedStyle(head).display};
+        })()""",
+    )
+    if not isinstance(header, dict) or phrase not in _same_line(str(header.get("text") or "")):
+        raise PageError("a printed page does not carry the disclaimer")
+    if header.get("display") != "table-header-group":
+        raise PageError("the disclaimer does not repeat on each printed page")
+
+
+def _pdf_page_texts(data: bytes) -> list[str]:
+    """Visible writing on each letter page. Each font keeps its own glyph map."""
+    streams: list[bytes] = []
+    for match in re.finditer(rb"stream\r?\n", data):
+        start = match.end()
+        window = data[max(0, match.start() - 80) : match.start()]
+        length_match = re.search(rb"/Length\s+(\d+)", window)
+        if length_match:
+            raw = data[start : start + int(length_match.group(1))]
+        else:
+            end = data.find(b"endstream", start)
+            if end < 0:
+                continue
+            raw = data[start:end].strip(b"\r\n")
+        try:
+            streams.append(zlib.decompress(raw))
+        except zlib.error:
+            continue
+
+    def character(hex_digits: str) -> str:
+        if len(hex_digits) > 4:
+            return "".join(
+                chr(int(hex_digits[index : index + 4], 16))
+                for index in range(0, len(hex_digits) - 3, 4)
+            )
+        code = int(hex_digits, 16)
+        return chr(code) if code <= 0x10FFFF else ""
+
+    def font_map(blob: bytes) -> dict[int, str]:
+        cmap: dict[int, str] = {}
+        for match in re.finditer(rb"beginbfrange\n(.*?)endbfrange", blob, re.S):
+            body = match.group(1)
+            for row in re.finditer(
+                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+                body,
+            ):
+                left, right = int(row.group(1), 16), int(row.group(2), 16)
+                dest = int(row.group(3), 16)
+                for offset, src in enumerate(range(left, right + 1)):
+                    code = dest + offset
+                    if code <= 0x10FFFF:
+                        cmap[src] = chr(code)
+            for row in re.finditer(
+                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]*)\]",
+                body,
+            ):
+                left = int(row.group(1), 16)
+                for offset, dest in enumerate(re.findall(rb"<([0-9A-Fa-f]+)>", row.group(3))):
+                    cmap[left + offset] = character(dest.decode())
+        for match in re.finditer(rb"beginbfchar\n(.*?)endbfchar", blob, re.S):
+            for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", match.group(1)):
+                cmap[int(row.group(1), 16)] = character(row.group(2).decode())
+        return cmap
+
+    maps = [font_map(stream) for stream in streams if b"beginbfchar" in stream or b"beginbfrange" in stream]
+    maps = [cmap for cmap in maps if cmap]
+
+    def literal(body: bytes) -> str:
+        chars: list[str] = []
+        index = 0
+        while index < len(body):
+            byte = body[index]
+            if byte == 0x5C and index + 1 < len(body):
+                index += 1
+                nxt = body[index]
+                named = {
+                    ord("n"): "\n",
+                    ord("r"): "\r",
+                    ord("t"): "\t",
+                    ord("("): "(",
+                    ord(")"): ")",
+                    ord("\\"): "\\",
+                }
+                if nxt in named:
+                    chars.append(named[nxt])
+                elif 48 <= nxt <= 55:
+                    digits = bytes([nxt])
+                    while index + 1 < len(body) and len(digits) < 3 and 48 <= body[index + 1] <= 55:
+                        index += 1
+                        digits += bytes([body[index]])
+                    chars.append(chr(int(digits, 8)))
+                else:
+                    chars.append(chr(nxt))
+            else:
+                chars.append(chr(byte))
+            index += 1
+        return "".join(chars)
+
+    def glyphs(hex_text: str, cmap: dict[int, str] | None, width: int) -> str:
+        raw = bytes.fromhex(hex_text)
+        chars = []
+        for index in range(0, len(raw) - width + 1, width):
+            code = int.from_bytes(raw[index : index + width], "big")
+            if cmap is None:
+                chars.append(chr(code) if code <= 0x10FFFF else "\ufffd")
+            else:
+                chars.append(cmap.get(code, "\ufffd"))
+        return "".join(chars)
+
+    shown = re.compile(
+        rb"<[0-9A-Fa-f]+>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ",
+        re.S,
+    )
+    pages = []
+    phrase = "This tool explains the numbers"
+    for stream in streams:
+        if b"Tj" not in stream and b"TJ" not in stream:
+            continue
+        if b"beginbfchar" in stream or b"beginbfrange" in stream:
+            continue
+        plain: list[str] = []
+        coded: list[str] = []
+        for item in shown.finditer(stream):
+            token = item.group(0)
+            if token.endswith(b"TJ"):
+                for part in re.finditer(rb"<[0-9A-Fa-f]+>|\((?:\\.|[^\\)])*\)", token):
+                    raw = part.group(0)
+                    if raw.startswith(b"<"):
+                        coded.append(raw[1:-1].decode())
+                    else:
+                        plain.append(literal(raw[1:-1]))
+            elif token.lstrip().startswith(b"("):
+                plain.append(literal(token[: token.rfind(b"Tj")].strip()[1:-1]))
+            else:
+                coded.append(token[: token.rfind(b"Tj")].strip()[1:-1].decode())
+        base = "".join(plain)
+        chosen = base
+        candidates = []
+        for cmap in maps:
+            for width in (2, 1):
+                candidates.append(base + "".join(glyphs(item, cmap, width) for item in coded))
+        for width in (2, 1):
+            candidates.append(base + "".join(glyphs(item, None, width) for item in coded))
+        for candidate in candidates:
+            if phrase in _same_line(candidate):
+                chosen = candidate
+                break
+            if candidate.count(" ") > chosen.count(" "):
+                chosen = candidate
+        pages.append(chosen)
+    return pages
 
 
 def _layout(page: DevTools, *, columns: int, width: float | None) -> None:
@@ -946,6 +1245,9 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
+    global _DEBUG_PORT, _SCREEN_LEFT
+    _DEBUG_PORT = port
+    _SCREEN_LEFT = None
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
     stderr_path = Path(stderr_name)
@@ -969,7 +1271,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     if _intel():
         # Headless defaults to an 800x600 screen, so a 1100 window stays near 800.
         command[command.index("--headless=old")] = "--headless=new"
-        command.insert(command.index("--window-size=1100,2200"), "--screen-info={1400x2400}")
+        command.insert(command.index("--window-size=1100,2200"), "--screen-info={0,0 1400x2400}")
     chrome = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
@@ -1052,6 +1354,7 @@ def drive(
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
+        _print_preview(page, out_dir)
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
