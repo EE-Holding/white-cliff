@@ -253,12 +253,12 @@ def _crop_png(data: bytes, height: int) -> bytes:
 
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """Emulate the layout size. A real-window resize is clamped by the Intel screen, so it is not used."""
-    if reset:
-        try:
-            page.call("Emulation.clearDeviceMetricsOverride")
-        except PageError:
-            pass
+    """Emulate the layout size. Clear the previous override first; a screenshot leaves it stuck on Intel."""
+    del reset
+    try:
+        page.call("Emulation.clearDeviceMetricsOverride")
+    except PageError:
+        pass
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
@@ -267,8 +267,6 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
                 "height": min(int(height), 900),
                 "deviceScaleFactor": 1,
                 "mobile": False,
-                "screenWidth": max(int(width), 1440),
-                "screenHeight": 1200,
             },
         )
     except PageError:
@@ -347,6 +345,7 @@ def _shot(
                     timeout=60,
                 )
                 data = base64.b64decode(result["data"])
+                _window(fresh, width, asked)
             else:
                 result = fresh.call(
                     "Page.captureScreenshot",
