@@ -1717,6 +1717,7 @@ def _wait_result(
     deadline = time.time() + 180
     last = ""
     saw_loading = not loading
+    calmed = not loading or not _intel()
     replaced = not fresh
     while time.time() < deadline:
         if fresh and not replaced:
@@ -1740,6 +1741,12 @@ def _wait_result(
                     saw_loading = True
             except PageError:
                 _release(page)
+        if saw_loading and not calmed:
+            try:
+                _motion(page, "reduce")
+            except (PageError, OSError):
+                pass
+            calmed = True
         try:
             state = _state(page)
         except PageError:
