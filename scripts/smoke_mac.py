@@ -607,21 +607,44 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
             _close_tab(target_id)
 
 
+_PHRASE = re.compile(r"This\W+tool\W+explains\W+the\W+numbers")
+_WORD = re.compile(r"[A-Za-z]{3,}")
+_COMMON = frozenset(
+    "the and for was from with million quarter filing this that are not year "
+    "rose percent company report".split()
+)
+
+
 def _same_line(text: str) -> str:
+    for mark in ("\u00ad", "\u200b", "\ufeff", "\u2060"):
+        text = text.replace(mark, "")
     return " ".join(text.split())
+
+
+def _page_can_be_read(text: str) -> bool:
+    """Glyph ids that did not decode are not a page we can read."""
+    flat = _same_line(text)
+    if sum(char.isalpha() for char in flat) < 40:
+        return False
+    if "sec.gov" in flat:
+        return True
+    words = _WORD.findall(flat)
+    if len(words) < 6:
+        return False
+    return sum(word.lower() in _COMMON for word in words) >= 2
 
 
 def _read_disclaimer_pages(texts: list[str]) -> str:
     """Empty when every readable page carries the disclaimer. 'unreadable' when none could be read."""
-    phrase = "This tool explains the numbers"
-    pages = [text for text in texts if sum(char.isalpha() for char in text) >= 40]
+    pages = [text for text in texts if _page_can_be_read(text)]
     if not pages:
         return "unreadable"
     if len(pages) < 2:
         return "the print summary was one page"
     for text in pages:
-        if phrase not in _same_line(text):
-            return "a printed page does not carry the disclaimer"
+        if _PHRASE.search(_same_line(text)) is None:
+            sample = re.sub(r"\S+@\S+", "", _same_line(text))[:80]
+            return f"a printed page does not carry the disclaimer ({sample})"
     return ""
 
 

@@ -372,6 +372,23 @@ def test_readable_pdf_text_fails_when_a_page_lacks_the_disclaimer(monkeypatch):
     with pytest.raises(driver.PageError, match="does not carry the disclaimer"):
         driver._require_disclaimer_on_every_page(Header(), b"%PDF")
 
+    urls = "https://www.sec.gov/Archives/edgar/data/0000320193/ " * 6
+    monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: [carried, urls])
+    with pytest.raises(driver.PageError, match="does not carry the disclaimer"):
+        driver._require_disclaimer_on_every_page(Header(), b"%PDF")
+
+    junk = "Qwxz " * 40
+    monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: [junk, junk])
+    monkeypatch.setattr(
+        driver,
+        "_eval",
+        lambda _tab, _expression: {
+            "text": "This tool explains the numbers in a public company filing.",
+            "display": "table-header-group",
+        },
+    )
+    driver._require_disclaimer_on_every_page(object(), b"/Type /Page /Type /Page")
+
     monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: ["", "??"])
     monkeypatch.setattr(
         driver,
