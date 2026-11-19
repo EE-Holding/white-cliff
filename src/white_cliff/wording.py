@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlsplit
@@ -246,6 +246,10 @@ class Additions:
     after: dict[str, str]
     quality: str
     plain: str
+    skip: frozenset[str] = frozenset()
+    statement: dict[str, str] = field(default_factory=dict)
+    heading: dict[str, str] = field(default_factory=dict)
+    fold: dict[str, str] = field(default_factory=dict)
 
 
 def long_date(iso: str) -> str:
@@ -1178,7 +1182,7 @@ def _short_line(label, current, last, year, measure, form, chunks: list[str]) ->
         copied = _retitled(chunks, "C3")
         if copied:
             return copied
-    copied = _retitled(chunks, "C2", skip=("percentage points", "percentage change"))
+    copied = _retitled(chunks, "C2", skip=("percentage change",))
     if dated and copied:
         return copied
     return ""
@@ -1625,7 +1629,7 @@ def _check_numbers_de(result: CheckResult) -> str:
             slots["period_prior"] = _period_html(prior)
         else:
             template = template.split(" (")[0] + "."
-        return paragraph(fill(template, slots))
+        return _period_lead(ocf) + paragraph(fill(template, slots))
     if result.check_id == "C2" and len(facts) >= 4:
         ar_now, ar_then, rev_now, _rev_then = facts[:4]
         template = choose(
@@ -1761,7 +1765,7 @@ def _check_numbers(result: CheckResult) -> str:
                 ("text", ")"),
             ])
         parts.append(("text", "."))
-        return _parts_html("NUMBERS", parts)
+        return _period_lead(ocf) + _parts_html("NUMBERS", parts)
     if result.check_id == "C2" and len(facts) >= 4:
         ar_now, ar_then, rev_now, rev_then = facts[:4]
         if result.numbers["g_ar"] == 0 or result.numbers["g_rev"] == 0:
@@ -1989,6 +1993,13 @@ def _check_heading(result: CheckResult) -> str:
     return phrase(names[result.check_id])
 
 
+def _period_lead(fact: Fact) -> str:
+    lead = column_header(fact.period.kind, fact.period.start, fact.period.end or "")
+    if not lead:
+        return ""
+    return f'<p class="period">{html.escape(lead)}</p>\n'
+
+
 def _check_html(result: CheckResult) -> str:
     heading = _check_heading(result)
     ident = result.check_id.lower()
@@ -2011,20 +2022,26 @@ def _check_html(result: CheckResult) -> str:
     limit = phrase("QCW.limit") if german() else LIMIT
     body += f'<p data-template="LIMIT">{html.escape(limit)}</p>\n'
     formula = html.escape(result.formula)
-    if german():
-        formula_line = ""
-    else:
+    formula_line = ""
+    if formula and not german():
         formula_line = f'<p data-template="FORMULA">Formula: {formula}.</p>\n'
-    panel = (
-        f'<div id="formula-{ident}" class="explain" hidden>\n'
-        f"{formula_line}"
-        f"{_check_numbers(result)}</div>\n"
-    )
+    button = ""
+    panel = ""
+    if formula_line:
+        button = (
+            f'<button type="button" class="explain tap" aria-expanded="false" '
+            f'aria-controls="formula-{ident}">{html.escape(ui("explain"))}'
+            '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"></path></svg>'
+            "</button>\n"
+        )
+        panel = (
+            f'<div id="formula-{ident}" class="detail" aria-hidden="true">'
+            f'<div class="detail-inner">{formula_line}</div></div>\n'
+        )
     return (
         f'<section class="check" data-check="{result.check_id}">\n'
-        f'<h3><button type="button" class="tap" aria-expanded="false" aria-controls="formula-{ident}">'
-        f"{html.escape(heading)}</button></h3>\n"
-        f"{body}{panel}</section>\n"
+        f"<h3>{html.escape(heading)}</h3>\n"
+        f"{body}{button}{panel}</section>\n"
     )
 
 
@@ -2124,15 +2141,19 @@ def build_additions(
         form_words = "annual report" if form == "10-K" else "quarterly report" if form == "10-Q" else "report"
     before: dict[str, str] = {}
     after: dict[str, str] = {}
-    seen_statement = ""
     plain_parts: list[str] = []
+    statement_of: dict[str, str] = {}
+    headings: dict[str, str] = {}
+    known: dict[str, str] = {}
+    skip: set[str] = set()
+    yoy_notes: dict[str, str] = {}
+    fold: dict[str, str] = {}
     order = re.findall(r'data-kind="(fact|calc)" data-id="([^"]+)"', explained.html)
     seen_ids: list[tuple[str, str]] = []
     for kind, identifier in order:
         if (kind, identifier) in seen_ids:
             continue
         seen_ids.append((kind, identifier))
-    grouped: dict[str, list[str]] = {}
     for kind, identifier in seen_ids:
         role, fact, inputs = _role_of(explained, kind, identifier)
         if fact is None:
@@ -2140,12 +2161,31 @@ def build_additions(
         source_name = statement_name(fact) or "the filing"
         statement = _statement(source_name)
         sentence = _statement_sentence(source_name)
-        grouped.setdefault(statement, []).append(label_for(role, fact))
-        if statement != seen_statement:
+        if role == "yoy_change":
+            skip.add(identifier)
+            note = _explain_block(
+                role, fact, company or "this company", sentence, _computed_formula(role, inputs), inputs
+            )
+            if inputs:
+                yoy_notes[inputs[0][1].id] = note
+                fold[identifier] = inputs[0][1].id
+            plain_parts.append(re.sub(r"<[^>]+>", " ", note))
+            continue
+        if statement not in known:
+            slug = "section-" + re.sub(r"[^a-z]+", "-", statement.lower()).strip("-") or "section"
+            control = slug
+            number = 2
+            while control in headings:
+                control = f"{slug}-{number}"
+                number += 1
+            known[statement] = control
+        control = known[statement]
+        statement_of[identifier] = control
+        if control not in headings:
             names_for: list[str] = []
             for kind2, id2 in seen_ids:
                 role2, fact2, _inputs2 = _role_of(explained, kind2, id2)
-                if fact2 is None:
+                if fact2 is None or role2 == "yoy_change":
                     continue
                 if _statement(statement_name(fact2) or "the filing") != statement:
                     continue
@@ -2153,15 +2193,10 @@ def build_additions(
                 if label2 not in names_for:
                     names_for.append(label2)
             names = ", ".join(names_for)
-            control = "section-" + re.sub(r"[^a-z]+", "-", statement.lower())
-            before[identifier] = (
-                f'<h2><button type="button" class="tap" aria-expanded="false" aria-controls="{control}">'
-                f"{html.escape(statement)}</button></h2>\n"
-                f'<div id="{control}" class="explain" hidden>\n'
+            headings[control] = (
+                f'<h2 id="{html.escape(control, quote=True)}">{html.escape(statement)}</h2>\n'
                 + _parts_html("SECTION", _section_parts(names, sentence, company, form_words, fact))
-                + "</div>\n"
             )
-            seen_statement = statement
         measure = "money"
         if role in {"shares", "diluted"} or fact.unit.split()[0] == "shares":
             measure = "shares"
@@ -2213,9 +2248,23 @@ def build_additions(
             f"{lines}{explanation}</div></div>\n"
         )
         plain_parts.append(re.sub(r"<[^>]+>", " ", face + lines + explanation))
+    for revenue_id, note in yoy_notes.items():
+        block = after.get(revenue_id)
+        if not block:
+            continue
+        after[revenue_id] = block.replace("</div></div>\n", note + "</div></div>\n", 1)
     quality = quality_html(facts, form=form, period_end=period_end)
     plain_parts.append(re.sub(r"<[^>]+>", " ", quality))
-    return Additions(before, after, quality, "\n".join(plain_parts))
+    return Additions(
+        before,
+        after,
+        quality,
+        "\n".join(plain_parts),
+        frozenset(skip),
+        statement_of,
+        headings,
+        fold,
+    )
 
 
 def _shown_calc(explained, identifier: str, source: Fact, unit: str, role: str) -> Fact:

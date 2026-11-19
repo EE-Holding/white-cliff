@@ -50,6 +50,17 @@ _SCALE = {
 }
 
 
+def _with_sign(number: str, *, dollars: bool) -> str:
+    shown = _commas(number)
+    sign = ""
+    if shown.startswith("\u2212"):
+        sign = "\u2212"
+        shown = shown[1:]
+    if dollars:
+        shown = f"${shown}"
+    return sign + shown
+
+
 def shown_amount(raw: str) -> str:
     """The filing amount, with separators and a dollar sign. No new rounding."""
     if german():
@@ -57,7 +68,7 @@ def shown_amount(raw: str) -> str:
     text = " ".join(html.unescape(raw).split())
     per_share = _PER_SHARE.fullmatch(text)
     if per_share is not None:
-        shown = f"${_commas(per_share.group(1))}"
+        shown = _with_sign(per_share.group(1), dollars=True)
         scale = per_share.group(2)
         if scale:
             shown = f"{shown} {_SCALE[scale.lower()]}"
@@ -65,9 +76,7 @@ def shown_amount(raw: str) -> str:
     match = _MONEY.fullmatch(text)
     if match is not None:
         number, scale = match.group(1), match.group(2)
-        shown = _commas(number)
-        if "USD" in text:
-            shown = f"${shown}"
+        shown = _with_sign(number, dollars="USD" in text)
         if scale:
             shown = f"{shown} {_SCALE.get(scale.lower(), scale.lower())}"
         return shown
@@ -91,8 +100,8 @@ def shown_amount(raw: str) -> str:
 
 def _commas(number: str) -> str:
     sign = ""
-    if number.startswith("-"):
-        sign = "-"
+    if number.startswith("-") or number.startswith("\u2212"):
+        sign = "\u2212"
         number = number[1:]
     whole, dot, frac = number.partition(".")
     groups: list[str] = []
@@ -167,7 +176,7 @@ def _language_control(token: str) -> str:
     )
 
 
-def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
+def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "") -> str:
     closed = html.escape(shown_copy(CLOSED), quote=True)
     looking = html.escape(shown_copy(LOOKING), quote=True)
     finding = html.escape(shown_copy(FINDING), quote=True)
@@ -189,6 +198,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         f"{body}"
         f"{disclaimer}"
         f'<div class="top"><p class="app">{html.escape(ui("app_name"))}</p>'
+        f"{search}"
         f"{_language_control(token)}</div>\n"
         "<style>\n"
         ":root { --bg: #ffffff; --ink: #1d1d1f; --ink-2: #3a3a3c; --ink-3: #555559; "
@@ -253,9 +263,18 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         ".search-row input { flex: 1; min-width: 0; }\n"
         ".search-row button { margin-top: 0; min-height: 60px; }\n"
         "form.pick { margin: 0 auto 8px; }\n"
-        "button.choice { display: block; width: 100%; text-align: left; font-weight: 400; "
-        "background: var(--bg); color: var(--ink); border: 2px solid var(--line); margin: 0; "
-        "min-height: 56px; padding: 14px 24px; }\n"
+        "button.choice { display: flex; align-items: center; justify-content: space-between; "
+        "gap: 12px; width: 100%; text-align: left; margin: 0; min-height: 60px; "
+        "padding: 0 16px; background: #ffffff; color: #1d1d1f; "
+        "border: 1px solid #c7c7cc; border-radius: 12px; font-size: 22px; "
+        "line-height: 30px; font-weight: 600; }\n"
+        "button.choice svg.choice-mark { width: 22px; height: 22px; flex: none; fill: none; "
+        "stroke: #0a4b8f; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }\n"
+        ".card.choices { background: #ffffff; border: 1px solid #e8e8ed; border-radius: 22px; "
+        "padding: 24px 28px; max-width: 680px; margin: 0 auto 8px; }\n"
+        ".card.choices form.pick { background: none; border: 0; padding: 0; margin: 0 0 8px; "
+        "max-width: none; border-radius: 0; }\n"
+        ".card.choices form.pick:last-child { margin-bottom: 0; }\n"
         ".steps { background: var(--panel); border-radius: 16px; padding: 24px; "
         "margin-top: 24px; max-width: 100%; }\n"
         ".steps.open { animation: enter 200ms var(--ease-decel) both; }\n"
@@ -316,8 +335,12 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "text-underline-offset: 3px; }\n"
         ".bar-track { position: relative; height: 14px; margin-top: 8px; background: #ececf0; "
         "border-radius: 0 7px 7px 0; }\n"
+        ".bar-track { margin-bottom: 28px; }\n"
         ".bar-track::before { content: \"\"; position: absolute; left: var(--zero, 0%); top: -4px; "
-        "bottom: -4px; width: 2px; background: #3a3a3c; border-radius: 1px; z-index: 1; }\n"
+        "bottom: -22px; width: 2px; background: #3a3a3c; border-radius: 1px; z-index: 1; }\n"
+        ".bar-track::after { content: \"0\"; position: absolute; left: var(--zero, 0%); top: 18px; "
+        "transform: translateX(-50%); font-size: 18px; line-height: 27px; font-weight: 400; "
+        "color: #555559; }\n"
         ".fill { position: absolute; top: 0; height: 100%; border-radius: 0 7px 7px 0; "
         "background: #6f86a8; transform-origin: left center; "
         "animation: grow 400ms var(--ease-standard) both; "
@@ -334,6 +357,10 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "transition: grid-template-rows 300ms var(--ease-standard), opacity 300ms var(--ease-standard); }\n"
         ".detail.open { grid-template-rows: 1fr; opacity: 1; }\n"
         ".detail-inner { overflow: hidden; }\n"
+        ".detail-inner p, .explain p { font-size: 20px; line-height: 30px; color: #3a3a3c; "
+        "margin: 0 0 12px; }\n"
+        ".period { margin: 0 0 12px; font-size: 22px; line-height: 30px; font-weight: 700; "
+        "color: #1d1d1f; }\n"
         "a { color: var(--accent); }\n"
         ".filing { margin-top: 40px; }\n"
         ".filing a, .change a { display: inline-block; min-height: 44px; padding: 8px 0; "
@@ -365,9 +392,18 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "to { opacity: 1; transform: none; } }\n"
         "@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }\n"
         "body.result .hero { animation: rise 400ms var(--ease-decel) both; animation-delay: 60ms; }\n"
+        "body.result .top { flex-wrap: wrap; }\n"
+        "body.result form.search { width: 360px; max-width: 360px; margin: 0; padding: 0; "
+        "border: 0; background: transparent; border-radius: 0; }\n"
+        "body.result form.search input, body.result form.search .search-row button { "
+        "min-height: 48px; height: 48px; }\n"
         "@media (max-width: 900px) {\n"
         "  .grid { grid-template-columns: minmax(0, 680px); }\n"
         "  table.print-sheet > tbody { grid-template-columns: 1fr; }\n"
+        "}\n"
+        "@media (max-width: 899px) {\n"
+        "  body.result .top { flex-direction: column; align-items: stretch; }\n"
+        "  body.result form.search { width: 100%; max-width: none; }\n"
         "}\n"
         "@media (max-width: 480px) {\n"
         "  .chart { flex-direction: column; }\n"
@@ -433,6 +469,9 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         f"{_print_sheet(inner, disclaimer) if result else _column(inner)}"
         "<script>\n"
         "(function () {\n"
+        '  if (document.body.className.indexOf("result") !== -1 && location.pathname !== "/result") {\n'
+        '    history.pushState(null, "", "/result");\n'
+        "  }\n"
         f'  var closed = "{closed}";\n'
         f'  var looking = "{looking}";\n'
         f'  var finding = "{finding}";\n'
@@ -602,10 +641,28 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
     )
     from white_cliff.wording import page_terms
 
+    page = _blank_sec(page)
     found = page_terms(page)
     if found:
         raise OutputRefused(found)
     return page
+
+
+def _blank_sec(page: str) -> str:
+    """A filing link leaves this page in place."""
+
+    def repl(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        href = html.unescape(match.group(1))
+        if not (
+            href.startswith("https://www.sec.gov/") or href.startswith("https://data.sec.gov/")
+        ):
+            return tag
+        if "target=" in tag:
+            return tag
+        return tag[:-1] + ' target="_blank" rel="noopener">'
+
+    return re.sub(r'<a\b[^>]*\bhref="([^"]*)"[^>]*>', repl, page)
 
 
 def _change_link() -> str:
@@ -812,10 +869,42 @@ def _choice_label(company: object) -> str:
     cik = str(getattr(company, "cik", "") or "")
     shown = _plain_company(title)
     if shown is None:
-        shown = _ticker_cik(ticker, cik) or None
-    if shown is None:
-        return ui("company_fallback")
+        return _ticker_cik(ticker, cik) or ui("company_fallback")
+    if ticker and not shown.endswith(" " + ticker):
+        return f"{shown} {ticker}"
     return shown
+
+
+_CHOICE_MARK = (
+    '<svg class="choice-mark" viewBox="0 0 20 20" aria-hidden="true">'
+    '<path d="M8 5l5 5-5 5"></path></svg>'
+)
+
+
+def _closest_first(companies: Sequence[object], query: str) -> list[object]:
+    import difflib
+
+    needle = " ".join(query.casefold().split())
+
+    def rank(company: object) -> tuple:
+        title = str(getattr(company, "title", "") or "").casefold()
+        ticker = str(getattr(company, "ticker", "") or "").casefold()
+        if not needle:
+            return (0, 0.0, title, ticker)
+        shared = 0
+        for left, right in zip(needle, title):
+            if left != right:
+                break
+            shared += 1
+        score = max(
+            difflib.SequenceMatcher(None, needle, title).ratio(),
+            difflib.SequenceMatcher(None, needle, ticker).ratio(),
+        )
+        if ticker == needle:
+            score = 1.0
+        return (-shared, -score, title, ticker)
+
+    return sorted(companies, key=rank)
 
 
 def choices_page(
@@ -825,7 +914,7 @@ def choices_page(
     query: str = "",
 ) -> str:
     buttons: list[str] = []
-    for company in companies:
+    for company in _closest_first(companies, query):
         label = html.escape(_choice_label(company))
         cik = html.escape(str(getattr(company, "cik", "")), quote=True)
         buttons.append(
@@ -835,10 +924,16 @@ def choices_page(
             + cik
             + '">'
             + label
+            + _CHOICE_MARK
             + "</button>\n"
             + "</form>\n"
         )
-    body = f'<p class="notice">{html.escape(shown_copy(heading))}</p>\n' + "".join(buttons)
+    body = (
+        '<div class="card choices">\n'
+        f'<p class="notice">{html.escape(shown_copy(heading))}</p>\n'
+        + "".join(buttons)
+        + "</div>\n"
+    )
     return _shell(
         body + _search_form(token, focus=False, query=query) + _change_link(),
         token=token,
@@ -956,16 +1051,33 @@ def _stored_amount(store, identifier: str) -> str:
 
 
 def _rows(explained_html: str, additions=None, store=None) -> str:
-    pieces: list[str] = []
-    grid: list[str] = []
+    skip = additions.skip if additions is not None else frozenset()
+    statement_of = additions.statement if additions is not None else {}
+    headings = additions.heading if additions is not None else {}
+    fold = additions.fold if additions is not None else {}
+    sequence: list[tuple[str, str]] = []
+    parked: dict[str, list[tuple[str, str]]] = {}
     index = 0
+    parts = re.findall(r"<p\b[^>]*>.*?</p>", explained_html, flags=re.I | re.S)
+    for part in parts:
+        match = _DATA_LINK.search(part)
+        if match is None:
+            continue
+        identifier = _anchor_from_href(match.group(3))
+        if identifier not in skip:
+            continue
+        host = fold.get(identifier, "")
+        if not host:
+            continue
+        amount = shown_amount(match.group(2))
+        if german():
+            stored = _stored_amount(store, identifier)
+            if stored:
+                amount = stored
+        href = html.escape(html.unescape(match.group(3)), quote=True)
+        parked.setdefault(host, []).append((amount, href))
 
-    def flush() -> None:
-        if grid:
-            pieces.append('<div class="grid">' + "".join(grid) + "</div>\n")
-            grid.clear()
-
-    for part in re.findall(r"<p\b[^>]*>.*?</p>", explained_html, flags=re.I | re.S):
+    for part in parts:
         if 'class="disclaimer"' in part or "github.com" in part or "Report an error" in part:
             continue
         match = _DATA_LINK.search(part)
@@ -981,11 +1093,11 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
         href = html.escape(html.unescape(match.group(3)), quote=True)
         if not label:
             continue
-        before = ""
+        if identifier in skip:
+            continue
         after = ""
         button = ""
         if additions is not None and identifier:
-            before = additions.before.get(identifier, "")
             after = additions.after.get(identifier, "")
             if after:
                 control = html.escape("explain-" + identifier, quote=True)
@@ -993,13 +1105,13 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
                     f'<button type="button" class="explain tap" aria-expanded="false" '
                     f'aria-controls="{control}">{html.escape(ui("explain"))}{_CHEVRON}</button>'
                 )
-        if before:
-            flush()
-            pieces.append(before)
         face, detail = _split_div(after, "face")
+        for parked_amount, parked_href in parked.get(identifier, []):
+            escaped = html.escape(parked_amount)
+            detail += f'<p><a class="figure" href="{parked_href}">{escaped}</a></p>'
         caption, face = _leading_caption(face)
         label_id = "lab-" + re.sub(r"[^a-z0-9]+", "-", identifier.lower())
-        grid.append(
+        article = (
             f'<article class="card" style="--c:{index}" aria-labelledby="{label_id}">'
             f'<h3 class="label" id="{label_id}">{html.escape(label)}</h3>'
             + caption
@@ -1009,8 +1121,21 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
             + detail
             + "</article>\n"
         )
+        sequence.append((statement_of.get(identifier, ""), article))
         index += 1
-    flush()
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for key, article in sequence:
+        if key not in groups:
+            order.append(key)
+            groups[key] = []
+        groups[key].append(article)
+    pieces: list[str] = []
+    for key in order:
+        if key and key in headings:
+            pieces.append(headings[key])
+        if groups[key]:
+            pieces.append('<div class="grid">' + "".join(groups[key]) + "</div>\n")
     return "".join(pieces)
 
 
@@ -1211,8 +1336,12 @@ def result_page(
         + _source_section(url, rows, quality, filing)
         + '<div class="next">\n'
         + _report_link()
-        + _search_form(token, focus=False)
         + _change_link()
         + "</div>\n"
     )
-    return _shell(inner, result=True, token=token)
+    return _shell(
+        inner,
+        result=True,
+        token=token,
+        search=_search_form(token, focus=False),
+    )

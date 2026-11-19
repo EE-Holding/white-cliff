@@ -75,7 +75,7 @@ def _figures(markdown: str) -> list[tuple[str, str]]:
 
 def _page_figures(page: str) -> list[tuple[str, str]]:
     pairs = []
-    for match in re.finditer(r'<a class="figure" href="([^"]*)">(.*?)</a>', page, flags=re.S):
+    for match in re.finditer(r'<a class="figure" href="([^"]*)"[^>]*>(.*?)</a>', page, flags=re.S):
         pairs.append((html.unescape(match.group(2)), html.unescape(match.group(1))))
     return pairs
 
@@ -94,7 +94,7 @@ def test_shown_amounts_keep_each_units_scale():
     assert "$" not in counted
     for raw in ("8.7 percent", "-5.0 percent", "75.0 percent"):
         shown = shown_amount(raw)
-        assert shown == raw
+        assert shown == raw.replace("-", "\u2212")
         assert "$" not in shown
         assert "million" not in shown
         assert "thousand" not in shown
@@ -133,11 +133,13 @@ def test_pinned_explanations_match_and_keep_the_guard():
         assert "font-size: 24px" in page
         assert "#1d1d1f" in page
         assert "#ffffff" in page
-        assert [href for _text, href in _page_figures(page)] == [
+        assert sorted(href for _text, href in _page_figures(page)) == sorted(
             href for _label, href in _figures(explained.markdown)
-        ]
+        )
         shown = [html.unescape(item) for item in re.findall(r"<data[^>]*>(.*?)</data>", explained.html)]
-        assert [text for text, _href in _page_figures(page)] == [shown_amount(item) for item in shown]
+        assert sorted(text for text, _href in _page_figures(page)) == sorted(
+            shown_amount(item) for item in shown
+        )
         visible = re.sub(r"\s+", " ", html.unescape(_visible(page)))
         for sentence in (FRAME, LIMIT, *WHY.values(), *CAUSES.values()):
             visible = visible.replace(re.sub(r"\s+", " ", sentence), " ")
@@ -209,7 +211,7 @@ def test_rating_words_fall_back_to_ticker_and_cik():
     target = _Named("TARGET CORP", "TGT", "0000027419")
     assert _choice_label(strong) == "SBH 0000000001"
     assert "Strong Buy" not in _choice_label(strong)
-    assert _choice_label(berkshire) == "Berkshire Hathaway Holdings"
+    assert _choice_label(berkshire) == "Berkshire Hathaway Holdings BRK"
     assert _choice_label(best) == "BBY 0000764478"
     assert _choice_label(target) == "TGT 0000027419"
     assert _company_name("", "Strong Buy Holdings Inc", "SBH", "0000000001") == "SBH 0000000001"

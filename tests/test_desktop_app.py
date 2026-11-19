@@ -1141,7 +1141,7 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
             """
             new Promise(function (resolve) {
               var button = Array.from(document.querySelectorAll("button.choice")).find(function (item) {
-                return item.textContent === "Apple Inc.";
+                return item.textContent.indexOf("Apple Inc.") === 0;
               });
               button.form.requestSubmit(button);
               resolve("picked");

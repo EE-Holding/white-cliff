@@ -407,8 +407,9 @@ def test_german_pages_do_not_reuse_english_template_words():
     assert f"Quartal zum 26.{NBSP}April{NBSP}2026" in gap
     assert "96.221" in result
     assert "Prozent" in result
-    yoy = result.find(">Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum</h3>")
+    yoy = result.find("Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum")
     assert yoy > 0
+    assert ">Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum</h3>" not in result
     window = re.sub(r"<[^>]+>", "", result[yoy : yoy + 4000])
     at = window.find(" bei ")
     stated = window[at : at + 24]

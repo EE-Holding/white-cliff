@@ -162,6 +162,7 @@ class Desktop:
         self.reading = READING
         self.steps: list[str] = []
         self.screen: tuple[str, dict] = ("home", {})
+        self.result: dict | None = None
 
     @classmethod
     def create(cls, transport=None, sleep=time.sleep, clock=time.monotonic):
@@ -206,12 +207,18 @@ class Desktop:
             return self._lookup(form.get("query", ""), None)
         if method == "POST" and path == "/pick":
             return self._lookup("", form.get("cik", ""))
+        if method == "GET" and path == "/result":
+            if not self.result:
+                return Page(303, "", location="/")
+            return self._remember("result", **self.result)
         if method == "GET" and path == "/":
             return self._home()
-        return self._home()
+        return Page(404, "")
 
     def _remember(self, kind: str, **kwargs) -> Page:
         self.screen = (kind, kwargs)
+        if kind == "result":
+            self.result = kwargs
         return Page(200, self._render_screen())
 
     def _render_screen(self) -> str:

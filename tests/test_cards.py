@@ -246,7 +246,7 @@ def test_a_negative_bar_grows_left_from_the_same_zero():
     assert 'style="--zero:33.33%"' in html_text
     assert 'class="fill neg" style="left:0.00%;width:33.33%"' in html_text
     assert 'class="fill" style="left:33.33%;width:66.67%"' in html_text
-    assert "-$50" in html_text or "$-50" in html_text or "-50" in html_text
+    assert "\u2212$50" in html_text
     loss = _quarter("-40", "losscur", "2026-04-27", "2026-07-26")
     loss_html = _html(loss, _column(_quarter("80", "losslast")), _column(year))
     assert 'class="fill neg" style="left:0.00%;width:33.33%"' in loss_html

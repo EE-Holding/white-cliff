@@ -600,7 +600,7 @@ def test_every_percent_link_resolves_to_both_of_its_inputs():
                     flags=re.S,
                 )
                 assert note is not None
-                hrefs = re.findall(r'<a href="([^"]+)">', note.group(1))
+                hrefs = re.findall(r'<a href="([^"]+)"', note.group(1))
                 assert len(hrefs) == 2
                 assert len(set(hrefs)) == 2
                 assert hrefs[0] == figure.group(1)

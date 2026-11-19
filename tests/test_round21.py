@@ -107,11 +107,11 @@ def test_a_falling_explain_figure_keeps_its_sign():
     prior = make_fact("100", fact_id="factfallyoyold", end="2025-07-27", start="2025-04-28")
     inputs = [("revenue", current), ("prior revenue", prior)]
     _kind, english, _href = _explain_amount("yoy_change", current, inputs)
-    assert english.startswith("-5.0")
+    assert english.startswith("\u22125.0")
     with using("de"):
         _kind, german, _href = _explain_amount("yoy_change", current, inputs)
     assert german.replace("\u00a0", " ").startswith("\u22125,0")
-    assert show_measure(Decimal("-5.0"), "percent") == "-5.0 percent"
+    assert show_measure(Decimal("-5.0"), "percent") == "\u22125.0 percent"
 
 
 def test_every_card_figure_matches_its_explain_line():
@@ -126,13 +126,13 @@ def test_every_card_figure_matches_its_explain_line():
         for language in ("en", "de"):
             page = _page(directory, language)
             for card in _CARD.findall(page):
-                figure = _FIGURE.search(card)
+                figures = list(_FIGURE.finditer(card))
                 explain = _E2.search(card)
-                assert figure is not None and explain is not None
-                shown = _plain(figure.group(1))
+                assert figures and explain is not None
+                shown = _plain(figures[0].group(1))
                 links = [_plain(item) for item in _LINK.findall(explain.group(1))]
                 assert shown in links, shown
-                if shown.startswith("-") or shown.startswith("\u2212"):
+                if any(_plain(item.group(1)).startswith("-") for item in figures):
                     saw_fall = True
     assert saw_fall
 
