@@ -583,18 +583,29 @@ def test_the_printed_disclaimer_is_at_least_body_text(tmp_path):
     streams = driver._pdf_page_streams(_chrome_pdf(page, tmp_path))
     assert streams
     size = None
-    used: list[float] = []
-    for match in re.finditer(
-        rb"/F\d+\s+([\d.]+)\s+Tf|<(?:[0-9A-Fa-f]+)>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ",
-        streams[0],
-    ):
+    disclaimer = None
+    weights: dict[float, int] = {}
+    shown = re.compile(
+        rb"/F\d+\s+([\d.]+)\s+Tf|(<[0-9A-Fa-f]+>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ)"
+    )
+    for match in shown.finditer(streams[0]):
         if match.group(1):
             size = float(match.group(1))
-        elif size is not None:
-            used.append(size)
-    assert used
-    disclaimer = used[0]
-    body = max(set(used), key=used.count)
+            continue
+        if size is None:
+            continue
+        token = match.group(2)
+        if token.startswith(b"<"):
+            letters = len(token[1:token.rfind(b">")]) // 4
+        elif token.startswith(b"("):
+            letters = token.rfind(b")") - 1
+        else:
+            letters = len(re.findall(rb"<[0-9A-Fa-f]+>|\((?:\\.|[^\\)])*\)", token))
+        if disclaimer is None:
+            disclaimer = size
+        weights[size] = weights.get(size, 0) + max(letters, 1)
+    assert disclaimer is not None and weights
+    body = max(weights, key=weights.get)
     assert disclaimer >= body
 
 

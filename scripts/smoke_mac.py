@@ -595,8 +595,8 @@ def _shot(
     raise PageError(last)
 
 
-def _print_preview(page: DevTools, out_dir: Path) -> None:
-    """Print preview at 1280. Each printed page opens with the disclaimer."""
+def _print_preview(page: DevTools, out_dir: Path, *, shot: str | None = None) -> None:
+    """Print the open page. The optional shot is the 1280 print preview."""
     tab = page
     target_id = ""
     try:
@@ -618,17 +618,18 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
         else:
             raise PageError("print styles were not applied")
         _eval(tab, "window.scrollTo(0, 0)")
-        shot = tab.call(
-            "Page.captureScreenshot",
-            {"format": "png", "optimizeForSpeed": True},
-            timeout=60,
-        )
-        data = base64.b64decode(shot["data"])
-        got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-        if got != 1280:
-            raise PageError(f"print preview is {got}px wide")
-        path = out_dir / f"smoke-{ARCH}-21-print-1280.png"
-        path.write_bytes(data)
+        if shot is not None:
+            image = tab.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=60,
+            )
+            data = base64.b64decode(image["data"])
+            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+            if got != 1280:
+                raise PageError(f"print preview is {got}px wide")
+            path = out_dir / shot
+            path.write_bytes(data)
         printed = tab.call(
             "Page.printToPDF",
             {
@@ -1482,7 +1483,7 @@ def drive(
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
-        _print_preview(page, out_dir)
+        _print_preview(page, out_dir, shot=f"smoke-{ARCH}-21-print-1280.png")
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
@@ -1684,17 +1685,7 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
         raise PageError("the first paint was not German")
     time.sleep(1.0)
     _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200, full=True)
-    printed = page.call(
-        "Page.printToPDF",
-        {
-            "printBackground": True,
-            "displayHeaderFooter": False,
-            "paperWidth": 8.5,
-            "paperHeight": 11,
-        },
-        timeout=60,
-    )
-    _require_disclaimer_on_every_page(page, base64.b64decode(printed["data"]))
+    _print_preview(page, out_dir)
     _panel_shot(page, out_dir, f"smoke-{ARCH}-18-de-balance-1280.png", 1280, "balance")
     _panel_shot(page, out_dir, f"smoke-{ARCH}-19-de-checks-1280.png", 1280, "checks")
     _panel_shot(page, out_dir, f"smoke-{ARCH}-20-de-explain-1280.png", 1280, "explain")
