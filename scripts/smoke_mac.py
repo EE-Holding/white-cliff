@@ -341,22 +341,12 @@ def _shot(
                 if not _wide(fresh, width):
                     seen = _css_width(fresh)
                     raise PageError(f"the window stayed at {seen}, wanted {width}")
-                raw = _eval(
-                    fresh,
-                    "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
-                )
-                total = int(raw) if isinstance(raw, (int, float)) and raw > 0 else asked
                 result = fresh.call(
                     "Page.captureScreenshot",
-                    {
-                        "format": "png",
-                        "captureBeyondViewport": True,
-                        "clip": {"x": 0, "y": 0, "width": width, "height": total, "scale": 1},
-                    },
+                    {"format": "png", "optimizeForSpeed": True},
                     timeout=60,
                 )
                 data = base64.b64decode(result["data"])
-                _window(fresh, width, asked, reset=True)
             else:
                 result = fresh.call(
                     "Page.captureScreenshot",
