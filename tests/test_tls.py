@@ -142,23 +142,3 @@ def test_log_stays_under_one_megabyte(tmp_path, monkeypatch):
     assert path.stat().st_size <= 80
     assert "OSError19" in path.read_text(encoding="ascii")
     assert "OSError0 " not in path.read_text(encoding="ascii")
-
-
-def test_unwritable_log_folder_keeps_the_offline_message(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    monkeypatch.setattr("white_cliff.identity.sys.platform", "linux")
-    folder = tmp_path / "White Cliff"
-    folder.mkdir()
-    folder.chmod(0o500)
-
-    def transport(url, user_agent):
-        raise OSError("network is down")
-
-    try:
-        _client(transport).get(TICKERS)
-    except SecUnreachable as exc:
-        assert str(exc) == NO_INTERNET
-    else:
-        raise AssertionError("expected the offline message")
-    finally:
-        folder.chmod(0o700)

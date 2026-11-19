@@ -79,17 +79,14 @@ def log_failure(kind: str, url: str, status: int | None) -> None:
     shown = "-" if status is None else str(int(status))
     line = f"{kind.split()[0]} {host} {shown}\n"
     path = app_data_dir() / "white-cliff.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
     payload = line.encode("ascii", "replace")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with _LOCK:
-            existing = path.read_bytes() if path.is_file() else b""
-            data = existing + payload
-            if len(data) > _MAX_LOG:
-                data = data[-_MAX_LOG:]
-                newline = data.find(b"\n")
-                if newline != -1 and newline + 1 < len(data):
-                    data = data[newline + 1 :]
-            path.write_bytes(data)
-    except OSError:
-        return
+    with _LOCK:
+        existing = path.read_bytes() if path.is_file() else b""
+        data = existing + payload
+        if len(data) > _MAX_LOG:
+            data = data[-_MAX_LOG:]
+            newline = data.find(b"\n")
+            if newline != -1 and newline + 1 < len(data):
+                data = data[newline + 1 :]
+        path.write_bytes(data)
