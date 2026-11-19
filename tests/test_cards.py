@@ -41,7 +41,7 @@ def _html(current, last, year, measure="money", role="revenue", form=""):
 def _short(html_text: str) -> str:
     match = re.search(r'<div class="cmp-slot">(.*?)</div>', html_text, flags=re.S)
     assert match is not None
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", match.group(1))).strip()
+    return re.sub(r"[ \t\n\r\f\v]+", " ", re.sub(r"<[^>]+>", "", match.group(1))).strip()
 
 
 def _widths(html_text: str) -> list[Decimal]:
@@ -57,8 +57,8 @@ def test_two_changes_use_the_short_line_and_keep_the_dated_sentence():
         "It rose 10.0 percent from the prior quarter and rose 120.0 percent from the prior year."
     )
     assert (
-        "It rose 10.0 percent from the quarter ended April 26, 2026, "
-        "and rose 120.0 percent from the year ended July 27, 2025."
+        "It rose 10.0 percent from the quarter ended April 26, 2026, "
+        "and rose 120.0 percent from the year ended July 27, 2025."
     ) in re.sub(r"<[^>]+>", "", html_text)
     percents = re.findall(r'<a class="pct" href="([^"]+)">([^<]+)</a>', html_text.split('class="chart"', 1)[0])
     periods = re.findall(r'<a class="per" href="([^"]+)">([^<]+)</a>', html_text)
@@ -93,8 +93,8 @@ def test_both_unchanged_comparisons_use_the_value_sentence():
     year = _quarter("100", "boths1year", "2025-04-28", "2025-07-27")
     html_text = _html(current, _column(last), _column(year))
     plain = _short(html_text)
-    assert "Revenue was unchanged from the quarter ended April 26, 2026 at $100." in plain
-    assert "Revenue was unchanged from the quarter ended July 27, 2025 at $100." in plain
+    assert "Revenue was unchanged from the quarter ended April 26, 2026 at $100." in plain
+    assert "Revenue was unchanged from the quarter ended July 27, 2025 at $100." in plain
     assert 'data-template="S1"' not in html_text
     assert 'data-template="C3"' in html_text
 
@@ -179,8 +179,36 @@ def test_an_amount_only_change_stays_the_cleared_clause():
         fact_id="s1debtlast",
     )
     html_text = _html(current, _column(last), None, measure="net_debt", role="net_debt")
-    assert _short(html_text) == "It was $50 higher than the quarter ended April 26, 2026."
-    assert 'data-template="S1"' not in html_text
+    assert _short(html_text) == "It was $50 higher than the prior quarter."
+    assert '<p class="cmp" data-template="S1">' in html_text
+
+
+def test_a_fall_uses_the_short_line():
+    current = _quarter("90", "fellnow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "felllast")
+    assert _short(_html(current, _column(last), None)) == "It fell 10.0 percent from the prior quarter."
+
+
+def test_an_amount_only_drop_names_the_prior_quarter():
+    current = make_fact(
+        "50",
+        concept="LongTermDebt",
+        role="net_debt",
+        start="2026-04-27",
+        end="2026-07-26",
+        fact_id="s1debtlow",
+    )
+    last = make_fact(
+        "100",
+        concept="LongTermDebt",
+        role="net_debt",
+        start="2026-01-26",
+        end="2026-04-26",
+        fact_id="s1debtearlier",
+    )
+    html_text = _html(current, _column(last), None, measure="net_debt", role="net_debt")
+    assert _short(html_text) == "It was $50 lower than the prior quarter."
+    assert 'data-template="C3"' not in _short(html_text)
 
 
 def test_bars_share_a_zero_and_keep_the_value_ratio():
@@ -198,6 +226,16 @@ def test_bars_share_a_zero_and_keep_the_value_ratio():
     label = re.search(r'aria-label="([^"]+)"', html_text).group(1)
     assert label.startswith(EN["bar_chart"] + " ")
     assert "Prior quarter" in label and "$100" in label and "$25" in label
+    assert html_text.count('class="bd"') == 3
+
+
+def test_a_quote_in_the_bar_label_is_escaped():
+    current = _quarter("100", "quotenow", "2026-04-27", "2026-07-26")
+    missing = Cell(False, missing_period='the "prior" period', basis="absent")
+    html_text = _html(current, missing, None)
+    label = re.search(r'aria-label="([^"]*)"', html_text).group(1)
+    assert "&quot;" in label
+    assert '"prior"' not in label
 
 
 def test_a_negative_bar_grows_left_from_the_same_zero():
@@ -212,6 +250,13 @@ def test_a_negative_bar_grows_left_from_the_same_zero():
     loss = _quarter("-40", "losscur", "2026-04-27", "2026-07-26")
     loss_html = _html(loss, _column(_quarter("80", "losslast")), _column(year))
     assert 'class="fill neg" style="left:0.00%;width:33.33%"' in loss_html
+
+
+def test_the_narrow_card_and_the_disclaimer_keep_their_column():
+    page = first_run_page(token="t")
+    assert "border-radius: 18px" not in page
+    assert page.count("border-radius: 22px") >= 2
+    assert "margin-left: auto; margin-right: auto" in page
 
 
 def test_the_page_frame_reads_the_english_table_and_stays_on_sec():

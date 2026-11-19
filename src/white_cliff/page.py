@@ -178,7 +178,7 @@ def read_cover(text: str) -> Cover:
 
 def _plain_date(day: str) -> str:
     year, month, number = day.split("-")
-    return f"{_MONTHS[int(month) - 1]} {int(number)}, {year}"
+    return f"{_MONTHS[int(month) - 1]}\u00a0{int(number)},\u00a0{year}"
 
 
 def _copied_days(directory: Path) -> tuple[str, ...]:

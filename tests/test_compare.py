@@ -236,8 +236,8 @@ def test_two_rises_read_it_rose_and_it_rose_again():
     html = _change_block(current, _column(last), _column(year))
     plain = _plain_page(html)
     assert (
-        "It rose 10.0 percent from the quarter ended April 26, 2026, "
-        "and rose 120.0 percent from the year ended July 27, 2025."
+        "It rose 10.0 percent from the quarter ended April 26, 2026, "
+        "and rose 120.0 percent from the year ended July 27, 2025."
     ) in plain
     assert 'data-template="C2"' in html
     assert "That is" not in plain
@@ -250,8 +250,8 @@ def test_a_rise_and_no_change_share_one_it_line():
     year = _quarter("104.2", "mixedyear", "2024-07-29", "2025-07-27")
     plain = _plain_page(_change_block(current, _column(last), _column(year)))
     assert (
-        "It rose 4.2 percent from the quarter ended April 26, 2026, "
-        "and was unchanged from the year ended July 27, 2025."
+        "It rose 4.2 percent from the quarter ended April 26, 2026, "
+        "and was unchanged from the year ended July 27, 2025."
     ) in plain
     assert "percent percent" not in plain
 
@@ -260,16 +260,16 @@ def test_one_comparison_says_it_rose_or_it_fell_or_it_was_unchanged():
     rose_now = _quarter("104.2", "onenow", "2026-04-27", "2026-07-26")
     rose_last = _quarter("100", "onelast")
     rose = _plain_page(_change_block(rose_now, _column(rose_last), None))
-    assert "It rose 4.2 percent from the quarter ended April 26, 2026." in rose
+    assert "It rose 4.2 percent from the quarter ended April 26, 2026." in rose
     assert ", and " not in rose
     fell_now = _quarter("90", "fellnow", "2026-04-27", "2026-07-26")
     fell_last = _quarter("100", "felllast")
     fell = _plain_page(_change_block(fell_now, _column(fell_last), None))
-    assert "It fell 10.0 percent from the quarter ended April 26, 2026." in fell
+    assert "It fell 10.0 percent from the quarter ended April 26, 2026." in fell
     same_now = _quarter("100", "samenow", "2026-04-27", "2026-07-26")
     same_last = _quarter("100", "samelast")
     same = _plain_page(_change_block(same_now, _column(same_last), None))
-    assert "It was unchanged from the quarter ended April 26, 2026." in same
+    assert "It was unchanged from the quarter ended April 26, 2026." in same
 
 
 def test_a_fall_and_a_rise_share_one_it_line():
@@ -278,8 +278,8 @@ def test_a_fall_and_a_rise_share_one_it_line():
     year = _quarter("50", "mixfellyear", "2024-07-29", "2025-07-27")
     plain = _plain_page(_change_block(current, _column(last), _column(year)))
     assert (
-        "It fell 10.0 percent from the quarter ended April 26, 2026, "
-        "and rose 80.0 percent from the year ended July 27, 2025."
+        "It fell 10.0 percent from the quarter ended April 26, 2026, "
+        "and rose 80.0 percent from the year ended July 27, 2025."
     ) in plain
 
 
@@ -289,8 +289,8 @@ def test_both_unchanged_comparisons_keep_the_value_sentence():
     year = _quarter("100", "bothyear", "2024-07-29", "2025-07-27")
     html = _change_block(current, _column(last), _column(year))
     plain = _plain_page(html)
-    assert "Revenue was unchanged from the quarter ended April 26, 2026 at $100." in plain
-    assert "Revenue was unchanged from the year ended July 27, 2025 at $100." in plain
+    assert "Revenue was unchanged from the quarter ended April 26, 2026 at $100." in plain
+    assert "Revenue was unchanged from the year ended July 27, 2025 at $100." in plain
     assert 'data-template="C3"' in html
     assert "It was unchanged" not in plain
     assert ", and was unchanged" not in plain
@@ -314,13 +314,13 @@ def test_an_amount_only_change_says_it_was_higher_or_lower():
         fact_id="debtlast",
     )
     debt = _plain_page(_change_block(current, _column(last), None, measure="net_debt", role="net_debt"))
-    assert "It was $50 higher than the quarter ended April 26, 2026." in debt
+    assert "It was $50 higher than the quarter ended April 26, 2026." in debt
     margin_now = make_fact("40", role="gross_margin", start="2026-04-27", end="2026-07-26", fact_id="marginow")
     margin_then = make_fact("35.8", role="gross_margin", start="2026-01-26", end="2026-04-26", fact_id="margthen")
     margin = _plain_page(
         _change_block(margin_now, _column(margin_then), None, measure="margin", role="gross_margin")
     )
-    assert "It was 4.2 percentage points higher than the quarter ended April 26, 2026." in margin
+    assert "It was 4.2 percentage points higher than the quarter ended April 26, 2026." in margin
     assert "That is" not in debt and "That is" not in margin
 
 
@@ -344,10 +344,10 @@ def test_column_headers_name_the_period_and_do_not_call_a_year_to_date_a_quarter
         prior_end=prior.period_end,
     )
     heads = _column_heads(nvidia)
-    assert "Three months ended April 26, 2026" in heads
-    assert "Three months ended July 27, 2025" in heads
-    assert "Six months ended July 27, 2025" in heads
-    assert "Six months ended July 26, 2026" in heads
+    assert "Three months ended April 26, 2026" in heads
+    assert "Three months ended July 27, 2025" in heads
+    assert "Six months ended July 27, 2025" in heads
+    assert "Six months ended July 26, 2026" in heads
     assert all("quarter" not in head.lower() for head in heads)
     assert "for the prior quarter is not available for this filing." in nvidia
 
@@ -369,8 +369,8 @@ def test_column_headers_name_the_period_and_do_not_call_a_year_to_date_a_quarter
     nine_now = _quarter("90", "ninenow", "2025-10-27", "2026-07-26")
     nine_then = _quarter("80", "ninethen", "2024-10-28", "2025-07-27")
     nine_heads = _column_heads(_change_block(nine_now, None, _column(nine_then)))
-    assert "Nine months ended July 26, 2026" in nine_heads
-    assert "Nine months ended July 27, 2025" in nine_heads
+    assert "Nine months ended July 26, 2026" in nine_heads
+    assert "Nine months ended July 27, 2025" in nine_heads
     assert all("quarter" not in head.lower() for head in nine_heads)
 
 
@@ -410,15 +410,15 @@ def test_comparison_markup_is_label_then_figure_then_the_two_cell_grid():
     assert 0 <= label_at < figure_at < chart_at < change_at
     assert "Prior quarter" in revenue
     assert "Same quarter a year earlier" in revenue
-    assert "Three months ended April 26, 2026" in revenue
+    assert "Three months ended April 26, 2026" in revenue
     assert "$81,615 million" in revenue
-    assert "Three months ended July 27, 2025" in revenue
+    assert "Three months ended July 27, 2025" in revenue
     assert "$46,743 million" in revenue
 
     cash = block_for("Operating cash flow for the year to date")
     cash_figure = cash.find('class="figure"')
     cash_chart = cash.find('class="chart"')
-    cash_caption = cash.find("Six months ended July 26, 2026")
+    cash_caption = cash.find("Six months ended July 26, 2026")
     assert cash.find(">Operating cash flow for the year to date</h3>") < cash_figure < cash_chart
     assert 0 < cash_caption < cash_chart
     assert (
@@ -427,7 +427,7 @@ def test_comparison_markup_is_label_then_figure_then_the_two_cell_grid():
         "Operating cash flow for the prior quarter is not available for this filing.</p>"
     ) in cash
     assert "Same six months a year earlier" in cash
-    assert "Six months ended July 27, 2025" in cash
+    assert "Six months ended July 27, 2025" in cash
     assert "<strong" not in page and "<b>" not in page
 
 
@@ -459,8 +459,8 @@ def test_rendered_pages_do_not_say_that_is_rose_or_percent_percent():
     )
     nvidia_plain = _plain_page(nvidia)
     assert (
-        "It rose 17.9 percent from the quarter ended April 26, 2026, "
-        "and rose 105.9 percent from the quarter ended July 27, 2025."
+        "It rose 17.9 percent from the quarter ended April 26, 2026, "
+        "and rose 105.9 percent from the quarter ended July 27, 2025."
     ) in nvidia_plain
     for plain in (nvidia_plain, _plain_page(apple)):
         assert "That is rose" not in plain
@@ -507,9 +507,9 @@ def test_heads_keep_a_caption_and_the_missing_quarter_keeps_its_head():
     nvidia = _nvidia_page()
     revenue = next(block for block in _figure_blocks(nvidia) if ">Revenue</h3>" in block)
     assert '<p class="bh">Prior quarter</p>' in revenue
-    assert "Three months ended April 26, 2026" in revenue
+    assert "Three months ended April 26, 2026" in revenue
     assert '<p class="bh">Same quarter a year earlier</p>' in revenue
-    assert "Three months ended July 27, 2025" in revenue
+    assert "Three months ended July 27, 2025" in revenue
     cash = next(block for block in _figure_blocks(nvidia) if "year to date" in block)
     assert '<p class="bh">Prior quarter</p>' in cash
     assert 'data-template="M6"' in cash
@@ -534,7 +534,7 @@ def test_heads_keep_a_caption_and_the_missing_quarter_keeps_its_head():
     )
     nine = nine_face + nine_lines
     assert '<p class="bh">Same nine months a year earlier</p>' in nine
-    assert "Nine months ended July 27, 2025" in nine
+    assert "Nine months ended July 27, 2025" in nine
     rights = [head for head in re.findall(r'class="bh">([^<]+)', nine) if head != "Prior quarter"]
     assert rights
     assert all("quarter" not in head.lower() for head in rights)
@@ -557,7 +557,7 @@ def test_heads_keep_a_caption_and_the_missing_quarter_keeps_its_head():
     assert '<p class="bh">Prior quarter</p>' in q1
     assert 'data-template="M6"' in q1
     assert '<p class="bh">Same quarter a year earlier</p>' in q1
-    assert "Three months ended April 27, 2025" in q1
+    assert "Three months ended April 27, 2025" in q1
 
     apple = _apple_page()
     assert '<p class="bh">Prior quarter</p>' in apple

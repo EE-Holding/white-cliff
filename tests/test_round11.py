@@ -90,7 +90,7 @@ def test_december_31_2023_on_a_later_context_is_refused(tmp_path: Path) -> None:
         _page(
             _revenue("5000"),
             contexts=contexts,
-            period_end="December 31, 2023",
+            period_end="December 31, 2023",
             period_format="ixt:date-monthname-day-year-en",
             period_context="c-dei",
         ),

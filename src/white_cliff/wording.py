@@ -254,7 +254,40 @@ def long_date(iso: str) -> str:
 
         return german_date(iso)
     year, month, day = (int(part) for part in iso.split("-"))
-    return f"{_MONTHS[month - 1]} {day}, {year}"
+    return f"{_MONTHS[month - 1]}\u00a0{day},\u00a0{year}"
+
+
+_PERIOD_NOUN = (
+    ("six months", "Sechsmonatszeitraum"),
+    ("nine months", "Neunmonatszeitraum"),
+    ("quarter", "Quartal"),
+    ("year", "Geschäftsjahr"),
+    ("period", "Zeitraum"),
+)
+
+
+def _dated_german_period(period: str) -> str:
+    """Section 2 period form, without an article. Empty when the phrase has no date."""
+    found = re.search(r"([A-Z][a-z]+) (\d{1,2}), (\d{4})", period)
+    if found is None or found.group(1) not in _MONTHS:
+        return ""
+    month = _MONTHS.index(found.group(1)) + 1
+    when = long_date(f"{int(found.group(3)):04d}-{month:02d}-{int(found.group(2)):02d}")
+    noun = "Zeitraum"
+    lowered = period.lower()
+    for needle, name in _PERIOD_NOUN:
+        if needle in lowered:
+            noun = name
+            break
+    return f"{noun} zum {when}"
+
+
+def _german_gap(figure: str, period: str) -> tuple[str, str]:
+    """M2 when the missing period has a date, otherwise the dateless M6 line."""
+    form = _dated_german_period(period)
+    if not form:
+        return "M6", phrase("M6").replace("{figure}", figure)
+    return "M2", phrase("M2").replace("{figure}", figure).replace("{period_prev}", form)
 
 
 def _span_key(kind: str, start: str | None, end: str) -> str:
@@ -460,7 +493,8 @@ def _period_link(phrase: str, fact: Fact) -> tuple:
 
 def _m2(figure: str, period: str) -> list[tuple]:
     if german():
-        return [("text", phrase("M2").replace("{figure}", figure).replace("{period_prev}", period))]
+        _template, text = _german_gap(figure, period)
+        return [("text", text)]
     return [("text", f"{figure} for {period} is not in the filings White Cliff read, so no change is shown.")]
 
 
@@ -886,6 +920,7 @@ def _chart(
     form: str,
     current_caption: str,
 ) -> str:
+    """One CSS bar per period. The bars are filled divs, not inline SVG."""
     rows: list[tuple] = []
     numbers: list[Decimal] = []
     if current.value is not None and current.fact is not None and current_caption:
@@ -897,18 +932,19 @@ def _chart(
         head = EN["prior_quarter"] if column == "c1" else _right_head(cell, fact, form)
         if not cell.available or cell.fact is None or cell.value is None:
             if cell.basis == "structural":
+                period = cell.missing_period or "the prior quarter"
                 if german():
-                    text = phrase("M6").replace("{figure}", label)
+                    template, text = _german_gap(label, period)
                 else:
                     text = f"{label} for the prior quarter is not available for this filing."
-                template = "M6"
+                    template = "M6"
             else:
                 period = cell.missing_period or "the prior period"
                 if german():
-                    text = phrase("M2").replace("{figure}", label).replace("{period_prev}", period)
+                    template, text = _german_gap(label, period)
                 else:
                     text = f"{label} for {period} is not in the filings White Cliff read, so no change is shown."
-                template = "M2"
+                    template = "M2"
             rows.append(("missing", _show_head(head), text, template))
             continue
         caption = column_header(cell.kind, cell.period_start, cell.period_end)
@@ -927,11 +963,17 @@ def _chart(
             link, shown, _href = _value_link(cell.fact)
             left, width = _bar_box(cell.value, zero, span)
             negative = " neg" if cell.value < 0 else ""
-            spoken.append(f"{caption}: {shown}")
+            dated = long_date(cell.period_end) if cell.period_end else ""
+            if dated and dated not in caption:
+                spoken.append(f"{caption}, {dated}: {shown}")
+                date = f'<p class="bd">{html.escape(dated)}</p>'
+            else:
+                spoken.append(f"{caption}: {shown}")
+                date = f'<p class="bd">{html.escape(dated)}</p>' if dated else ""
             items.append(
                 f'<li class="bar-row cur" style="--i:{index}">'
                 f'<div class="bar-text"><p class="bh">{html.escape(caption)}</p>'
-                f'<p class="bv">{link}</p></div>'
+                f'<p class="bv">{link}</p>{date}</div>'
                 f'<div class="bar-track" style="--zero:{zero:.2f}%" aria-hidden="true">'
                 f'<div class="fill{negative}" style="left:{left}%;width:{width}%"></div></div></li>'
             )
@@ -958,13 +1000,13 @@ def _chart(
                 f'<div class="fill{negative}" style="left:{left}%;width:{width}%"></div></div></li>'
             )
         index += 1
-    label_text = html.escape(ui("bar_chart") + " " + "; ".join(spoken) + ".")
+    label_text = html.escape(ui("bar_chart") + " " + "; ".join(spoken) + ".", quote=True)
     return f'<ul class="chart" role="img" aria-label="{label_text}">{"".join(items)}</ul>\n'
 
 
 def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[str, str] | None:
     """One S1 clause. The percent links this figure and the period phrase links the earlier one."""
-    if not phrase or measure not in {"money", "shares", "per_share"}:
+    if not phrase or measure not in {"money", "shares", "per_share", "net_debt"}:
         return None
     if (
         not prior.available
@@ -981,8 +1023,16 @@ def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[s
             return "unchanged", "blieb unverändert gegenüber " + period
         return "unchanged", "was unchanged from " + period
     pct = percent_change(current.value, prior.value)
-    if pct is None:
-        return None
+    if measure == "net_debt" or pct is None:
+        diff = show_measure(abs(current.value - prior.value), current.unit)
+        linked = _anchor("pct", diff, fact_href(current.fact))
+        if german():
+            bare = phrase[4:] if phrase.startswith("dem ") else phrase
+            named = _anchor("per", bare, fact_href(prior.fact))
+            word = "höher" if current.value >= prior.value else "niedriger"
+            return "amount", f"war um {linked} {word} als im {named}"
+        word = "higher" if current.value >= prior.value else "lower"
+        return "amount", f"was {linked} {word} than {period}"
     direction = _direction(current.value, prior.value)
     if pct == 0 or direction == "was unchanged":
         if german():
@@ -1179,31 +1229,83 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
         chunks.append(_parts_html("C2", _it_line([parts for _column, _kind, parts in held]), "change-line"))
 
 
+_INPUT_LABEL = {
+    "gross profit": "LBL.gross_profit",
+    "revenue": "LBL.revenue",
+    "prior revenue": "LBL.revenue",
+    "operating income": "LBL.operating_income",
+    "net income": "LBL.net_income",
+    "debt": "LBL.debt",
+    "cash": "LBL.cash",
+}
+
+
+def _input_name(name: str) -> str:
+    if german() and name in _INPUT_LABEL:
+        return phrase(_INPUT_LABEL[name])
+    return name
+
+
+def _computed_formula(role: str) -> str:
+    if german():
+        revenue = phrase("LBL.revenue")
+        if role == "gross_margin":
+            return f"{phrase('LBL.gross_profit')} geteilt durch {revenue}"
+        if role == "operating_margin":
+            return f"{phrase('LBL.operating_income')} geteilt durch {revenue}"
+        if role == "net_margin":
+            return f"{phrase('LBL.net_income')} geteilt durch {revenue}"
+        if role == "net_debt":
+            return f"{phrase('LBL.debt')} minus {phrase('LBL.cash')}"
+        if role == "yoy_change":
+            return f"({revenue} minus {revenue}) geteilt durch {revenue}"
+        return ""
+    if role == "gross_margin":
+        return "gross profit divided by revenue"
+    if role == "operating_margin":
+        return "operating income divided by revenue"
+    if role == "net_margin":
+        return "net income divided by revenue"
+    if role == "net_debt":
+        return "debt minus cash"
+    if role == "yoy_change":
+        return "(revenue minus prior revenue) divided by prior revenue"
+    return ""
+
+
+def _explain_amount(role: str, fact: Fact, inputs: list[tuple[str, Fact]]) -> tuple:
+    """The figure the explain line states. A year-over-year change is the percent, not the revenue."""
+    if role == "yoy_change" and len(inputs) >= 2:
+        current, prior = inputs[0][1], inputs[1][1]
+        if current.value is not None and prior.value is not None:
+            pct = percent_change(current.value, prior.value)
+            if pct is not None:
+                return ("link", show_measure(abs(pct), "percent"), fact_href(current))
+    return _link_fact(fact)
+
+
 def _explain_block(role: str, fact: Fact, company: str, statement: str, formula: str, inputs: list[tuple[str, Fact]]) -> str:
     label = label_for(role, fact)
     definition = DEFINITIONS.get(role, "a figure reported in the filing")
     period = period_phrase(fact.period.kind, fact.period.start, fact.period.end or "")
+    amount = _explain_amount(role, fact, inputs)
     if german():
+        parts = []
         if role == "operating_cash_flow":
-            opening = phrase("E1.example")
-        else:
-            opening = f"„{label}“ ist {definition}."
-        parts = [
-            _parts_html("E1", [("text", opening)]),
-            _parts_html("E2", [
-                ("text", f"Bei {company} lag der Wert der Position „{label}“ bei "),
-                _link_fact(fact),
-                ("text", " im "),
-                _period_link(period, fact),
-                ("text", f". Er stammt aus {statement or 'Dokument'}."),
-            ]),
-        ]
+            parts.append(_parts_html("E1", [("text", phrase("E1.example"))]))
+        parts.append(_parts_html("E2", [
+            ("text", f"Bei {company} lag der Wert der Position „{label}“ bei "),
+            amount,
+            ("text", " im "),
+            _period_link(period, fact),
+            ("text", f". Er stammt aus {statement or phrase('ST.document')}."),
+        ]))
         if formula and inputs:
             input_parts: list[tuple] = [("text", f"Er wird berechnet als {formula} aus ")]
             for index, (name, source) in enumerate(inputs):
                 if index:
                     input_parts.append(("text", " und " if index == len(inputs) - 1 else ", "))
-                input_parts.append(("text", f"{name} von "))
+                input_parts.append(("text", f"{_input_name(name)} von "))
                 input_parts.append(_link_fact(source))
             input_parts.append(("text", "."))
             parts.append(_parts_html("E2", input_parts))
@@ -1212,7 +1314,7 @@ def _explain_block(role: str, fact: Fact, company: str, statement: str, formula:
         _parts_html("E1", [("text", f"{label} is {definition}.")]),
         _parts_html("E2", [
             ("text", f"For {company}, {label} was "),
-            _link_fact(fact),
+            amount,
             ("text", " in "),
             _period_link(period, fact),
             ("text", f". It came from the {statement or 'filing'}."),
@@ -1223,7 +1325,7 @@ def _explain_block(role: str, fact: Fact, company: str, statement: str, formula:
         for index, (name, source) in enumerate(inputs):
             if index:
                 input_parts.append(("text", " and " if index == len(inputs) - 1 else ", "))
-            input_parts.append(("text", f"{name} of "))
+            input_parts.append(("text", f"{_input_name(name)} of "))
             input_parts.append(_link_fact(source))
         input_parts.append(("text", "."))
         parts.append(_parts_html("E2", input_parts))
@@ -1728,9 +1830,13 @@ def _check_html(result: CheckResult) -> str:
     limit = phrase("QCW.limit") if german() else LIMIT
     body += f'<p data-template="LIMIT">{html.escape(limit)}</p>\n'
     formula = html.escape(result.formula)
+    if german():
+        formula_line = ""
+    else:
+        formula_line = f'<p data-template="FORMULA">Formula: {formula}.</p>\n'
     panel = (
         f'<div id="formula-{ident}" class="explain" hidden>\n'
-        f'<p data-template="FORMULA">Formula: {formula}.</p>\n'
+        f"{formula_line}"
         f"{_check_numbers(result)}</div>\n"
     )
     return (
@@ -1780,6 +1886,7 @@ def _statement(name: str) -> str:
         "Cash flows": "ST.cashflow",
         "Equity": "ST.equity",
         "Document": "ST.document",
+        "the filing": "ST.document",
     }
     ident = names.get(name, "")
     return phrase(ident) if ident else name
@@ -1886,17 +1993,7 @@ def build_additions(
             last, year = _derived_columns("net_debt", inputs, **column_args)
         else:
             last, year = columns_for(fact, role=role, **column_args)
-        formula = ""
-        if role == "gross_margin":
-            formula = "gross profit divided by revenue"
-        elif role == "operating_margin":
-            formula = "operating income divided by revenue"
-        elif role == "net_margin":
-            formula = "net income divided by revenue"
-        elif role == "net_debt":
-            formula = "debt minus cash"
-        elif role == "yoy_change":
-            formula = "(revenue minus prior revenue) divided by prior revenue"
+        formula = _computed_formula(role)
         face, lines = "", ""
         if role != "yoy_change":
             face, lines = _comparison_block(
@@ -1926,7 +2023,7 @@ def _shown_calc(explained, identifier: str, source: Fact, unit: str, role: str) 
     return Fact(
         id=source.id,
         concept=source.concept,
-        label="Net debt" if role == "net_debt" else label_for(role, source),
+        label=label_for(role, source),
         value=explained.store.get_calc(identifier).value,
         unit=unit,
         period=source.period,

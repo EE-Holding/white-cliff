@@ -96,13 +96,10 @@ def save_language(path: Path, code: str) -> None:
     if code not in {"en", "de"}:
         return
     data = _read_json(path)
-    kept = {}
-    identity = _checked(str(data.get("name", "")), str(data.get("email", "")))
-    if identity is not None:
-        kept["name"] = identity.name
-        kept["email"] = identity.email
-    kept["language"] = code
-    _write_private(path, json.dumps(kept, indent=2) + "\n")
+    if not isinstance(data, dict):
+        data = {}
+    data["language"] = code
+    _write_private(path, json.dumps(data, indent=2) + "\n")
 
 
 def save_identity(path: Path, name: str, email: str) -> Identity | None:

@@ -279,7 +279,7 @@ def test_numbers_screen_starts_with_the_disclaimer(monkeypatch, tmp_path):
     app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
     page = app.handle("POST", "/explain", {"query": "AAPL"})
     assert page.body.find(DISCLAIMER) < page.body.find("Annual report")
-    assert "Annual report for the year ended September 26, 2026." in page.body
+    assert "Annual report for the year ended September 26, 2026." in page.body
     assert "10-K" not in page.body
     assert "filed 2026-10-31" not in page.body
     assert html.escape(DOC, quote=True) in page.body or DOC in page.body
@@ -589,7 +589,7 @@ def test_an_extra_submission_page_is_read(monkeypatch, tmp_path):
     app.handle("POST", "/identity", {"name": NAME, "email": EMAIL})
     page = app.handle("POST", "/explain", {"query": "AAPL"})
     assert any(url.endswith("CIK0000320193-submissions-001.json") for url, _ua in base.calls)
-    assert "Annual report for the year ended September 26, 2026." in page.body
+    assert "Annual report for the year ended September 26, 2026." in page.body
     assert "10-K" not in page.body
     assert "aapl-20260926.htm" in page.body
 

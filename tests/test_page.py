@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PINNED = ROOT / "pinned"
 SAVED_LINE = (
     "This page explains 8 saved filings from 7 companies, "
-    "copied from sec.gov on November 17, 2026 and November 18, 2026. "
+    "copied from sec.gov on November 17, 2026 and November 18, 2026. "
     "It does not look up new filings."
 )
 APPLE_10K = "0000320193-26-000026"

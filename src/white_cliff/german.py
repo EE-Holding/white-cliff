@@ -251,7 +251,7 @@ _PATTERNS = (
     r"\babschreibung steht bevor\b",
 )
 
-_COMPILED = tuple(re.compile(pattern) for pattern in _PATTERNS)
+_COMPILED = tuple(re.compile(pattern.casefold()) for pattern in _PATTERNS)
 
 _INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\ufeff\u2060"), None)
 
@@ -311,32 +311,30 @@ def german_number(value: Decimal, places: int | None = None) -> str:
 
 def german_date(iso: str) -> str:
     year, month, day = (int(part) for part in iso.split("-"))
-    return f"{day}. {MONTHS[month - 1]} {year}"
+    return f"{day}.{NBSP}{MONTHS[month - 1]}{NBSP}{year}"
 
 
 def format_measure(value: Decimal, unit: str) -> str:
-    """A measure from its stored value and unit. The scale word is not translated away."""
+    """A measure from its stored value and unit. The scale word is taken from anywhere in the unit."""
     text = " ".join(unit.split())
-    per_share = False
-    if text.startswith("USD/shares"):
-        per_share = True
-        text = ("USD " + text[len("USD/shares") :]).strip()
-    parts = text.split()
-    currency = ""
-    scale = ""
-    kind = ""
-    if parts and parts[0].upper() == "USD":
-        currency = "USD"
-        parts = parts[1:]
-    if parts and parts[0].lower() in _SCALE:
-        scale = parts[0].lower()
-        parts = parts[1:]
-    if parts and parts[0].lower() == "shares":
-        kind = "shares"
     if text == "percent":
         return german_number(value, 1) + NBSP + "Prozent"
     if text == "percentage points":
         return german_number(value, 1) + NBSP + "Prozentpunkte"
+    per_share = "USD/shares" in text
+    if per_share:
+        text = text.replace("USD/shares", "USD")
+    currency = ""
+    scale = ""
+    kind = ""
+    for part in text.split():
+        low = part.lower()
+        if low in _SCALE and not scale:
+            scale = low
+        elif part.upper() == "USD" and not currency:
+            currency = "USD"
+        elif low == "shares":
+            kind = "shares"
     number = german_number(value, None)
     bits = [number]
     if scale:
@@ -370,12 +368,16 @@ def format_raw(raw: str) -> str:
         scale = f" {money.group(3)}" if money.group(3) else ""
         return format_measure(Decimal(money.group(1)), "USD" + scale)
     parts = text.split()
-    scale = ""
-    if len(parts) >= 2 and parts[-1].lower() in _SCALE:
-        scale = parts.pop()
     if not parts or re.fullmatch(r"-?\d+(?:\.\d+)?", parts[0]) is None:
         return text
-    unit = " ".join(parts[1:] + ([scale] if scale else []))
+    scale = ""
+    rest: list[str] = []
+    for part in parts[1:]:
+        if part.lower() in _SCALE and not scale:
+            scale = part.lower()
+        else:
+            rest.append(part)
+    unit = " ".join(rest + ([scale] if scale else []))
     return format_measure(Decimal(parts[0]), unit or "shares")
 
 

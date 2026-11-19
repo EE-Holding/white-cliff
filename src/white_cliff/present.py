@@ -72,18 +72,20 @@ def shown_amount(raw: str) -> str:
             shown = f"{shown} {_SCALE.get(scale.lower(), scale.lower())}"
         return shown
     parts = text.split()
-    scale = ""
-    if len(parts) >= 2 and parts[-1].lower() in _SCALE:
-        scale = parts[-1]
-        parts = parts[:-1]
     if not parts or re.fullmatch(r"-?\d+(?:\.\d+)?", parts[0]) is None:
         return text
+    scale = ""
+    rest: list[str] = []
+    for part in parts[1:]:
+        if part.lower() in _SCALE and not scale:
+            scale = part.lower()
+        else:
+            rest.append(part)
     shown = _commas(parts[0])
     if scale:
-        shown = f"{shown} {_SCALE[scale.lower()]}"
-    unit = " ".join(parts[1:])
-    if unit:
-        shown = f"{shown} {unit}"
+        shown = f"{shown} {_SCALE[scale]}"
+    if rest:
+        shown = f"{shown} {' '.join(rest)}"
     return shown
 
 
@@ -109,7 +111,7 @@ def _plain_date(iso: str) -> str:
         when = date(year, month, day)
     except (TypeError, ValueError):
         return ""
-    return f"{calendar.month_name[when.month]} {when.day}, {when.year}"
+    return f"{calendar.month_name[when.month]}\u00a0{when.day},\u00a0{when.year}"
 
 
 def plain_report(form: str, period: str) -> str:
@@ -158,7 +160,7 @@ def _language_control(token: str) -> str:
         )
 
     return (
-        '<div class="lang" role="group" aria-label="Language / Sprache">\n'
+        f'<div class="lang" role="group" aria-label="{html.escape("Language / Sprache", quote=True)}">\n'
         + segment("en", "English")
         + segment("de", "Deutsch")
         + "</div>\n"
@@ -206,7 +208,8 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "font-size: 21px; line-height: 32px; }\n"
         ".disclaimer, .top, .column { max-width: 1160px; margin-left: auto; margin-right: auto; "
         "padding-left: 32px; padding-right: 32px; }\n"
-        ".disclaimer { margin: 0; padding-top: 40px; color: var(--ink-2); "
+        ".disclaimer { margin-top: 0; margin-bottom: 0; margin-left: auto; margin-right: auto; "
+        "padding-top: 40px; color: var(--ink-2); "
         "font-size: 18px; line-height: 27px; }\n"
         ".disclaimer + .disclaimer { padding-top: 8px; }\n"
         ".top { display: flex; align-items: center; justify-content: space-between; "
@@ -368,7 +371,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "  .disclaimer { padding-top: 28px; }\n"
         "  h1 { font-size: 34px; line-height: 40px; }\n"
         "  .hero { margin-bottom: 28px; }\n"
-        "  .card { padding: 22px 20px 12px; border-radius: 18px; }\n"
+        "  .card { padding: 22px 20px 12px; border-radius: 22px; }\n"
         "  .big a, a.figure { font-size: 36px; line-height: 44px; }\n"
         "  form.search, form.pick { padding: 20px; }\n"
         "  .search-row { flex-direction: column; }\n"
@@ -827,10 +830,19 @@ def _german_label(text: str) -> str:
             "Operating margin": phrase("LBL.operating_margin"),
             "Net margin": phrase("LBL.net_margin"),
             "Revenue year over year": phrase("LBL.yoy"),
+            "Net debt": phrase("LBL.net_debt").replace("{debt_label}", phrase("LBL.debt")),
         }
     )
     if text in exact:
         return exact[text]
+    if text.startswith("The gross margin "):
+        return phrase("LBL.gross_margin")
+    if text.startswith("The operating margin "):
+        return phrase("LBL.operating_margin")
+    if text.startswith("The net margin "):
+        return phrase("LBL.net_margin")
+    if text.startswith("The year over year change "):
+        return phrase("LBL.yoy")
     if text.endswith(" minus cash and cash equivalents"):
         debt = text[: -len(" minus cash and cash equivalents")]
         debt = exact.get(debt, debt)

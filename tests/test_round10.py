@@ -167,7 +167,7 @@ def test_a_word_date_with_no_format_is_refused(tmp_path: Path) -> None:
     contexts = _year("c-year", "2026-01-01", end="2026-09-30")
     explained = _explain(
         tmp_path,
-        _page(_revenue("5000"), contexts=contexts, period_end="September 30, 2026"),
+        _page(_revenue("5000"), contexts=contexts, period_end="September 30, 2026"),
     )
     rendered = explained.markdown + explained.html
     assert "5000" not in rendered
@@ -195,7 +195,7 @@ def test_september_31_2026_is_refused(tmp_path: Path) -> None:
         _page(
             _revenue("5000"),
             contexts=contexts,
-            period_end="September 31, 2026",
+            period_end="September 31, 2026",
             period_format="ixt:date-monthname-day-year-en",
         ),
     )
@@ -227,7 +227,7 @@ def test_a_word_date_one_day_off_the_context_end_is_refused(tmp_path: Path) -> N
         _page(
             _revenue("5000"),
             contexts=contexts,
-            period_end="September 29, 2026",
+            period_end="September 29, 2026",
             period_format="ixt:date-monthname-day-year-en",
         ),
     )
@@ -244,7 +244,7 @@ def test_datemonthdayyearen_parses_the_month_name_form(tmp_path: Path) -> None:
         _page(
             _revenue("5000"),
             contexts=contexts,
-            period_end="December 31, 2024",
+            period_end="December 31, 2024",
             period_format="ixt:datemonthdayyearen",
         ),
     )
@@ -272,7 +272,7 @@ def test_an_unknown_date_format_is_refused(tmp_path: Path) -> None:
         _page(
             _revenue("5000"),
             contexts=contexts,
-            period_end="September 26, 2026",
+            period_end="September 26, 2026",
             period_format="ixt:date-day-month-year",
         ),
     )
