@@ -235,7 +235,7 @@ def test_the_printed_summary_has_no_personal_data_and_no_new_words():
     sources = re.search(r'<section class="sources">(.*?)</section>', page, re.S).group(1)
     visible = html.unescape(re.sub(r"<[^>]+>", " ", sources))
     assert re.sub(r"\s+", " ", _SEC.sub(" ", visible)).strip() == SOURCES
-    figures = re.findall(r'<a class="figure" href="[^"]*">(.*?)</a>', page)
+    figures = re.findall(r'<a class="figure" href="[^"]*"[^>]*>(.*?)</a>', page)
     assert figures
     for figure in figures:
         assert html.unescape(figure) in text
