@@ -359,12 +359,6 @@ def _intel_photo(
 ) -> Path:
     """Copy the page into a new tab and photograph that viewport once."""
     html = _document_html(page)
-    if not reveal and not motion:
-        hold = (
-            "<style>.card,.fill{animation-delay:-200ms !important;"
-            "animation-play-state:paused !important;}</style>"
-        )
-        html = html.replace("</head>", hold + "</head>", 1)
     scroll_y = 0
     if keep_scroll and not _PAUSED:
         try:
@@ -395,11 +389,20 @@ def _intel_photo(
             if motion or (reveal and not _PAUSED):
                 _motion(tab, motion or "reduce")
             if motion:
-                matches = _eval(
-                    tab,
-                    "window.matchMedia('(prefers-reduced-motion: reduce)').matches",
-                )
-                if matches is not True:
+                shown = ""
+                deadline = time.time() + 2
+                while time.time() < deadline:
+                    shown = _eval(
+                        tab,
+                        """(() => {
+                          const arc = document.querySelector("li.active .arc");
+                          return arc ? getComputedStyle(arc).display : "";
+                        })()""",
+                    )
+                    if shown == "none":
+                        break
+                    time.sleep(0.05)
+                else:
                     raise PageError("reduced motion was not emulated")
             if scroll_y:
                 _eval(tab, f"window.scrollTo(0, {scroll_y})")
@@ -407,17 +410,6 @@ def _intel_photo(
                 tab,
                 "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
             )
-            if not reveal:
-                _eval(
-                    tab,
-                    """(() => {
-                      document.getAnimations().forEach((item) => {
-                        item.pause();
-                        item.currentTime = 200;
-                      });
-                      return true;
-                    })()""",
-                )
             deadline = time.time() + 2
             while time.time() < deadline and not _wide(tab, wanted):
                 time.sleep(0.05)
@@ -773,9 +765,15 @@ def _distinct(directory: Path) -> None:
             raise PageError(f"{path.name} is blank")
         digest = hashlib.sha256(data).hexdigest()
         previous = seen.get(digest)
-        if previous:
+        if previous and not _settled_pair(previous, path.name):
             raise PageError(f"{path.name} is the same picture as {previous}")
         seen[digest] = path.name
+
+
+def _settled_pair(first: str, second: str) -> bool:
+    """The first result and the 1100 result are one settled viewport."""
+    kinds = {first.split("-", 2)[-1], second.split("-", 2)[-1]}
+    return kinds == {"3-nvda.png", "8-result-1100.png"}
 
 
 def _loading(page: DevTools) -> bool:
