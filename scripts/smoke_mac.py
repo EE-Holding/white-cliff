@@ -262,6 +262,8 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
                 "height": min(int(height), 900),
                 "deviceScaleFactor": 1,
                 "mobile": False,
+                "screenWidth": max(int(width), 1440),
+                "screenHeight": 1200,
             },
         )
     except PageError:
@@ -476,12 +478,28 @@ def _fit(page: DevTools, width: int, height: int) -> None:
         except PageError:
             pass
         time.sleep(0.05)
+    try:
+        page.call("Emulation.clearDeviceMetricsOverride")
+    except PageError:
+        pass
+    _window(page, width, height)
+    deadline = time.time() + 4
+    while time.time() < deadline:
+        try:
+            if _eval(page, "window.innerWidth") == width:
+                return
+        except PageError:
+            pass
+        _window(page, width, height)
+        time.sleep(0.1)
     seen = ""
+    screen = ""
     try:
         seen = str(_eval(page, "window.innerWidth"))
+        screen = str(_eval(page, "screen.availWidth"))
     except PageError:
-        seen = "unknown"
-    raise PageError(f"the window stayed at {seen}, wanted {width}")
+        seen = seen or "unknown"
+    raise PageError(f"the window stayed at {seen}, wanted {width}, screen {screen}")
 
 
 def _motion(page: DevTools, value: str) -> None:
