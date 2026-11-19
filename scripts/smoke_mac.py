@@ -192,6 +192,15 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
             fresh.call("Page.enable")
             fresh.call("Runtime.enable")
             _window(fresh, width, height)
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                try:
+                    if _eval(fresh, "window.innerWidth") == width:
+                        break
+                except PageError:
+                    pass
+                _window(fresh, width, height)
+                time.sleep(0.1)
             fresh.call(
                 "Runtime.evaluate",
                 {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
@@ -202,7 +211,8 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
                 timeout=8,
             )
             data = base64.b64decode(result["data"])
-            if len(data) < 1000:
+            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+            if len(data) < 1000 or got != width:
                 result = fresh.call(
                     "Page.captureScreenshot",
                     {
