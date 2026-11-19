@@ -253,3 +253,28 @@ def test_authorship_script_rejects_other_identities_and_trailers(tmp_path):
     )
     assert completed.returncode != 0
     assert HOOK.is_file()
+
+
+def test_a_coauthor_line_without_a_blank_line_is_rejected(tmp_path):
+    """A line like the blocked merge is a trailer even when git does not parse it."""
+    env = _env("Erik Eicke", "ada@example.com")
+    env["GITHUB_ACTIONS"] = "true"
+    env.pop("AUTHOR_EMAIL", None)
+    subprocess.check_call(["git", "init"], cwd=tmp_path, env=env)
+    (tmp_path / "note.txt").write_text("note\n", encoding="utf-8")
+    message = tmp_path / "message.txt"
+    message.write_text(
+        "Merge remote-tracking branch 'origin/main' into fixes-1\n"
+        "Co-authored-by: Erik Eicke <ada@example.com>\n",
+        encoding="utf-8",
+    )
+    subprocess.check_call(["git", "add", "note.txt"], cwd=tmp_path, env=env)
+    subprocess.check_call(["git", "commit", "-F", str(message)], cwd=tmp_path, env=env)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--range", "HEAD"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode != 0

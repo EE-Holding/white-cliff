@@ -87,6 +87,24 @@ def check_range(expr: str) -> int:
                 f"{sha} {author}|{author_email}|{committer}|{committer_email}|{shown}"
             )
             failed = True
+    bodies = subprocess.check_output(
+        ["git", "log", "--format=%B", expr],
+        text=True,
+        stderr=subprocess.PIPE,
+    )
+    matched = subprocess.run(
+        ["grep", "-iE", r"^[A-Za-z-]+-by:"],
+        input=bodies,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if matched.returncode == 0:
+        print("commit message contains a trailer")
+        failed = True
+    elif matched.returncode != 1:
+        sys.stderr.write(matched.stderr or "")
+        return 1
     return 1 if failed else 0
 
 
