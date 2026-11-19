@@ -137,10 +137,22 @@ def run_until_closed(server, desktop, *, sleep, clock) -> int:
     return 0
 
 
+def _note(url: str) -> None:
+    """Leave the address where a caller asked for it, before the browser opens."""
+    path = os.environ.get("URL_FILE", "")
+    if not path:
+        return
+    try:
+        Path(path).write_text(url + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
 def main() -> int:
     slot = Instance(app_data_dir())
     owner, running = slot.start_or_url(probe_port)
     if running:
+        _note(running)
         webbrowser.open(running)
         return 0
     if not owner:
@@ -152,7 +164,9 @@ def main() -> int:
     port = server.server_address[1]
     slot.publish(port)
     try:
-        webbrowser.open(f"http://127.0.0.1:{port}/")
+        address = f"http://127.0.0.1:{port}/"
+        _note(address)
+        webbrowser.open(address)
         return run_until_closed(server, desktop, sleep=time.sleep, clock=time.monotonic)
     except KeyboardInterrupt:
         server.shutdown()
