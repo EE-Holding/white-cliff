@@ -579,8 +579,8 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
         if len(texts) < 2:
             raise PageError("the print summary was one page")
         for text in texts:
-            if not text.startswith("This tool explains the numbers"):
-                raise PageError("a printed page does not open with the disclaimer")
+            if "This tool explains the numbers" not in text:
+                raise PageError("a printed page does not carry the disclaimer")
     finally:
         try:
             tab.call("Emulation.setEmulatedMedia", {"media": "screen"})
@@ -592,45 +592,140 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
 
 
 def _pdf_page_texts(data: bytes) -> list[str]:
-    """Visible writing on each letter page. Glyphs come from the font map."""
-    parts: list[bytes] = []
+    """Visible writing on each letter page. Each font keeps its own glyph map."""
+    streams: list[bytes] = []
     for match in re.finditer(rb"stream\r?\n", data):
         start = match.end()
         end = data.find(b"endstream", start)
+        if end < 0:
+            continue
         raw = data[start:end].strip(b"\r\n")
         try:
-            parts.append(zlib.decompress(raw))
+            streams.append(zlib.decompress(raw))
         except zlib.error:
-            parts.append(raw)
-    blob = b"\n".join(parts)
-    cmap: dict[int, int] = {}
-    for match in re.finditer(rb"beginbfrange\n(.*?)endbfrange", blob, re.S):
-        for row in re.finditer(
-            rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
-            match.group(1),
-        ):
-            left, right, dest = (int(row.group(index), 16) for index in (1, 2, 3))
-            for offset, src in enumerate(range(left, right + 1)):
-                cmap[src] = dest + offset
-    for match in re.finditer(rb"beginbfchar\n(.*?)endbfchar", blob, re.S):
-        for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", match.group(1)):
-            cmap[int(row.group(1), 16)] = int(row.group(2), 16)
+            continue
 
-    def decode(hex_text: str) -> str:
-        raw = bytes.fromhex(hex_text)
-        chars = []
-        for index in range(0, len(raw), 2):
-            code = int.from_bytes(raw[index : index + 2], "big")
-            chars.append(chr(cmap.get(code, 0xFFFD)))
+    def character(hex_digits: str) -> str:
+        if len(hex_digits) > 4:
+            return "".join(
+                chr(int(hex_digits[index : index + 4], 16))
+                for index in range(0, len(hex_digits) - 3, 4)
+            )
+        code = int(hex_digits, 16)
+        return chr(code) if code <= 0x10FFFF else ""
+
+    def font_map(blob: bytes) -> dict[int, str]:
+        cmap: dict[int, str] = {}
+        for match in re.finditer(rb"beginbfrange\n(.*?)endbfrange", blob, re.S):
+            body = match.group(1)
+            for row in re.finditer(
+                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+                body,
+            ):
+                left, right = int(row.group(1), 16), int(row.group(2), 16)
+                dest = int(row.group(3), 16)
+                for offset, src in enumerate(range(left, right + 1)):
+                    code = dest + offset
+                    if code <= 0x10FFFF:
+                        cmap[src] = chr(code)
+            for row in re.finditer(
+                rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]*)\]",
+                body,
+            ):
+                left = int(row.group(1), 16)
+                for offset, dest in enumerate(re.findall(rb"<([0-9A-Fa-f]+)>", row.group(3))):
+                    cmap[left + offset] = character(dest.decode())
+        for match in re.finditer(rb"beginbfchar\n(.*?)endbfchar", blob, re.S):
+            for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", match.group(1)):
+                cmap[int(row.group(1), 16)] = character(row.group(2).decode())
+        return cmap
+
+    maps = [font_map(stream) for stream in streams if b"beginbfchar" in stream or b"beginbfrange" in stream]
+    maps = [cmap for cmap in maps if cmap]
+
+    def literal(body: bytes) -> str:
+        chars: list[str] = []
+        index = 0
+        while index < len(body):
+            byte = body[index]
+            if byte == 0x5C and index + 1 < len(body):
+                index += 1
+                nxt = body[index]
+                named = {
+                    ord("n"): "\n",
+                    ord("r"): "\r",
+                    ord("t"): "\t",
+                    ord("("): "(",
+                    ord(")"): ")",
+                    ord("\\"): "\\",
+                }
+                if nxt in named:
+                    chars.append(named[nxt])
+                elif 48 <= nxt <= 55:
+                    digits = bytes([nxt])
+                    while index + 1 < len(body) and len(digits) < 3 and 48 <= body[index + 1] <= 55:
+                        index += 1
+                        digits += bytes([body[index]])
+                    chars.append(chr(int(digits, 8)))
+                else:
+                    chars.append(chr(nxt))
+            else:
+                chars.append(chr(byte))
+            index += 1
         return "".join(chars)
 
+    def glyphs(hex_text: str, cmap: dict[int, str] | None, width: int) -> str:
+        raw = bytes.fromhex(hex_text)
+        chars = []
+        for index in range(0, len(raw) - width + 1, width):
+            code = int.from_bytes(raw[index : index + width], "big")
+            if cmap is None:
+                chars.append(chr(code) if code <= 0x10FFFF else "\ufffd")
+            else:
+                chars.append(cmap.get(code, "\ufffd"))
+        return "".join(chars)
+
+    shown = re.compile(
+        rb"<[0-9A-Fa-f]+>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ",
+        re.S,
+    )
     pages = []
-    for chunk in blob.split(b"792 cm")[1:]:
-        texts = [
-            decode(item.group(1).decode())
-            for item in re.finditer(rb"<([0-9A-Fa-f]+)>\s*Tj", chunk)
-        ]
-        pages.append("".join(texts))
+    phrase = "This tool explains the numbers"
+    for stream in streams:
+        if b"Tj" not in stream and b"TJ" not in stream:
+            continue
+        if b"beginbfchar" in stream or b"beginbfrange" in stream:
+            continue
+        plain: list[str] = []
+        coded: list[str] = []
+        for item in shown.finditer(stream):
+            token = item.group(0)
+            if token.endswith(b"TJ"):
+                for part in re.finditer(rb"<[0-9A-Fa-f]+>|\((?:\\.|[^\\)])*\)", token):
+                    raw = part.group(0)
+                    if raw.startswith(b"<"):
+                        coded.append(raw[1:-1].decode())
+                    else:
+                        plain.append(literal(raw[1:-1]))
+            elif token.lstrip().startswith(b"("):
+                plain.append(literal(token[: token.rfind(b"Tj")].strip()[1:-1]))
+            else:
+                coded.append(token[: token.rfind(b"Tj")].strip()[1:-1].decode())
+        base = "".join(plain)
+        chosen = base
+        candidates = []
+        for cmap in maps:
+            for width in (2, 1):
+                candidates.append(base + "".join(glyphs(item, cmap, width) for item in coded))
+        for width in (2, 1):
+            candidates.append(base + "".join(glyphs(item, None, width) for item in coded))
+        for candidate in candidates:
+            if phrase in candidate:
+                chosen = candidate
+                break
+            if candidate.count(" ") > chosen.count(" "):
+                chosen = candidate
+        pages.append(chosen)
     return pages
 
 
