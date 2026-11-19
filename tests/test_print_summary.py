@@ -369,6 +369,7 @@ def test_readable_pdf_text_fails_when_a_page_lacks_the_disclaimer(monkeypatch):
             raise AssertionError("the repeating header was used")
 
     monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: [carried, missing])
+    monkeypatch.setattr(driver, "_eval", lambda _tab, _expression: "en")
     with pytest.raises(driver.PageError, match="does not carry the disclaimer"):
         driver._require_disclaimer_on_every_page(Header(), b"%PDF")
 
@@ -383,18 +384,29 @@ def test_readable_pdf_text_fails_when_a_page_lacks_the_disclaimer(monkeypatch):
         driver,
         "_eval",
         lambda _tab, _expression: {
-            "text": "This tool explains the numbers in a public company filing.",
+            "text": DISCLAIMER,
             "display": "table-header-group",
         },
     )
     driver._require_disclaimer_on_every_page(object(), b"/Type /Page /Type /Page")
+
+    monkeypatch.setattr(
+        driver,
+        "_eval",
+        lambda _tab, _expression: {
+            "text": "This tool explains the numbers",
+            "display": "table-header-group",
+        },
+    )
+    with pytest.raises(driver.PageError, match="does not carry the disclaimer"):
+        driver._require_disclaimer_on_every_page(object(), b"/Type /Page /Type /Page")
 
     monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: ["", "??"])
     monkeypatch.setattr(
         driver,
         "_eval",
         lambda _tab, _expression: {
-            "text": "This tool explains the numbers in a public company filing.",
+            "text": DISCLAIMER,
             "display": "table-header-group",
         },
     )
@@ -414,7 +426,7 @@ def _pdf(parts: list[bytes]) -> bytes:
 
 
 def _glyph_header() -> tuple[bytes, bytes]:
-    phrase = "This tool explains the numbers"
+    phrase = DISCLAIMER
     rows = [f"<{index + 1:04x}> <{ord(char):04x}>" for index, char in enumerate(phrase)]
     cmap = (
         "begincmap\r\n"
@@ -487,22 +499,103 @@ def test_a_header_drawn_from_the_page_tree_is_part_of_that_page_only():
     assert "This tool explains the numbers" not in " ".join(texts[1].split())
 
 
-def test_a_sec_url_is_not_split_across_printed_pages():
-    css = _print_css(_page()[1])
-    rule = re.search(r"\.sources li \{[^}]*\}", css)
-    assert rule is not None
-    assert "break-inside: avoid" in rule.group(0)
-    assert "page-break-inside: avoid" in rule.group(0)
+def test_a_mixed_pdf_does_not_skip_an_unreadable_page(monkeypatch):
+    driver = _driver()
+    carried = DISCLAIMER + " Revenue was one hundred million dollars in the quarter ended July."
+    junk = "Qwxz " * 40
+
+    class Header:
+        def call(self, *_args, **_kwargs):
+            raise AssertionError("the repeating header was used")
+
+    monkeypatch.setattr(driver, "_pdf_page_texts", lambda _data: [carried, carried, junk])
+    monkeypatch.setattr(driver, "_eval", lambda _tab, _expression: "en")
+    with pytest.raises(driver.PageError, match="could not be read"):
+        driver._require_disclaimer_on_every_page(Header(), b"%PDF")
+    assert driver._read_disclaimer_pages([junk, junk]) == "unreadable"
+    assert driver._read_disclaimer_pages([carried, carried]) == ""
 
 
-def test_the_printed_disclaimer_is_at_least_body_text():
+def test_the_smoke_requires_the_full_disclaimer_lines():
+    driver = _driver()
+    opening = "This tool explains the numbers " + ("in the filing " * 8)
+    assert driver._read_disclaimer_pages([opening, opening]).startswith(
+        "a printed page does not carry the disclaimer"
+    )
+    carried = DISCLAIMER + " Revenue was one hundred million dollars in the quarter ended July."
+    assert driver._read_disclaimer_pages([carried, carried]) == ""
+    english_only = carried
+    assert driver._read_disclaimer_pages([english_only, english_only], german=True).startswith(
+        "a printed page does not carry the disclaimer"
+    )
+    both = DISCLAIMER + " " + GERMAN + " Revenue was one hundred million dollars in the quarter ended July."
+    assert driver._read_disclaimer_pages([both, both], german=True) == ""
+
+
+def _chrome_pdf(page: str, tmp_path: Path) -> bytes:
+    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if chrome is None:
+        pytest.skip("chrome is not installed")
+    html_path = tmp_path / "summary.html"
+    pdf_path = tmp_path / "summary.pdf"
+    html_path.write_text(page, encoding="utf-8")
+    subprocess.run(
+        [
+            "timeout",
+            "40",
+            chrome,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert pdf_path.is_file() and pdf_path.stat().st_size > 1000
+    return pdf_path.read_bytes()
+
+
+def _folded(text: str) -> str:
+    for src, dst in (("ﬁ", "fi"), ("ﬂ", "fl"), ("ﬀ", "ff"), ("ﬃ", "ffi"), ("ﬄ", "ffl")):
+        text = text.replace(src, dst)
+    return "".join(char.casefold() for char in text if char.isalnum())
+
+
+def test_a_sec_url_is_not_split_across_printed_pages(tmp_path):
     _filing, page = _page()
-    body = re.search(r"body \{[^}]*font-size:\s*(\d+)px", page)
-    assert body is not None
-    css = _print_css(page)
-    printed = re.search(r"\.print-head \.disclaimer \{[^}]*font-size:\s*(\d+)px", css)
-    assert printed is not None
-    assert int(printed.group(1)) >= int(body.group(1))
+    driver = _driver()
+    texts = [_folded(text) for text in driver._pdf_page_texts(_chrome_pdf(page, tmp_path))]
+    block = re.search(r'<section class="sources">(.*?)</section>', page, re.S)
+    assert block is not None
+    urls = [html.unescape(item) for item in re.findall(r"<li>(.*?)</li>", block.group(1), re.S)]
+    assert urls
+    for url in urls:
+        assert any(_folded(url) in text for text in texts)
+
+
+def test_the_printed_disclaimer_is_at_least_body_text(tmp_path):
+    _filing, page = _page()
+    driver = _driver()
+    streams = driver._pdf_page_streams(_chrome_pdf(page, tmp_path))
+    assert streams
+    size = None
+    used: list[float] = []
+    for match in re.finditer(
+        rb"/F\d+\s+([\d.]+)\s+Tf|<(?:[0-9A-Fa-f]+)>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ",
+        streams[0],
+    ):
+        if match.group(1):
+            size = float(match.group(1))
+        elif size is not None:
+            used.append(size)
+    assert used
+    disclaimer = used[0]
+    body = max(set(used), key=used.count)
+    assert disclaimer >= body
 
 
 def test_a_card_is_not_split_across_printed_pages():

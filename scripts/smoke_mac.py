@@ -21,7 +21,11 @@ import urllib.request
 import zlib
 from pathlib import Path
 
+from white_cliff.disclaimer import DISCLAIMER
+from white_cliff.lexicon import STRINGS
+
 TEST_NAME = "White Cliff Test"
+GERMAN_DISCLAIMER = STRINGS["§1.DISCLAIMER"][1]
 ARCH = platform.machine()
 
 
@@ -647,18 +651,24 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
             _close_tab(target_id)
 
 
-_PHRASE = re.compile(r"This\W+tool\W+explains\W+the\W+numbers")
 _WORD = re.compile(r"[A-Za-z]{3,}")
 _COMMON = frozenset(
     "the and for was from with million quarter filing this that are not year "
     "rose percent company report".split()
 )
+_LIGATURES = (("ﬁ", "fi"), ("ﬂ", "fl"), ("ﬀ", "ff"), ("ﬃ", "ffi"), ("ﬄ", "ffl"))
 
 
 def _same_line(text: str) -> str:
     for mark in ("\u00ad", "\u200b", "\ufeff", "\u2060"):
         text = text.replace(mark, "")
     return " ".join(text.split())
+
+
+def _folded(text: str) -> str:
+    for src, dst in _LIGATURES:
+        text = text.replace(src, dst)
+    return "".join(char.casefold() for char in text if char.isalnum())
 
 
 def _page_can_be_read(text: str) -> bool:
@@ -674,23 +684,46 @@ def _page_can_be_read(text: str) -> bool:
     return sum(word.lower() in _COMMON for word in words) >= 2
 
 
-def _read_disclaimer_pages(texts: list[str]) -> str:
-    """Empty when every readable page carries the disclaimer. 'unreadable' when none could be read."""
-    pages = [text for text in texts if _page_can_be_read(text)]
-    if not pages:
+def _page_kind(text: str) -> str:
+    flat = _same_line(text)
+    if sum(char.isalpha() for char in flat) < 40 and "sec.gov" not in flat:
+        return "blank"
+    if _page_can_be_read(text):
+        return "readable"
+    return "unreadable"
+
+
+def _read_disclaimer_pages(texts: list[str], *, german: bool = False) -> str:
+    """Empty only when every page can be read and carries the full line.
+
+    A PDF whose pages cannot be read at all is 'unreadable'. A mix of readable
+    and unreadable pages is a failure, not a reason to skip the unreadable ones.
+    """
+    kinds = [_page_kind(text) for text in texts]
+    if not any(kind == "readable" for kind in kinds):
         return "unreadable"
+    if any(kind == "unreadable" for kind in kinds):
+        return "a printed page could not be read"
+    pages = [text for text, kind in zip(texts, kinds) if kind == "readable"]
     if len(pages) < 2:
         return "the print summary was one page"
+    lines = [DISCLAIMER]
+    if german:
+        lines.append(GERMAN_DISCLAIMER)
     for text in pages:
-        if _PHRASE.search(_same_line(text)) is None:
-            sample = re.sub(r"\S+@\S+", "", _same_line(text))[:80]
-            return f"a printed page does not carry the disclaimer ({sample})"
+        folded = _folded(text)
+        for line in lines:
+            if _folded(line) not in folded:
+                sample = re.sub(r"\S+@\S+", "", _same_line(text))[:80]
+                return f"a printed page does not carry the disclaimer ({sample})"
     return ""
 
 
 def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
-    """The disclaimer is the first writing on each page. Some PDFs hide that writing in a font map."""
-    verdict = _read_disclaimer_pages(_pdf_page_texts(pdf))
+    """The full disclaimer is on each page. Some PDFs hide that writing in a font map."""
+    lang = _eval(tab, "document.documentElement.lang")
+    german = lang == "de"
+    verdict = _read_disclaimer_pages(_pdf_page_texts(pdf), german=german)
     if verdict == "":
         return
     if verdict != "unreadable":
@@ -698,16 +731,26 @@ def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
     page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
     if page_count < 2:
         raise PageError("the print summary was one page")
-    phrase = "This tool explains the numbers"
     header = _eval(
         tab,
         """(() => {
           const head = document.querySelector("thead.print-head");
-          if (!head) return {text: "", display: ""};
-          return {text: head.innerText, display: getComputedStyle(head).display};
+          if (!head) return {text: "", display: "", lang: document.documentElement.lang};
+          return {
+            text: head.innerText,
+            display: getComputedStyle(head).display,
+            lang: document.documentElement.lang
+          };
         })()""",
     )
-    if not isinstance(header, dict) or phrase not in _same_line(str(header.get("text") or "")):
+    if not isinstance(header, dict):
+        raise PageError("a printed page does not carry the disclaimer")
+    german = header.get("lang") == "de" or german
+    text = str(header.get("text") or "")
+    lines = [DISCLAIMER]
+    if german:
+        lines.append(GERMAN_DISCLAIMER)
+    if any(_folded(line) not in _folded(text) for line in lines):
         raise PageError("a printed page does not carry the disclaimer")
     if header.get("display") != "table-header-group":
         raise PageError("the disclaimer does not repeat on each printed page")
@@ -1641,6 +1684,17 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
         raise PageError("the first paint was not German")
     time.sleep(1.0)
     _shot(page, out_dir, f"smoke-{ARCH}-10-de-result-1280.png", width=1280, height=2200, full=True)
+    printed = page.call(
+        "Page.printToPDF",
+        {
+            "printBackground": True,
+            "displayHeaderFooter": False,
+            "paperWidth": 8.5,
+            "paperHeight": 11,
+        },
+        timeout=60,
+    )
+    _require_disclaimer_on_every_page(page, base64.b64decode(printed["data"]))
     _panel_shot(page, out_dir, f"smoke-{ARCH}-18-de-balance-1280.png", 1280, "balance")
     _panel_shot(page, out_dir, f"smoke-{ARCH}-19-de-checks-1280.png", 1280, "checks")
     _panel_shot(page, out_dir, f"smoke-{ARCH}-20-de-explain-1280.png", 1280, "explain")
