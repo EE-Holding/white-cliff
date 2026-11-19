@@ -1367,6 +1367,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         "--headless=old",
         "--no-sandbox",
         "--disable-gpu",
+        "--disable-gpu-compositing",
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
