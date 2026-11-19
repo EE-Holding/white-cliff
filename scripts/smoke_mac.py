@@ -1264,7 +1264,7 @@ def _reduced_steps(page: DevTools) -> bool:
           const dot = document.querySelector("li.active .dot");
           const arcHidden = !arc || getComputedStyle(arc).display === "none";
           const dotShown = !!dot && getComputedStyle(dot).display !== "none";
-          return active === 1 && done >= 1 && arcHidden && dotShown;
+          return active === 1 && done >= 2 && arcHidden && dotShown;
         })()
         """,
     )
