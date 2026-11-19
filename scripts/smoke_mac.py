@@ -562,11 +562,7 @@ def _intel_photo(
             fresh.call("Page.enable")
             fresh.call("Runtime.enable")
             if not _PAUSED:
-                if attempt or (width and not _wide(fresh, wanted)):
-                    _window(fresh, wanted, height_px)
-                    deadline = time.time() + 2
-                    while time.time() < deadline and not _wide(fresh, wanted):
-                        time.sleep(0.05)
+                _window(fresh, wanted, height_px)
                 if motion:
                     _motion(fresh, motion)
                 if not keep_scroll:
@@ -576,13 +572,23 @@ def _intel_photo(
                     fresh,
                     "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
                 )
-            data = _live_frame(fresh)
-            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-            if len(data) < 1000 or got != wanted:
-                screen = 0 if _PAUSED else _screen_width(fresh)
-                raise PageError(
-                    f"{name} is {got}px wide, wanted {wanted}, screen {screen}, window {_BOUNDS}"
-                )
+            # The layout can already say 1100 while the pictured window is still
+            # the 800px headless screen. Wait for a frame of the requested width.
+            deadline = time.time() + (0 if _PAUSED else 8)
+            data = b""
+            got = 0
+            while True:
+                data = _live_frame(fresh)
+                got = _png_width(data)
+                if len(data) >= 1000 and got == wanted:
+                    break
+                if _PAUSED or time.time() >= deadline:
+                    screen = 0 if _PAUSED else _screen_width(fresh)
+                    raise PageError(
+                        f"{name} is {got}px wide, wanted {wanted}, screen {screen}, window {_BOUNDS}"
+                    )
+                _window(fresh, wanted, height_px)
+                time.sleep(0.25)
             if height:
                 png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
                 if png_height > height:
@@ -1298,7 +1304,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     if _intel():
         # Headless defaults to an 800x600 screen, so a 1100 window stays near 800.
         command[command.index("--headless=old")] = "--headless=new"
-        command.insert(command.index("--window-size=1100,2200"), "--screen-info={0,0 1400x2400}")
+        command.insert(command.index("--window-size=1100,2200"), "--screen-info={1400x2400}")
     chrome = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
