@@ -224,33 +224,32 @@ def _shot(page: DevTools, directory: Path, name: str, width: int = 1100, height:
     raise PageError(last)
 
 
-def _aligned(page: DevTools, *, expect_pairs: bool, expect_width: float | None) -> None:
-    """Two earlier values in one block share a bottom edge. The result column is 680px wide."""
+def _layout(page: DevTools, *, columns: int, width: float | None) -> None:
+    """Cards sit in two columns above 900px and one column below. The column is 1160px at 1280."""
     measured = _eval(
         page,
         """(() => {
-          const pairs = [];
-          document.querySelectorAll('.earlier').forEach((grid) => {
-            const values = grid.querySelectorAll('.v');
-            if (values.length < 2) return;
-            const left = values[0].getBoundingClientRect();
-            const right = values[1].getBoundingClientRect();
-            pairs.push(Math.abs(left.bottom - right.bottom));
+          const cards = Array.from(document.querySelectorAll('article.card')).slice(0, 2);
+          const boxes = cards.map((card) => {
+            const box = card.getBoundingClientRect();
+            return {top: box.top, left: box.left, bottom: box.bottom};
           });
           const column = document.querySelector('body.result .column');
-          const width = column ? column.getBoundingClientRect().width : 0;
-          return {pairs, width};
+          const wide = column ? column.getBoundingClientRect().width : 0;
+          return {boxes, width: wide};
         })()""",
     )
     if not isinstance(measured, dict):
-        raise PageError("the comparison alignment was not measured")
-    pairs = measured.get("pairs") or []
-    if expect_pairs and not pairs:
-        raise PageError("no two-value comparison to align")
-    for gap in pairs:
-        if float(gap) > 1:
-            raise PageError(f"earlier values differ by {gap}px")
-    if expect_width is not None and abs(float(measured.get("width") or 0) - expect_width) > 1:
+        raise PageError("the card layout was not measured")
+    boxes = measured.get("boxes") or []
+    if len(boxes) < 2:
+        raise PageError("the result did not show two cards")
+    first, second = boxes
+    if columns == 2 and abs(float(first["top"]) - float(second["top"])) > 2:
+        raise PageError("the cards did not share a row")
+    if columns == 1 and float(second["top"]) + 1 < float(first["bottom"]):
+        raise PageError("the cards did not stack")
+    if width is not None and abs(float(measured.get("width") or 0) - width) > 1:
         raise PageError(f"result column is {measured.get('width')}px")
 
 
@@ -526,12 +525,14 @@ def drive(
         _fill(page, "#query", query)
         _click(page, 'form[action="/explain"] button')
         _wait_result(page, out_dir, heading, suffix, loading=True)
-        expect_pairs = query == "NVDA"
+        _window(page, 1280, 2200)
+        _layout(page, columns=2, width=1160)
+        _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200)
         _window(page, 1100, 2200)
-        _aligned(page, expect_pairs=expect_pairs, expect_width=680)
+        _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png")
         _window(page, 640, 1600)
-        _aligned(page, expect_pairs=expect_pairs, expect_width=None)
+        _layout(page, columns=1, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600)
         _shot(page, out_dir, f"smoke-{ARCH}-7-result-420.png", width=420, height=1800)
         _window(page)

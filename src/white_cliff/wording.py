@@ -16,6 +16,7 @@ from white_cliff.compare import Cell, columns_for, percent_change
 from white_cliff.explain import _lead, _span, statement_name
 from white_cliff.facts import Fact, format_decimal
 from white_cliff.present import shown_amount
+from white_cliff.strings import EN
 from white_cliff.thresholds import CASH_CONVERSION
 
 FRAME = (
@@ -525,7 +526,7 @@ def _comparison_block(
     form_words: str,
     filed: str,
     form: str = "",
-) -> str:
+) -> tuple[str, str]:
     label = label_for(role, fact)
     current = Cell(
         True,
@@ -537,14 +538,17 @@ def _comparison_block(
         fact=fact,
     )
     if last is None and year is None:
-        return ""
+        return "", ""
     chunks: list[str] = []
     _append_changes(chunks, label, current, last, year, measure, form_words, filed)
     current_caption = column_header(current.kind, current.period_start, current.period_end)
     named = ""
     if current_caption.startswith(("Six months ended", "Nine months ended")):
         named = f'<p class="caption">{html.escape(current_caption)}</p>\n'
-    return named + _prior_grid(label, last, year, fact, form) + "".join(chunks)
+    chart = _chart(label, current, last, year, fact, form, current_caption)
+    short = _short_line(label, current, last, year, measure, form, chunks)
+    face = named + short + chart
+    return face, "".join(chunks)
 
 
 def _right_head(cell: Cell | None, current: Fact, form: str) -> str:
@@ -557,48 +561,206 @@ def _right_head(cell: Cell | None, current: Fact, form: str) -> str:
         end = cell.period_end
     header = column_header(kind, start, end)
     if header.startswith("Six months ended"):
-        return "Same six months a year earlier"
+        return EN["same_six"]
     if header.startswith("Nine months ended"):
-        return "Same nine months a year earlier"
+        return EN["same_nine"]
     if header.startswith("Year ended") or form == "10-K":
-        return "Prior year"
-    return "Same quarter a year earlier"
+        return EN["prior_year"]
+    return EN["same_quarter"]
 
 
-def _prior_grid(label: str, last: Cell | None, year: Cell | None, current: Fact, form: str) -> str:
-    cells = ""
-    if last is not None:
-        cells += _prior_cell(label, last, "c1", current, form)
-    if year is not None:
-        cells += _prior_cell(label, year, "c2", current, form)
-    if not cells:
+def _phrase_for(head: str) -> str:
+    phrases = {
+        EN["prior_quarter"]: EN["phrase_prior_quarter"],
+        EN["same_quarter"]: EN["phrase_same_quarter"],
+        EN["same_six"]: EN["phrase_same_six"],
+        EN["same_nine"]: EN["phrase_same_nine"],
+        EN["prior_year"]: EN["phrase_prior_year"],
+    }
+    return phrases.get(head, "")
+
+
+def _scale(values: list[Decimal]) -> tuple[Decimal, Decimal]:
+    """Shared zero. The width of a bar is its absolute value over the same span."""
+    if not values:
+        return Decimal("0.00"), Decimal(0)
+    negative = max((abs(value) for value in values if value < 0), default=Decimal(0))
+    positive = max((value for value in values if value > 0), default=Decimal(0))
+    span = negative + positive
+    if span == 0:
+        return Decimal("0.00"), Decimal(0)
+    zero = (negative / span * Decimal(100)).quantize(Decimal("0.01"))
+    return zero, span
+
+
+def _bar_box(value: Decimal, zero: Decimal, span: Decimal) -> tuple[str, str]:
+    if span == 0:
+        return "0.00", "0.00"
+    width = (abs(value) / span * Decimal(100)).quantize(Decimal("0.01"))
+    left = (zero - width) if value < 0 else zero
+    return f"{left:.2f}", f"{width:.2f}"
+
+
+def _value_link(cell_fact: Fact) -> tuple[str, str, str]:
+    value = html.escape(show_measure(cell_fact.value, cell_fact.unit))
+    href = fact_href(cell_fact)
+    if not href.startswith("https://www.sec.gov/"):
+        raise ValueError("number without a filing link")
+    return f'<a href="{html.escape(href, quote=True)}">{value}</a>', value, href
+
+
+def _chart(
+    label: str,
+    current: Cell,
+    last: Cell | None,
+    year: Cell | None,
+    fact: Fact,
+    form: str,
+    current_caption: str,
+) -> str:
+    rows: list[tuple] = []
+    numbers: list[Decimal] = []
+    if current.value is not None and current.fact is not None and current_caption:
+        rows.append(("current", current_caption, "", current))
+        numbers.append(current.value)
+    for column, cell in (("c1", last), ("c2", year)):
+        if cell is None:
+            continue
+        head = EN["prior_quarter"] if column == "c1" else _right_head(cell, fact, form)
+        if not cell.available or cell.fact is None or cell.value is None:
+            if cell.basis == "structural":
+                text = f"{label} for the prior quarter is not available for this filing."
+                template = "M6"
+            else:
+                period = cell.missing_period or "the prior period"
+                text = f"{label} for {period} is not in the filings White Cliff read, so no change is shown."
+                template = "M2"
+            rows.append(("missing", head, text, template))
+            continue
+        caption = column_header(cell.kind, cell.period_start, cell.period_end)
+        rows.append(("value", head, caption, cell))
+        numbers.append(cell.value)
+    if not rows:
         return ""
-    return f'<div class="earlier">{cells}</div>\n'
-
-
-def _prior_cell(label: str, cell: Cell, column: str, current: Fact, form: str) -> str:
-    head = "Prior quarter" if column == "c1" else _right_head(cell, current, form)
-    if not cell.available or cell.fact is None:
-        if cell.basis == "structural":
-            text = f"{label} for the prior quarter is not available for this filing."
-            template = "M6"
+    zero, span = _scale(numbers)
+    spoken: list[str] = []
+    items: list[str] = []
+    index = 0
+    for row in rows:
+        kind = row[0]
+        if kind == "current":
+            _kind, caption, _empty, cell = row
+            link, shown, _href = _value_link(cell.fact)
+            left, width = _bar_box(cell.value, zero, span)
+            negative = " neg" if cell.value < 0 else ""
+            spoken.append(f"{caption}: {shown}")
+            items.append(
+                f'<li class="bar-row cur" style="--i:{index}">'
+                f'<div class="bar-text"><p class="bh">{html.escape(caption)}</p>'
+                f'<p class="bv">{link}</p></div>'
+                f'<div class="bar-track" style="--zero:{zero:.2f}%" aria-hidden="true">'
+                f'<div class="fill{negative}" style="left:{left}%;width:{width}%"></div></div></li>'
+            )
+        elif kind == "missing":
+            _kind, head, text, template = row
+            spoken.append(f"{head}: {text}")
+            items.append(
+                f'<li class="bar-row na" style="--i:{index}">'
+                f'<div class="bar-text"><p class="bh">{html.escape(head)}</p></div>'
+                f'<p class="m6" data-template="{template}">{html.escape(text)}</p></li>'
+            )
         else:
-            period = cell.missing_period or "the prior period"
-            text = f"{label} for {period} is not in the filings White Cliff read, so no change is shown."
-            template = "M2"
-        return (
-            f'<p class="h {column}">{html.escape(head)}</p>'
-            f'<p class="na {column}" data-template="{template}">{html.escape(text)}</p>'
-        )
-    caption = column_header(cell.kind, cell.period_start, cell.period_end)
-    value = html.escape(show_measure(cell.fact.value, cell.fact.unit))
-    href = fact_href(cell.fact)
-    if href.startswith("https://www.sec.gov/"):
-        shown = f'<a class="prior-value" href="{html.escape(href, quote=True)}">{value}</a>'
-    else:
-        shown = f'<span class="prior-value">{value}</span>'
-    date = f'<p class="d {column}">{html.escape(caption)}</p>' if caption else ""
-    return f'<p class="h {column}">{html.escape(head)}</p>{date}<p class="v {column}">{shown}</p>'
+            _kind, head, caption, cell = row
+            link, shown, _href = _value_link(cell.fact)
+            left, width = _bar_box(cell.value, zero, span)
+            negative = " neg" if cell.value < 0 else ""
+            spoken.append(f"{head}, {caption}: {shown}" if caption else f"{head}: {shown}")
+            date = f'<p class="bd">{html.escape(caption)}</p>' if caption else ""
+            items.append(
+                f'<li class="bar-row old" style="--i:{index}">'
+                f'<div class="bar-text"><p class="bh">{html.escape(head)}</p>'
+                f'<p class="bv">{link}</p>{date}</div>'
+                f'<div class="bar-track" style="--zero:{zero:.2f}%" aria-hidden="true">'
+                f'<div class="fill{negative}" style="left:{left}%;width:{width}%"></div></div></li>'
+            )
+        index += 1
+    label_text = html.escape(EN["bar_chart"] + " " + "; ".join(spoken) + ".")
+    return f'<ul class="chart" role="img" aria-label="{label_text}">{"".join(items)}</ul>\n'
+
+
+def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[str, str] | None:
+    """One S1 clause. The percent links this figure and the period phrase links the earlier one."""
+    if not phrase or measure not in {"money", "shares", "per_share"}:
+        return None
+    if (
+        not prior.available
+        or prior.fact is None
+        or current.fact is None
+        or prior.value is None
+        or current.value is None
+        or prior.basis in {"currency", "length"}
+    ):
+        return None
+    period = _anchor("per", phrase, fact_href(prior.fact))
+    if current.value == prior.value:
+        return "unchanged", "was unchanged from " + period
+    pct = percent_change(current.value, prior.value)
+    if pct is None:
+        return None
+    direction = _direction(current.value, prior.value)
+    if pct == 0 or direction == "was unchanged":
+        return "unchanged", "was unchanged from " + period
+    percent = _anchor("pct", show_measure(abs(pct), "percent"), fact_href(current.fact))
+    return "change", f"{direction} {percent} from {period}"
+
+
+def _anchor(class_name: str, display: str, href: str) -> str:
+    if not href.startswith("https://www.sec.gov/"):
+        raise ValueError("number without a filing link")
+    return (
+        f'<a class="{class_name}" href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
+    )
+
+
+def _short_line(label, current, last, year, measure, form, chunks: list[str]) -> str:
+    """S1 on a card that shows an H1 head with its date. Both zeros stay on C3."""
+    clauses: list[tuple[str, str]] = []
+    dated = False
+    for column, cell in (("c1", last), ("c2", year)):
+        if cell is None:
+            continue
+        if cell.available and cell.fact is not None and column_header(cell.kind, cell.period_start, cell.period_end):
+            dated = True
+        head = EN["prior_quarter"] if column == "c1" else _right_head(cell, current.fact, form)
+        clause = _s1_clause(current, cell, measure, _phrase_for(head))
+        if clause is not None:
+            clauses.append(clause)
+    if dated and clauses and not all(kind == "unchanged" for kind, _html in clauses):
+        body = " and ".join(html_clause for _kind, html_clause in clauses)
+        return f'<div class="cmp-slot"><p class="cmp" data-template="S1">It {body}.</p></div>\n'
+    if dated and len(clauses) == 1 and clauses[0][0] == "unchanged":
+        return f'<div class="cmp-slot"><p class="cmp" data-template="S1">It {clauses[0][1]}.</p></div>\n'
+    if dated and len(clauses) > 1 and all(kind == "unchanged" for kind, _html in clauses):
+        copied = _retitled(chunks, "C3")
+        if copied:
+            return copied
+    copied = _retitled(chunks, "C2", skip=("percentage points", "percentage change"))
+    if dated and copied:
+        return copied
+    return ""
+
+
+def _retitled(chunks: list[str], template: str, skip: tuple[str, ...] = ()) -> str:
+    chosen = []
+    for chunk in chunks:
+        if f'data-template="{template}"' not in chunk:
+            continue
+        if any(needle in chunk for needle in skip):
+            continue
+        chosen.append(chunk.replace('class="change-line"', 'class="cmp"', 1))
+    if not chosen:
+        return ""
+    return '<div class="cmp-slot">' + "".join(chosen) + "</div>\n"
 
 
 def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None:
@@ -1146,9 +1308,9 @@ def build_additions(
             formula = "debt minus cash"
         elif role == "yoy_change":
             formula = "(revenue minus prior revenue) divided by prior revenue"
-        block = ""
+        face, lines = "", ""
         if role != "yoy_change":
-            block = _comparison_block(
+            face, lines = _comparison_block(
                 role,
                 anchor_fact,
                 last,
@@ -1161,10 +1323,11 @@ def build_additions(
         control = "explain-" + identifier
         explanation = _explain_block(role, anchor_fact, company or "this company", statement, formula, inputs)
         after[identifier] = (
-            f'<div class="comparisons">{block}</div>\n'
-            f'<div id="{control}" class="explain" hidden>{explanation}</div>\n'
+            f'<div class="face">{face}</div>\n'
+            f'<div id="{control}" class="detail" aria-hidden="true"><div class="detail-inner">'
+            f"{lines}{explanation}</div></div>\n"
         )
-        plain_parts.append(re.sub(r"<[^>]+>", " ", block + explanation))
+        plain_parts.append(re.sub(r"<[^>]+>", " ", face + lines + explanation))
     quality = quality_html(facts, form=form, period_end=period_end)
     plain_parts.append(re.sub(r"<[^>]+>", " ", quality))
     return Additions(before, after, quality, "\n".join(plain_parts))

@@ -24,6 +24,7 @@ from white_cliff.desktop_copy import (
 from white_cliff.disclaimer import ISSUE_URL, OutputRefused
 from white_cliff.explain import acceptable_name
 from white_cliff.pipeline import Explained
+from white_cliff.strings import EN
 
 _DATA_LINK = re.compile(
     r"(.*?)<data\b[^>]*>(.*?)</data>\s*"
@@ -134,10 +135,11 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
         "<head>\n"
-        "<title>White Cliff</title>\n"
+        f"<title>{html.escape(EN['app_name'])}</title>\n"
         "</head>\n"
         f"{body}"
         f'<p class="disclaimer">{DISCLAIMER}</p>\n'
+        f'<div class="top"><p class="app">{html.escape(EN["app_name"])}</p></div>\n'
         "<style>\n"
         ":root { --bg: #ffffff; --ink: #1d1d1f; --ink-2: #3a3a3c; --ink-3: #555559; "
         "--accent: #0a4b8f; --line: #86868b; --hairline: #e6e6e8; --panel: #f5f5f7; "
@@ -151,20 +153,23 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "--ease-accel: cubic-bezier(0.3, 0, 0.8, 0.15); }\n"
         "html { box-sizing: border-box; }\n"
         "*, *::before, *::after { box-sizing: inherit; }\n"
-        "body { margin: 0; background: var(--bg); color: var(--ink); "
+        "body { margin: 0; background: #f5f5f7; color: var(--ink); "
         'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; '
         "font-size: 21px; line-height: 32px; }\n"
-        ".disclaimer, .column { max-width: 640px; margin-left: auto; margin-right: auto; "
-        "padding-left: 24px; padding-right: 24px; }\n"
-        "body.result .disclaimer, body.result .column { max-width: 680px; }\n"
-        ".disclaimer { margin-top: 48px; margin-bottom: 0; color: var(--ink-2); "
+        ".disclaimer, .top, .column { max-width: 1160px; margin-left: auto; margin-right: auto; "
+        "padding-left: 32px; padding-right: 32px; }\n"
+        ".disclaimer { margin: 0; padding-top: 40px; color: var(--ink-2); "
         "font-size: 18px; line-height: 27px; }\n"
-        ".column { padding-top: 32px; padding-bottom: 64px; "
+        ".top { display: flex; align-items: center; justify-content: space-between; "
+        "gap: 16px; padding-top: 24px; }\n"
+        ".app { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--ink-2); }\n"
+        ".column { padding-top: 40px; padding-bottom: 80px; "
         "animation: fade 200ms var(--ease-standard) both; }\n"
         "body.result .column { animation: none; }\n"
-        "h1 { font-size: 40px; line-height: 46px; font-weight: 600; letter-spacing: -0.02em; "
-        "margin: 0 0 4px; }\n"
-        ".quiet { color: var(--ink-2); font-size: 21px; line-height: 32px; margin: 0 0 24px; }\n"
+        "h1 { font-size: 48px; line-height: 52px; font-weight: 700; letter-spacing: -0.025em; "
+        "margin: 0; }\n"
+        ".quiet { color: var(--ink-2); font-size: 21px; line-height: 32px; margin: 8px 0 0; }\n"
+        ".hero { margin-bottom: 40px; }\n"
         ".notice { margin: 0; font-size: 21px; line-height: 32px; color: var(--ink); }\n"
         ".failure { background: var(--panel); border-left: 4px solid var(--accent); "
         "border-radius: 16px; padding: 20px 24px; margin: 0 0 24px; "
@@ -178,7 +183,13 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "margin-top: 16px; min-height: 56px; background: var(--ink); color: var(--on-btn); "
         "border: 0; border-radius: 12px; padding: 14px 24px; }\n"
         "button.busy { background: var(--btn-busy); color: var(--on-btn); cursor: progress; }\n"
-        "form.pick { margin: 0 0 8px; }\n"
+        "form.search, form.pick { background: #ffffff; border: 1px solid #e8e8ed; "
+        "border-radius: 22px; padding: 24px 28px; max-width: 680px; "
+        "margin-left: auto; margin-right: auto; }\n"
+        ".search-row { display: flex; gap: 12px; align-items: center; }\n"
+        ".search-row input { flex: 1; min-width: 0; }\n"
+        ".search-row button { margin-top: 0; min-height: 60px; }\n"
+        "form.pick { margin: 0 auto 8px; }\n"
         "button.choice { display: block; width: 100%; text-align: left; font-weight: 400; "
         "background: var(--bg); color: var(--ink); border: 2px solid var(--line); margin: 0; "
         "min-height: 56px; padding: 14px 24px; }\n"
@@ -203,35 +214,50 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "animation: draw 240ms var(--ease-decel) forwards; }\n"
         ".sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; "
         "overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }\n"
-        ".rows + .rows { margin-top: 32px; }\n"
-        ".figure-block { padding: 16px 0; border-bottom: 1px solid var(--hairline); }\n"
-        ".row { display: grid; grid-template-columns: 1fr auto; column-gap: 24px; "
-        "align-items: baseline; padding: 0; }\n"
-        ".figure-block .row { border-bottom: 0; }\n"
-        ".row span { font-size: 21px; line-height: 30px; color: var(--ink); }\n"
-        "a { color: var(--accent); }\n"
-        "a.figure { color: var(--ink); font-size: 24px; line-height: 30px; font-weight: 600; "
-        "font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; "
-        "text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 4px; }\n"
-        "a.figure:hover, a.figure:focus-visible { text-decoration-color: var(--accent); }\n"
-        ".label { margin: 0; font-size: 21px; line-height: 30px; color: var(--ink); }\n"
-        ".fig { margin: 4px 0 0; }\n"
-        ".caption { margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; "
-        "color: #555559; }\n"
-        ".earlier { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto 1fr; "
-        "column-gap: 32px; margin-top: 12px; }\n"
-        ".earlier .c1 { grid-column: 1; }\n"
-        ".earlier .c2 { grid-column: 2; }\n"
-        ".earlier .h { grid-row: 1; margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; "
-        "color: #3a3a3c; text-wrap: balance; }\n"
-        ".earlier .d { grid-row: 2; margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; "
-        "color: #555559; text-wrap: balance; }\n"
-        ".earlier .v { grid-row: 3; margin: 4px 0 0; align-self: start; }\n"
-        ".earlier .na { grid-row: 2 / span 2; margin: 0; font-size: 18px; line-height: 27px; "
-        "color: #3a3a3c; align-self: start; }\n"
-        "a.prior-value { font-size: 21px; line-height: 30px; color: #3a3a3c; font-weight: 400; "
-        "font-variant-numeric: tabular-nums; white-space: nowrap; text-decoration: underline; "
-        "text-decoration-color: #86868b; text-underline-offset: 4px; }\n"
+        "h2 { font-size: 22px; line-height: 30px; font-weight: 600; color: var(--ink); "
+        "margin: 48px 0 16px; }\n"
+        ".hero + h2, h2:first-child { margin-top: 0; }\n"
+        ".grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }\n"
+        ".card { background: #ffffff; border: 1px solid #e8e8ed; border-radius: 22px; "
+        "padding: 28px 28px 16px; box-shadow: 0 1px 2px rgba(0,0,0,.04); "
+        "display: flex; flex-direction: column; "
+        "animation: rise 400ms var(--ease-decel) both; "
+        "animation-delay: calc(min(var(--c, 0), 6) * 60ms); }\n"
+        ".label { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: #3a3a3c; }\n"
+        ".caption { margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; color: #555559; }\n"
+        ".big { margin: 6px 0 0; }\n"
+        ".big a, a.figure { color: #1d1d1f; font-size: 44px; line-height: 52px; font-weight: 700; "
+        "letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; "
+        "text-decoration: underline; text-decoration-color: #c7c7cc; text-decoration-thickness: 2px; "
+        "text-underline-offset: 7px; }\n"
+        ".cmp { margin: 12px 0 0; font-size: 18px; line-height: 27px; color: #3a3a3c; font-weight: 400; }\n"
+        ".cmp a.pct { color: #0a4b8f; font-weight: 700; text-decoration: underline; "
+        "text-underline-offset: 3px; white-space: nowrap; }\n"
+        ".cmp a.per { color: #3a3a3c; text-decoration: underline; text-decoration-color: #86868b; "
+        "text-underline-offset: 3px; }\n"
+        ".chart { list-style: none; margin: 24px 0 0; padding: 20px 0 0; border-top: 1px solid #e6e6e8; "
+        "display: flex; flex-direction: column; gap: 18px; }\n"
+        ".bar-text { display: grid; grid-template-columns: 1fr auto; column-gap: 16px; align-items: baseline; }\n"
+        ".bh { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: #3a3a3c; }\n"
+        ".cur .bh { color: #1d1d1f; }\n"
+        ".bd { grid-column: 1 / -1; margin: 0; font-size: 18px; line-height: 27px; "
+        "font-weight: 400; color: #555559; }\n"
+        ".m6 { margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; color: #3a3a3c; }\n"
+        ".bv { margin: 0; }\n"
+        ".bv a { display: inline-block; min-height: 44px; padding: 8px 0; font-size: 18px; "
+        "line-height: 28px; font-weight: 600; color: #1d1d1f; font-variant-numeric: tabular-nums; "
+        "white-space: nowrap; text-decoration: underline; text-decoration-color: #86868b; "
+        "text-underline-offset: 3px; }\n"
+        ".bar-track { position: relative; height: 14px; margin-top: 8px; background: #ececf0; "
+        "border-radius: 0 7px 7px 0; }\n"
+        ".bar-track::before { content: \"\"; position: absolute; left: var(--zero, 0%); top: -4px; "
+        "bottom: -4px; width: 2px; background: #3a3a3c; border-radius: 1px; z-index: 1; }\n"
+        ".fill { position: absolute; top: 0; height: 100%; border-radius: 0 7px 7px 0; "
+        "background: #6f86a8; transform-origin: left center; "
+        "animation: grow 400ms var(--ease-standard) both; "
+        "animation-delay: calc(min(var(--c, 0), 6) * 60ms + var(--i, 0) * 60ms); }\n"
+        ".fill.neg { transform-origin: right center; }\n"
+        ".cur .fill { background: #0a4b8f; }\n"
         ".change-line { margin: 12px 0 0; font-size: 18px; line-height: 27px; color: #3a3a3c; "
         "font-weight: 400; }\n"
         ".change-line a { color: #0a4b8f; text-decoration: underline; text-underline-offset: 3px; "
@@ -239,14 +265,26 @@ def _shell(inner: str, *, result: bool = False) -> str:
         ".pct-note { display: none; margin: 8px 0 0; font-size: 18px; line-height: 27px; }\n"
         ".pct-note:target { display: block; }\n"
         ".pct-note a + a { margin-left: 16px; }\n"
-        ".filing { margin-top: 24px; }\n"
+        ".detail { display: grid; grid-template-rows: 0fr; opacity: 0; "
+        "transition: grid-template-rows 300ms var(--ease-standard), opacity 300ms var(--ease-standard); }\n"
+        ".detail.open { grid-template-rows: 1fr; opacity: 1; }\n"
+        ".detail-inner { overflow: hidden; }\n"
+        "a { color: var(--accent); }\n"
+        ".filing { margin-top: 40px; }\n"
         ".filing a, .change a { display: inline-block; min-height: 44px; padding: 8px 0; "
         "line-height: 28px; font-size: 21px; }\n"
         ".change { margin-top: 32px; font-size: 18px; line-height: 27px; }\n"
         ".change a { font-size: 18px; color: var(--ink-2); }\n"
-        "button.tap { display: inline-block; width: auto; min-height: 44px; margin: 8px 0 0; "
-        "background: var(--bg); color: var(--ink); border: 0; font-size: 18px; font-weight: 400; "
-        "text-align: left; padding: 8px 0; }\n"
+        "button.explain { display: inline-flex; align-items: center; gap: 8px; width: auto; "
+        "min-height: 44px; margin: 16px 0 0; padding: 8px 0; background: none; color: #0a4b8f; "
+        "border: 0; font-size: 18px; line-height: 27px; font-weight: 600; text-align: left; }\n"
+        "button.explain svg { width: 20px; height: 20px; fill: none; stroke: currentColor; "
+        "stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; "
+        "transition: transform 200ms var(--ease-standard); }\n"
+        "button.explain[aria-expanded='true'] svg { transform: rotate(180deg); }\n"
+        "h2 button.tap { display: inline-block; width: auto; min-height: 44px; margin: 0; "
+        "padding: 0; background: none; color: #1d1d1f; border: 0; font-size: 22px; "
+        "line-height: 30px; font-weight: 600; text-align: left; }\n"
         ".explain, .quality, .marker, h2, h3 { font-size: 21px; line-height: 32px; "
         "color: var(--ink); font-weight: 400; }\n"
         ".marker { font-weight: 600; }\n"
@@ -260,27 +298,27 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "@keyframes draw { to { stroke-dashoffset: 0; } }\n"
         "@keyframes rise { from { opacity: 0; transform: translateY(12px); } "
         "to { opacity: 1; transform: none; } }\n"
-        "body.result h1, body.result .quiet, body.result .rows, body.result .filing, "
-        "body.result .next { animation: rise 400ms var(--ease-decel) both; }\n"
-        "body.result .quiet { animation-delay: 60ms; }\n"
-        "body.result .rows:nth-of-type(1) { animation-delay: 120ms; }\n"
-        "body.result .rows:nth-of-type(2) { animation-delay: 180ms; }\n"
-        "body.result .filing { animation-delay: 240ms; }\n"
-        "body.result .next { animation-delay: 300ms; }\n"
+        "@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }\n"
+        "body.result .hero { animation: rise 400ms var(--ease-decel) both; animation-delay: 60ms; }\n"
+        "@media (max-width: 900px) {\n"
+        "  .grid { grid-template-columns: 1fr; }\n"
+        "}\n"
         "@media (max-width: 480px) {\n"
-        "  .disclaimer, .column { padding-left: 20px; padding-right: 20px; }\n"
-        "  h1 { font-size: 32px; line-height: 38px; }\n"
-        "  .row { grid-template-columns: 1fr; }\n"
-        "  .earlier { grid-template-columns: 1fr; grid-template-rows: none; }\n"
-        "  .earlier .h, .earlier .d, .earlier .v, .earlier .na { grid-column: 1; grid-row: auto; }\n"
-        "  .earlier .h.c2 { margin-top: 16px; }\n"
-        "  .earlier .v { margin-top: 0; }\n"
-        "  a.figure { text-align: left; margin-top: 4px; }\n"
+        "  .disclaimer, .top, .column { padding-left: 20px; padding-right: 20px; }\n"
+        "  .disclaimer { padding-top: 28px; }\n"
+        "  h1 { font-size: 34px; line-height: 40px; }\n"
+        "  .hero { margin-bottom: 28px; }\n"
+        "  .card { padding: 22px 20px 12px; border-radius: 18px; }\n"
+        "  .big a, a.figure { font-size: 36px; line-height: 44px; }\n"
+        "  form.search, form.pick { padding: 20px; }\n"
+        "  .search-row { flex-direction: column; }\n"
+        "  .search-row button { width: 100%; }\n"
         "}\n"
         "@media (prefers-reduced-motion: reduce) {\n"
-        "  .column, .failure, .steps, .steps.open, .steps.leave, body.result h1, "
-        "  body.result .quiet, body.result .rows, body.result .filing, body.result .next "
-        "  { animation: none; transition: none; opacity: 1; transform: none; }\n"
+        "  .column, .failure, .steps, .steps.open, .steps.leave, body.result .hero, .card, .fill, "
+        "  .detail, button.explain svg "
+        "  { animation: none; transition: none; }\n"
+        "  .card, .fill { opacity: 1; transform: none; }\n"
         "  .arc { animation: none; display: none; }\n"
         "  .mark-active .track { stroke: #0a4b8f; stroke-width: 4; }\n"
         "  .mark-active .dot { display: block; }\n"
@@ -434,17 +472,12 @@ def _shell(inner: str, *, result: bool = False) -> str:
         "      if (!panel) return;\n"
         '      var open = button.getAttribute("aria-expanded") === "true";\n'
         '      button.setAttribute("aria-expanded", open ? "false" : "true");\n'
-        "      panel.hidden = open;\n"
-        "    });\n"
-        "  });\n"
-        '  document.querySelectorAll("a.figure").forEach(function (link) {\n'
-        '    link.addEventListener("click", function (event) {\n'
-        "      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;\n"
-        '      var block = link.closest(".figure-block");\n'
-        '      var button = block ? block.querySelector("button.tap") : null;\n'
-        "      if (!button) return;\n"
-        "      event.preventDefault();\n"
-        "      button.click();\n"
+        '      if (panel.classList.contains("detail")) {\n'
+        '        panel.classList.toggle("open", !open);\n'
+        '        panel.setAttribute("aria-hidden", open ? "true" : "false");\n'
+        "      } else {\n"
+        "        panel.hidden = open;\n"
+        "      }\n"
         "    });\n"
         "  });\n"
         "})();\n"
@@ -461,7 +494,7 @@ def _shell(inner: str, *, result: bool = False) -> str:
 
 
 def _change_link() -> str:
-    return '<p class="change"><a href="/identity">Change my name and email</a></p>\n'
+    return f'<p class="change"><a href="/identity">{html.escape(EN["change_identity"])}</a></p>\n'
 
 
 def _hidden(token: str) -> str:
@@ -535,12 +568,14 @@ def _search_form(
 ) -> str:
     auto = " autofocus" if focus else ""
     return (
-        '<form method="post" action="/explain">\n'
+        '<form class="search" method="post" action="/explain">\n'
         + _hidden(token)
         + _notice(notice)
-        + '<p><label for="query">Company name or ticker</label></p>\n'
-        + f'<p><input id="query" name="query" autocomplete="off"{_value(query)}{auto}></p>\n'
-        + '<p><button type="submit">Explain</button></p>\n'
+        + f'<p><label for="query">{html.escape(EN["company_or_ticker"])}</label></p>\n'
+        + '<div class="search-row">'
+        + f'<input id="query" name="query" autocomplete="off"{_value(query)}{auto}>'
+        + f'<button type="submit">{html.escape(EN["explain"])}</button>'
+        + "</div>\n"
         + _steps_panel()
         + "</form>\n"
     )
@@ -554,14 +589,14 @@ def _identity_form(
     email: str = "",
 ) -> str:
     return (
-        '<form method="post" action="/identity">\n'
+        '<form class="search" method="post" action="/identity">\n'
         + _hidden(token)
         + _notice(notice)
-        + '<p><label for="name">Your name</label></p>\n'
+        + f'<p><label for="name">{html.escape(EN["your_name"])}</label></p>\n'
         + f'<p><input id="name" name="name" autocomplete="name" autofocus{_value(name)}></p>\n'
-        + '<p><label for="email">Your email</label></p>\n'
+        + f'<p><label for="email">{html.escape(EN["your_email"])}</label></p>\n'
         + f'<p><input id="email" name="email" type="email" autocomplete="email"{_value(email)}></p>\n'
-        + '<p><button type="submit">Save</button></p>\n'
+        + f'<p><button type="submit">{html.escape(EN["save"])}</button></p>\n'
         + "</form>\n"
     )
 
@@ -591,7 +626,7 @@ def edit_page(
     erase = (
         '<form method="post" action="/identity/erase">\n'
         + _hidden(token)
-        + '<p><button type="submit">Erase</button></p>\n'
+        + f'<p><button type="submit">{html.escape(EN["erase"])}</button></p>\n'
         + "</form>\n"
     )
     return _shell(
@@ -659,7 +694,7 @@ def _choice_label(company: object) -> str:
     if shown is None:
         shown = _ticker_cik(ticker, cik) or None
     if shown is None:
-        return "A company on the SEC list"
+        return EN["company_fallback"]
     return shown
 
 
@@ -711,8 +746,8 @@ def _leading_caption(rest: str) -> tuple[str, str]:
     return match.group(0), rest[: match.start()] + rest[match.end() :]
 
 
-def _split_earlier(after: str) -> tuple[str, str]:
-    marker = '<div class="earlier">'
+def _split_div(after: str, class_name: str) -> tuple[str, str]:
+    marker = f'<div class="{class_name}">'
     start = after.find(marker)
     if start < 0:
         return "", after
@@ -736,8 +771,21 @@ def _split_earlier(after: str) -> tuple[str, str]:
     return "", after
 
 
+_CHEVRON = (
+    '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"></path></svg>'
+)
+
+
 def _rows(explained_html: str, additions=None) -> str:
-    rows: list[str] = []
+    pieces: list[str] = []
+    grid: list[str] = []
+    index = 0
+
+    def flush() -> None:
+        if grid:
+            pieces.append('<div class="grid">' + "".join(grid) + "</div>\n")
+            grid.clear()
+
     for part in re.findall(r"<p\b[^>]*>.*?</p>", explained_html, flags=re.I | re.S):
         if 'class="disclaimer"' in part or "github.com" in part or "Report an error" in part:
             continue
@@ -759,45 +807,33 @@ def _rows(explained_html: str, additions=None) -> str:
             if after:
                 control = html.escape("explain-" + identifier, quote=True)
                 button = (
-                    f'<button type="button" class="tap" aria-expanded="false" '
-                    f'aria-controls="{control}">Explain</button>'
+                    f'<button type="button" class="explain tap" aria-expanded="false" '
+                    f'aria-controls="{control}">{html.escape(EN["explain"])}{_CHEVRON}</button>'
                 )
-        earlier, rest = _split_earlier(after)
-        if earlier:
-            caption, rest = _leading_caption(rest)
-            row = (
-                f'<p class="label">{html.escape(label)}</p>\n'
-                + caption
-                + f'<p class="fig"><a class="figure" href="{href}">{html.escape(amount)}</a></p>\n'
-                + f'<div class="earlier">{earlier}</div>\n'
-            )
-        else:
-            row = (
-                '<div class="row">'
-                f"<span>{html.escape(label)}</span>"
-                f'<a class="figure" href="{href}">{html.escape(amount)}</a>'
-                "</div>\n"
-            )
-        rows.append(
-            before
-            + '<div class="figure-block">'
-            + row
-            + rest
+        if before:
+            flush()
+            pieces.append(before)
+        face, detail = _split_div(after, "face")
+        caption, face = _leading_caption(face)
+        label_id = "lab-" + re.sub(r"[^a-z0-9]+", "-", identifier.lower())
+        grid.append(
+            f'<article class="card" style="--c:{index}" aria-labelledby="{label_id}">'
+            f'<h3 class="label" id="{label_id}">{html.escape(label)}</h3>'
+            + caption
+            + f'<p class="big"><a class="figure" href="{href}">{html.escape(amount)}</a></p>'
+            + face
             + button
-            + "</div>\n"
+            + detail
+            + "</article>\n"
         )
-    first, second = "".join(rows[:7]), "".join(rows[7:])
-    grouped = ""
-    if first:
-        grouped += f'<div class="rows">{first}</div>\n'
-    if second:
-        grouped += f'<div class="rows">{second}</div>\n'
-    return grouped
+        index += 1
+    flush()
+    return "".join(pieces)
 
 
 def _report_link() -> str:
     href = html.escape(ISSUE_URL, quote=True)
-    return f'<p class="change"><a href="{href}">Report an error</a></p>\n'
+    return f'<p class="change"><a href="{href}">{html.escape(EN["report_error"])}</a></p>\n'
 
 
 def _company_name(
@@ -852,13 +888,13 @@ def result_page(
     heading = f"<h1>{html.escape(name)}</h1>\n" if name else ""
     line = plain_report(form, period)
     quiet = f'<p class="quiet">{html.escape(line)}</p>\n' if line else ""
+    hero = f'<div class="hero">{heading}{quiet}</div>\n' if heading or quiet else ""
     filing = ""
     if url.startswith("https://www.sec.gov/") or url.startswith("https://data.sec.gov/"):
         href = html.escape(url, quote=True)
-        filing = f'<p class="filing"><a href="{href}">The filing</a></p>\n'
+        filing = f'<p class="filing"><a href="{href}">{html.escape(EN["the_filing"])}</a></p>\n'
     inner = (
-        heading
-        + quiet
+        hero
         + _rows(explained.html, additions)
         + additions.quality
         + filing

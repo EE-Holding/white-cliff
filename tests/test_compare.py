@@ -107,7 +107,8 @@ def test_apple_annual_revenue_rose_15_1_percent():
 
 
 def _shown(role, fact, last, year, measure):
-    return _comparison_block(role, fact, last, year, measure, "quarterly report", "2026-08-01")
+    face, lines = _comparison_block(role, fact, last, year, measure, "quarterly report", "2026-08-01")
+    return face + lines
 
 
 def test_a_column_the_form_cannot_carry_uses_the_filing_sentence():
@@ -220,7 +221,8 @@ def _column(fact):
 
 
 def _change_block(current, last, year, measure="money", role="revenue"):
-    return _comparison_block(role, current, last, year, measure, "quarterly report", "2026-08-01")
+    face, lines = _comparison_block(role, current, last, year, measure, "quarterly report", "2026-08-01")
+    return face + lines
 
 
 def _quarter(value, fact_id, start="2026-01-26", end="2026-04-26", role="revenue"):
@@ -323,7 +325,7 @@ def test_an_amount_only_change_says_it_was_higher_or_lower():
 
 
 def _column_heads(html_text: str) -> list[str]:
-    return re.findall(r'class="(?:caption|d c[12])">([^<]*)', html_text)
+    return re.findall(r'class="(?:caption|bd)">([^<]*)', html_text)
 
 
 def test_column_headers_name_the_period_and_do_not_call_a_year_to_date_a_quarter():
@@ -394,38 +396,34 @@ def test_comparison_markup_is_label_then_figure_then_the_two_cell_grid():
     assert "font-weight: 400" in caption_rule.group(1)
 
     def block_for(label: str) -> str:
-        start = page.find(f'<p class="label">{label}</p>')
+        start = page.find(f">{label}</h3>")
         assert start > 0
-        opening = page.rfind('<div class="figure-block">', 0, start)
-        closing = page.find('<div class="figure-block">', opening + 1)
+        opening = page.rfind("<article", 0, start)
+        closing = page.find("<article", opening + 1)
         return page[opening:closing]
 
     revenue = block_for("Revenue")
-    label_at = revenue.find('<p class="label">Revenue</p>')
+    label_at = revenue.find(">Revenue</h3>")
     figure_at = revenue.find('class="figure"')
-    grid_at = revenue.find('class="earlier"')
+    chart_at = revenue.find('class="chart"')
     change_at = revenue.find('class="change-line"')
-    assert 0 <= label_at < figure_at < grid_at < change_at
-    grid = revenue[grid_at:change_at]
-    assert grid.index('class="h c1"') < grid.index('class="d c1"') < grid.index('class="v c1"')
-    assert grid.index('class="v c1"') < grid.index('class="h c2"')
-    assert "Prior quarter" in grid
-    assert "Same quarter a year earlier" in grid
-    assert "Three months ended April 26, 2026" in grid
-    assert "$81,615 million" in grid
-    assert "Three months ended July 27, 2025" in grid
-    assert "$46,743 million" in grid
+    assert 0 <= label_at < figure_at < chart_at < change_at
+    assert "Prior quarter" in revenue
+    assert "Same quarter a year earlier" in revenue
+    assert "Three months ended April 26, 2026" in revenue
+    assert "$81,615 million" in revenue
+    assert "Three months ended July 27, 2025" in revenue
+    assert "$46,743 million" in revenue
 
     cash = block_for("Operating cash flow for the year to date")
     cash_figure = cash.find('class="figure"')
-    cash_grid = cash.find('class="earlier"')
+    cash_chart = cash.find('class="chart"')
     cash_caption = cash.find("Six months ended July 26, 2026")
-    assert cash.find('<p class="label">Operating cash flow for the year to date</p>') < cash_figure < cash_grid
-    assert cash_figure > cash_caption > 0
-    assert cash_caption < cash_grid
+    assert cash.find(">Operating cash flow for the year to date</h3>") < cash_figure < cash_chart
+    assert 0 < cash_caption < cash_chart
     assert (
-        '<p class="h c1">Prior quarter</p>'
-        '<p class="na c1" data-template="M6">'
+        '<p class="bh">Prior quarter</p></div>'
+        '<p class="m6" data-template="M6">'
         "Operating cash flow for the prior quarter is not available for this filing.</p>"
     ) in cash
     assert "Same six months a year earlier" in cash
@@ -502,39 +500,44 @@ def _apple_page() -> str:
 
 
 def _figure_blocks(page: str) -> list[str]:
-    return re.findall(r'<div class="figure-block">.*?(?=<div class="figure-block">|$)', page, flags=re.S)
+    return re.findall(r"<article class=\"card\".*?</article>", page, flags=re.S)
 
 
 def test_heads_keep_a_caption_and_the_missing_quarter_keeps_its_head():
     nvidia = _nvidia_page()
-    revenue = next(block for block in _figure_blocks(nvidia) if ">Revenue</p>" in block)
-    assert '<p class="h c1">Prior quarter</p><p class="d c1">Three months ended April 26, 2026</p>' in revenue
-    assert (
-        '<p class="h c2">Same quarter a year earlier</p>'
-        '<p class="d c2">Three months ended July 27, 2025</p>'
-    ) in revenue
+    revenue = next(block for block in _figure_blocks(nvidia) if ">Revenue</h3>" in block)
+    assert '<p class="bh">Prior quarter</p>' in revenue
+    assert "Three months ended April 26, 2026" in revenue
+    assert '<p class="bh">Same quarter a year earlier</p>' in revenue
+    assert "Three months ended July 27, 2025" in revenue
     cash = next(block for block in _figure_blocks(nvidia) if "year to date" in block)
-    assert '<p class="h c1">Prior quarter</p><p class="na c1" data-template="M6">' in cash
+    assert '<p class="bh">Prior quarter</p>' in cash
+    assert 'data-template="M6"' in cash
     assert "Same six months a year earlier" in cash
-    assert "quarter" not in re.search(r'class="h c2">([^<]+)', cash).group(1).lower()
+    rights = [head for head in re.findall(r'class="bh">([^<]+)', cash) if head != "Prior quarter"]
+    assert rights
+    assert all("quarter" not in head.lower() for head in rights)
     style = nvidia.split("</style>", 1)[0]
-    missing = re.search(r"\.earlier \.na \{([^}]*)\}", style)
+    missing = re.search(r"\.m6 \{([^}]*)\}", style)
     assert missing is not None
     assert "#3a3a3c" in missing.group(1)
     assert "#555559" not in missing.group(1)
-    assert "body.result .disclaimer, body.result .column { max-width: 680px; }" in style
+    assert "max-width: 1160px" in style
     for banned in ("Last quarter", "A year ago", "Last year"):
         assert banned not in nvidia
 
     nine_now = _quarter("90", "ninenowhead", "2025-10-27", "2026-07-26")
     nine_then = _quarter("80", "ninethenhead", "2024-10-28", "2025-07-27")
     missing_left = Cell(False, basis="structural", missing_period="the prior quarter")
-    nine = _comparison_block(
+    nine_face, nine_lines = _comparison_block(
         "revenue", nine_now, missing_left, _column(nine_then), "money", "quarterly report", "2026-08-01", form="10-Q"
     )
-    assert '<p class="h c2">Same nine months a year earlier</p>' in nine
+    nine = nine_face + nine_lines
+    assert '<p class="bh">Same nine months a year earlier</p>' in nine
     assert "Nine months ended July 27, 2025" in nine
-    assert "quarter" not in re.search(r'class="h c2">([^<]+)', nine).group(1).lower()
+    rights = [head for head in re.findall(r'class="bh">([^<]+)', nine) if head != "Prior quarter"]
+    assert rights
+    assert all("quarter" not in head.lower() for head in rights)
 
     quarter = make_fact("300", start="2026-01-27", end="2026-04-26", fact_id="q1headrevenuenow")
     quarter_year = make_fact("250", start="2025-01-27", end="2025-04-27", fact_id="q1headrevenueyr")
@@ -547,14 +550,18 @@ def test_heads_keep_a_caption_and_the_missing_quarter_keeps_its_head():
         fiscal_year_end="--01-31",
         facts=[quarter, quarter_year],
     )
-    q1 = _comparison_block("revenue", quarter, q_last, q_year, "money", "quarterly report", "2026-06-01", form="10-Q")
-    assert '<p class="h c1">Prior quarter</p><p class="na c1" data-template="M6">' in q1
-    assert '<p class="h c2">Same quarter a year earlier</p>' in q1
+    q1_face, q1_lines = _comparison_block(
+        "revenue", quarter, q_last, q_year, "money", "quarterly report", "2026-06-01", form="10-Q"
+    )
+    q1 = q1_face + q1_lines
+    assert '<p class="bh">Prior quarter</p>' in q1
+    assert 'data-template="M6"' in q1
+    assert '<p class="bh">Same quarter a year earlier</p>' in q1
     assert "Three months ended April 27, 2025" in q1
 
     apple = _apple_page()
-    assert '<p class="h c1">Prior quarter</p>' in apple
-    assert '<p class="h c2">Prior year</p>' in apple
+    assert '<p class="bh">Prior quarter</p>' in apple
+    assert '<p class="bh">Prior year</p>' in apple
     assert "Same quarter a year earlier" not in apple
     assert "Same six months a year earlier" not in apple
     assert "Last quarter" not in apple and "A year ago" not in apple and "Last year" not in apple
@@ -575,7 +582,7 @@ def test_every_percent_link_resolves_to_both_of_its_inputs():
             continue
         figure = re.search(r'<a class="figure" href="([^"]+)"', block)
         assert figure is not None
-        priors = re.findall(r'<a class="prior-value" href="([^"]+)"', block)
+        priors = re.findall(r'<p class="bv"><a href="([^"]+)"', block)
         for line in lines:
             percents = re.findall(r'<a class="pct" href="#(pct-[0-9a-f]+)">(.*?)</a>', line)
             if not percents:
