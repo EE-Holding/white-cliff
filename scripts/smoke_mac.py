@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import platform
@@ -251,29 +252,14 @@ def _crop_png(data: bytes, height: int) -> bytes:
     return _png_bytes(width, height, color, bit_depth, rows[:height])
 
 
-def _stack_pngs(parts: list[bytes], total_height: int) -> bytes:
-    """Join viewport pictures into one page. The last picture is cropped so nothing repeats."""
-    decoded = [_png_rows(part) for part in parts]
-    width = decoded[0][0]
-    if any(item[0] != width for item in decoded):
-        raise PageError("the page pictures are not the same width")
-    color, bit_depth = decoded[0][2], decoded[0][3]
-    rows: list[bytes] = []
-    for _width, _height, _color, _depth, part_rows in decoded:
-        rows.extend(part_rows)
-    if len(rows) > total_height:
-        rows = rows[:total_height]
-    if len(rows) < total_height:
-        raise PageError(f"the page picture is {len(rows)}px tall and the page is {total_height}px")
-    return _png_bytes(width, len(rows), color, bit_depth, rows)
-
-
 def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
-    """Size the real window and the layout viewport together, so the picture is not tiled."""
-    width = int(width)
-    height = int(height)
+    """Give headless Chrome a real window. Old headless rejects the metrics call."""
     try:
-        page.call("Emulation.clearDeviceMetricsOverride")
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
+        )
+        return
     except PageError:
         pass
     try:
@@ -287,94 +273,6 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
         )
     except PageError:
         pass
-    try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
-        )
-    except PageError:
-        pass
-
-
-def _capture(page: DevTools) -> bytes:
-    """The viewport as it is laid out. No clip, so a resize cannot be thrown away."""
-    try:
-        result = page.call(
-            "Page.captureScreenshot",
-            {"format": "png", "fromSurface": False, "optimizeForSpeed": True},
-            timeout=60,
-        )
-    except PageError:
-        result = page.call(
-            "Page.captureScreenshot",
-            {"format": "png", "optimizeForSpeed": True},
-            timeout=60,
-        )
-    return base64.b64decode(result["data"])
-
-
-def _screen_height(page: DevTools) -> int:
-    """A window taller than the display is photographed as repeated tiles on Intel."""
-    try:
-        raw = _eval(page, "screen.availHeight || screen.height || 0")
-        screen = int(raw) if isinstance(raw, (int, float)) else 0
-    except PageError:
-        screen = 0
-    if screen < 500:
-        screen = 864
-    return max(400, min(screen - 64, 900))
-
-
-def _tiled(data: bytes) -> bool:
-    """True when one screen-sized picture has been repeated to fill a taller window."""
-    try:
-        _width, height, _color, _depth, rows = _png_rows(data)
-    except PageError:
-        return False
-    if height < 1000:
-        return False
-    for period in range(700, min(height - 40, 1200)):
-        if rows[40:70] != rows[period : period + 30]:
-            continue
-        if len(set(rows[40])) <= 8:
-            continue
-        return True
-    return False
-
-
-def _paint(page: DevTools) -> None:
-    _eval(
-        page,
-        """
-        new Promise((resolve) => {
-          let done = false;
-          const finish = () => { if (!done) { done = true; resolve(true); } };
-          requestAnimationFrame(() => requestAnimationFrame(finish));
-          setTimeout(finish, 200);
-        })
-        """,
-    )
-
-
-def _frame(page: DevTools) -> bytes:
-    """The current viewport. The first frame of a tall window can be a repeated tile."""
-    _paint(page)
-    data = _capture(page)
-    if not _tiled(data):
-        return data
-    time.sleep(0.2)
-    _paint(page)
-    return _capture(page)
-
-
-def _picture(page: DevTools, width: int, height: int) -> bytes:
-    """Size the window, then photograph that viewport."""
-    _fit(page, width, height)
-    data = _frame(page)
-    if not _tiled(data):
-        return data
-    _fit(page, width, _screen_height(page))
-    return _frame(page)
 
 
 def _shot(
@@ -388,56 +286,72 @@ def _shot(
 ) -> Path:
     last: Exception | None = None
     for _ in range(2):
+        fresh = page if full else DevTools(page.ws_url)
         try:
+            if not full:
+                fresh.call("Page.enable")
+                fresh.call("Runtime.enable")
             if full:
                 try:
-                    _motion(page, "reduce")
+                    _motion(fresh, "reduce")
                 except PageError:
                     pass
-            view_height = _screen_height(page) if full else height
-            _fit(page, width, view_height)
-            _eval(page, "window.scrollTo(0, 0)")
+            _window(fresh, width, height)
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                try:
+                    if _eval(fresh, "window.innerWidth") == width:
+                        break
+                except PageError:
+                    pass
+                _window(fresh, width, height)
+                time.sleep(0.1)
+            fresh.call(
+                "Runtime.evaluate",
+                {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
+            )
             if full:
                 raw = _eval(
-                    page,
+                    fresh,
                     "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
                 )
-                total = int(raw) if isinstance(raw, (int, float)) else view_height
-                view = int(_eval(page, "window.innerHeight") or 0)
-                data = _frame(page)
-                if view < total:
-                    rows: list[bytes] = []
-                    color = bit_depth = 0
-                    seen = 0
-                    while seen < total:
-                        _eval(page, f"window.scrollTo(0, {seen})")
-                        time.sleep(0.05)
-                        actual = int(_eval(page, "window.scrollY") or 0)
-                        _width, _png_height, color, bit_depth, part = _png_rows(_frame(page))
-                        if _width != width:
-                            raise PageError(f"{name} is {_width}px wide, wanted {width}")
-                        start = max(seen - actual, 0)
-                        rows.extend(part[start:])
-                        seen = actual + len(part)
-                        if not part or seen <= actual:
-                            break
-                    if len(rows) < total:
-                        if rows and total - len(rows) <= 4:
-                            rows.extend([rows[-1]] * (total - len(rows)))
-                        else:
-                            raise PageError(f"{name} is {len(rows)}px tall and the page is {total}px")
-                    data = _png_bytes(width, total, color, bit_depth, rows[:total])
+                if isinstance(raw, (int, float)) and raw > height:
+                    height = int(raw)
+                _window(fresh, width, height)
+                result = fresh.call(
+                    "Page.captureScreenshot",
+                    {"format": "png", "optimizeForSpeed": True},
+                    timeout=60,
+                )
+                data = base64.b64decode(result["data"])
             else:
-                data = _picture(page, width, height)
-            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-            if len(data) < 1000 or got != width:
-                raise PageError(f"{name} is {got}px wide, wanted {width}")
+                result = fresh.call(
+                    "Page.captureScreenshot",
+                    {"format": "png", "optimizeForSpeed": True},
+                    timeout=8,
+                )
+                data = base64.b64decode(result["data"])
+                got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+                if len(data) < 1000 or got != width:
+                    result = fresh.call(
+                        "Page.captureScreenshot",
+                        {
+                            "format": "png",
+                            "captureBeyondViewport": True,
+                            "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
+                        },
+                        timeout=20,
+                    )
+                    data = base64.b64decode(result["data"])
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
+        finally:
+            if fresh is not page:
+                fresh.close()
     raise PageError(last)
 
 
@@ -592,17 +506,28 @@ def _spinning(page: DevTools) -> bool:
 
 
 def _grab(page: DevTools, directory: Path, name: str, width: int = 0, height: int = 0, top: int = 0) -> Path:
-    """Photograph the current viewport. Nothing here evaluates script, so a paused page still works."""
+    """Photograph the page as it is. A new connection, and no clip, so a paused page still works."""
     del top
     last: Exception | None = None
     for _ in range(2):
+        fresh = DevTools(page.ws_url)
         try:
+            fresh.call("Page.enable")
+            fresh.call("Runtime.enable")
             if width:
-                _window(page, width, max(height, 900))
-            data = _capture(page)
-            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-            if len(data) < 1000 or (width and got != width):
-                raise PageError(f"{name} is {got}px wide, wanted {width}")
+                _window(fresh, width, max(height, 900))
+            result = fresh.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=20,
+            )
+            data = base64.b64decode(result["data"])
+            if len(data) < 1000:
+                raise PageError(f"{name} was empty")
+            if width:
+                got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+                if got != width:
+                    raise PageError(f"{name} is {got}px wide, wanted {width}")
             if height:
                 png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
                 if png_height > height:
@@ -613,7 +538,47 @@ def _grab(page: DevTools, directory: Path, name: str, width: int = 0, height: in
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
+        finally:
+            fresh.close()
     raise PageError(last)
+
+
+def _blank(data: bytes) -> bool:
+    """A picture with almost no ink above the bottom edge. A black bar there does not count."""
+    try:
+        width, height, color, _depth, rows = _png_rows(data)
+    except PageError:
+        return True
+    channels = {0: 1, 2: 3, 6: 4}.get(color)
+    if channels is None or width < 50 or height < 50:
+        return True
+    limit = max(1, int(height * 0.9))
+    dark = sampled = 0
+    for row in rows[:limit:8]:
+        for column in range(0, width, 8):
+            start = column * channels
+            pixel = row[start : start + min(3, channels)]
+            sampled += 1
+            if pixel and min(pixel) < 180:
+                dark += 1
+    return sampled == 0 or dark * 500 < sampled
+
+
+def _distinct(directory: Path) -> None:
+    """Fail when two smoke pictures are the same file or one of them is blank."""
+    seen: dict[str, str] = {}
+    shots = sorted(directory.glob("smoke-*.png"))
+    if len(shots) < 2:
+        raise PageError("the smoke pictures were not written")
+    for path in shots:
+        data = path.read_bytes()
+        if _blank(data):
+            raise PageError(f"{path.name} is blank")
+        digest = hashlib.sha256(data).hexdigest()
+        previous = seen.get(digest)
+        if previous:
+            raise PageError(f"{path.name} is the same picture as {previous}")
+        seen[digest] = path.name
 
 
 def _loading(page: DevTools) -> bool:
@@ -846,6 +811,7 @@ def drive(
             raise PageError("the reduced-motion steps were not shown")
         _wait_result(page, out_dir, heading, suffix, loading=False, capture=False)
         _german_shots(page, out_dir, url, query, heading)
+        _distinct(out_dir)
     finally:
         page.close()
         if chrome.poll() is None:
@@ -916,7 +882,7 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
         )
         raise PageError(f"the German share card was not on the page: {labels}")
     _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
-    _grab(page, directory, name, width, max(int(box["height"]) + 16, 280))
+    _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
 
 
 def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: int) -> None:
@@ -997,7 +963,7 @@ def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: st
     if not isinstance(box, dict):
         raise PageError(f"the German {kind} picture was not on the page")
     _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
-    _grab(page, directory, name, width, max(int(box["height"]) + 16, 280))
+    _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
 
 
 def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:

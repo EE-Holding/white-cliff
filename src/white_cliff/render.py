@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlsplit, urlunsplit
 
 from white_cliff.disclaimer import DISCLAIMER, ISSUE_URL, OutputRefused, ensure_safe_output
@@ -53,7 +54,8 @@ def _markdown_chip(label: str, url: str, title: str) -> str:
 
 def _shown(value, unit: str) -> str:
     if unit == "percent":
-        return f"{value:.1f}"
+        rounded = value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        return f"{rounded:.1f}"
     return format_decimal(value)
 
 

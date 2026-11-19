@@ -157,7 +157,7 @@ def margin(numerator: Fact, denominator: Fact, name: str = "margin") -> Calculat
         raise FormulaError("mismatched periods")
     if denominator.value == 0:
         raise FormulaError("division by zero")
-    value = _percent(numerator.value / denominator.value)
+    value = numerator.value / denominator.value * Decimal("100")
     return _build(
         name,
         "(numerator / denominator)",

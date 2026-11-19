@@ -35,6 +35,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     'E2.formula.div': ('{a} divided by {b}', '{a} geteilt durch {b}'),
     'E2.formula.minus': ('{a} minus {b}', '{a} minus {b}'),
     'E2.formula.yoy': ('({a} in {period} minus {a} in {period_prev}), divided by {a} in {period_prev}', '({a} im {period} minus {a} im {period_prev}), geteilt durch {a} im {period_prev}'),
+    'H6.e2': ('For {company}, {line} was {amount} at {date}. It came from the Balance sheet.', 'Bei {company} lag die Position „{line}“ zum {date} bei {amount}. Der Wert stammt aus der Bilanz.'),
     'E3': ('The filing says: \\"{quote}\\"', 'Im Bericht heißt es (Originalsprache Englisch): \\"{quote}\\"'),
     'SECTION.tap': ("This section shows {list of line items} from the {statement name} in {company}'s {form} for {period}.", 'Dieser Abschnitt zeigt {list of line items} im {period}, entnommen aus der {statement name} im Bericht ({form}) von {company}.'),
     'Q.limit': ("This check is arithmetic on the filing's own numbers. It does not say whether the numbers are right or wrong, and it is not an audit.", 'Dieser Abgleich ist eine Rechnung mit den eigenen Zahlen des Berichts. Er sagt nicht, ob die Zahlen richtig oder falsch sind, und er ist keine Abschlussprüfung.'),

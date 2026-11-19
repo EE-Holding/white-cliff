@@ -399,7 +399,7 @@ def comparable_duration(left: Fact, right: Fact) -> bool:
 def margin_value(numerator: Decimal, denominator: Decimal) -> Decimal | None:
     if denominator == 0:
         return None
-    return (numerator / denominator * Decimal(100)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return numerator / denominator * Decimal(100)
 
 
 def points_change(current: Decimal, prior: Decimal) -> Decimal:

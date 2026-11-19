@@ -7,12 +7,12 @@ import html
 import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlsplit
 
 from white_cliff.advice import advice_reason
 from white_cliff.checks import ONE_OFF, CheckResult, run_checks
-from white_cliff.compare import Cell, columns_for, percent_change
+from white_cliff.compare import Cell, columns_for, percent_change, points_change
 from white_cliff.explain import _lead, _span, statement_name
 from white_cliff.facts import Fact, format_decimal
 from white_cliff.german import format_measure, german_hit
@@ -363,20 +363,6 @@ def period_phrase(kind: str, start: str | None, end: str) -> str:
     return f"the period ended {when}"
 
 
-def _snapshot_heading(end: str, form: str) -> str:
-    """A balance-sheet bar is titled by the period, the same way a duration bar is."""
-    when = long_date(end) if end else ""
-    if not when:
-        return ""
-    if form == "10-K":
-        if german():
-            return phrase("COL.12m").replace("{date}", when)
-        return f"Year ended {when}"
-    if german():
-        return phrase("COL.3m").replace("{date}", when)
-    return f"Three months ended {when}"
-
-
 def column_header(kind: str, start: str | None, end: str) -> str:
     """The column name. The date is the period end, written as the filing states it."""
     when = long_date(end) if end else ""
@@ -404,6 +390,8 @@ def column_header(kind: str, start: str | None, end: str) -> str:
 
 def show_measure(value: Decimal, unit: str) -> str:
     """Every displayed measure, including a per-share amount, goes through one formatter."""
+    if unit in {"percent", "percentage points"}:
+        value = value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
     if german():
         return format_measure(value, unit)
     if unit == "percent":
@@ -583,7 +571,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = (current.value - prior.value).quantize(Decimal("0.1"))
+        delta = points_change(current.value, prior.value)
         if delta == 0:
             return [[
                 ("text", f"{figure} was unchanged from "),
@@ -687,7 +675,7 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = (current.value - prior.value).quantize(Decimal("0.1"))
+        delta = points_change(current.value, prior.value)
         if delta == 0:
             return [[
                 ("text", f"Der Wert der Position „{figure}“ blieb gegenüber dem "),
@@ -770,7 +758,7 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = (current.value - prior.value).quantize(Decimal("0.1"))
+        delta = points_change(current.value, prior.value)
         if delta == 0:
             return [[
                 ("text", f"{figure} was unchanged from "),
@@ -882,8 +870,6 @@ def _comparison_block(
     chunks: list[str] = []
     _append_changes(chunks, label, current, last, year, measure, form_words, filed)
     current_caption = column_header(current.kind, current.period_start, current.period_end)
-    if current.kind == "instant":
-        current_caption = _snapshot_heading(current.period_end, form)
     named = ""
     if _span_key(current.kind, current.period_start, current.period_end) in {"6", "9"}:
         named = f'<p class="caption">{html.escape(current_caption)}</p>\n'
@@ -1369,11 +1355,62 @@ def _explain_amount(role: str, fact: Fact, inputs: list[tuple[str, Fact]]) -> tu
     return _link_fact(fact)
 
 
+def _filled_parts(ident: str, text_slots: dict[str, str], link_slots: dict[str, tuple]) -> list[tuple]:
+    """Fill one cleared sentence. Linked slots stay links; the words stay the template."""
+    template = phrase(ident)
+    parts: list[tuple] = []
+    cursor = 0
+    for match in re.finditer(r"\{([^{}]+)\}", template):
+        if match.start() > cursor:
+            parts.append(("text", template[cursor : match.start()]))
+        key = match.group(1)
+        parts.append(link_slots[key] if key in link_slots else ("text", text_slots[key]))
+        cursor = match.end()
+    if cursor < len(template):
+        parts.append(("text", template[cursor:]))
+    return parts
+
+
 def _explain_block(role: str, fact: Fact, company: str, statement: str, formula: str, inputs: list[tuple[str, Fact]]) -> str:
     label = label_for(role, fact)
     definition = DEFINITIONS.get(role, "a figure reported in the filing")
     period = period_phrase(fact.period.kind, fact.period.start, fact.period.end or "")
     amount = _explain_amount(role, fact, inputs)
+    if fact.period.kind == "instant":
+        line = label
+        if role == "net_debt" and not german() and len(inputs) >= 2:
+            from white_cliff.explain import _net_debt_phrase
+
+            named = _net_debt_phrase(inputs[0][1], inputs[1][1])
+            if named:
+                line = named
+        sentence = _filled_parts(
+            "H6.e2",
+            {"company": company, "line": line},
+            {"amount": amount, "date": _period_link(long_date(fact.period.end or ""), fact)},
+        )
+        if german():
+            parts = []
+            if role == "operating_cash_flow":
+                parts.append(_parts_html("E1", [("text", phrase("E1.example"))]))
+            parts.append(_parts_html("E2", sentence))
+            if formula:
+                parts.append(_parts_html("E2", [("text", phrase("E2.formula.label") + " " + formula)]))
+            return "".join(parts)
+        parts = [
+            _parts_html("E1", [("text", f"{label} is {definition}.")]),
+            _parts_html("E2", sentence),
+        ]
+        if formula and inputs:
+            input_parts: list[tuple] = [("text", f"It is calculated as {formula}, using ")]
+            for index, (name, source) in enumerate(inputs):
+                if index:
+                    input_parts.append(("text", " and " if index == len(inputs) - 1 else ", "))
+                input_parts.append(("text", f"{_input_name(name)} of "))
+                input_parts.append(_link_fact(source))
+            input_parts.append(("text", "."))
+            parts.append(_parts_html("E2", input_parts))
+        return "".join(parts)
     if german():
         parts = []
         if role == "operating_cash_flow":

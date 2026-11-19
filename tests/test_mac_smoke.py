@@ -63,8 +63,9 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert "smoke-{ARCH}-19-de-checks-1280.png" in driver
     assert "smoke-{ARCH}-20-de-explain-1280.png" in driver
     assert "German did not survive a restart" in driver
-    assert "fromSurface" in driver
-    assert "captureBeyondViewport" not in driver
+    assert "is blank" in driver
+    assert "is the same picture as" in driver
+    assert "fromSurface" not in driver
     assert "getBoundingClientRect" in driver
     assert "prefers-reduced-motion" in driver
     assert "Page.navigate" in driver

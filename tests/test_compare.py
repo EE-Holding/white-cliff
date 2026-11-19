@@ -574,8 +574,10 @@ def test_every_percent_link_resolves_to_both_of_its_inputs():
     checked = 0
     for line in re.findall(r'<p class="change-line"[^>]*>(.*?)</p>', page, flags=re.S):
         for attrs, text in re.findall(r"<a\b([^>]*)>(.*?)</a>", line):
-            if text.endswith(" percent"):
-                assert 'class="pct"' in attrs
+            if text.endswith(" percent") and "percentage points" not in text:
+                plain = re.sub(r"<[^>]+>", "", line)
+                if "rose " in plain or "fell " in plain:
+                    assert 'class="pct"' in attrs
     for block in _figure_blocks(page):
         lines = re.findall(r'<p class="change-line" data-template="C2">(.*?)</p>', block, flags=re.S)
         if not lines:

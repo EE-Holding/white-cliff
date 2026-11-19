@@ -1,6 +1,6 @@
 import json
 import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -43,7 +43,10 @@ def _audit_markdown(markdown: str, store) -> None:
                 assert fact.source.char_start is not None
             elif kind == "calc":
                 calc = store.get_calc(identifier)
-                assert calc.value == parsed
+                shown = calc.value
+                if calc.unit == "percent":
+                    shown = shown.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+                assert shown == parsed
                 assert calc.formula
                 assert calc.input_ids
                 assert calc.name in markdown
@@ -75,7 +78,11 @@ def _audit_html(document: str, store) -> None:
         if kind == "fact":
             assert store.get(identifier).value == parsed
         else:
-            assert store.get_calc(identifier).value == parsed
+            calc = store.get_calc(identifier)
+            shown = calc.value
+            if calc.unit == "percent":
+                shown = shown.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+            assert shown == parsed
         assert "fact=" in href or "calc=" in href
         assert f'data-id="{identifier}"' in document
     cleaned = re.sub(r"<data\b[^>]*>[^<]*</data>", "", document)
