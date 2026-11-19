@@ -5,6 +5,7 @@ import importlib.util
 import re
 import shutil
 import subprocess
+import zlib
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -381,6 +382,70 @@ def test_readable_pdf_text_fails_when_a_page_lacks_the_disclaimer(monkeypatch):
         },
     )
     driver._require_disclaimer_on_every_page(object(), b"/Type /Page /Type /Page")
+
+
+def _stream(dictionary: str, text: bytes) -> bytes:
+    raw = zlib.compress(text)
+    return f"<< {dictionary} /Length {len(raw)} >>\nstream\n".encode() + raw + b"\nendstream"
+
+
+def _pdf(parts: list[bytes]) -> bytes:
+    chunks = [b"%PDF-1.4\n"]
+    for index, part in enumerate(parts, start=1):
+        chunks.append(f"{index} 0 obj\n".encode() + part + b"\nendobj\n")
+    return b"".join(chunks)
+
+
+def _glyph_header() -> tuple[bytes, bytes]:
+    phrase = "This tool explains the numbers"
+    rows = [f"<{index + 1:04x}> <{ord(char):04x}>" for index, char in enumerate(phrase)]
+    cmap = (
+        "begincmap\r\n"
+        f"{len(rows)} beginbfchar\r\n"
+        + "\r\n".join(rows)
+        + "\r\nendbfchar\r\nendcmap\r\n"
+    ).encode()
+    shown = "\n".join(f"<{index + 1:04x}> Tj" for index in range(len(phrase)))
+    return cmap, f"0 792 cm\n{shown}\n".encode()
+
+
+def test_a_painted_form_is_part_of_its_page_only():
+    """A repeated header is a form drawn on a page. A form is not a page by itself."""
+    driver = _driver()
+    cmap, header = _glyph_header()
+    body = b"(Revenue was one hundred million dollars in the quarter ended July.) Tj\n"
+    decoy = b"0 792 cm\n(Revenue was one hundred million dollars in the quarter ended July.) Tj\n"
+    pdf = _pdf(
+        [
+            _stream("/Type /XObject /Subtype /Form", cmap),
+            _stream("/Type /XObject /Subtype /Form", header),
+            _stream("/Type /XObject /Subtype /Form", body),
+            _stream("/Type /XObject /Subtype /Form", decoy),
+            _stream("", b"0 792 cm\n/H Do\n/B Do\n"),
+            _stream("", b"0 792 cm\n/B Do\n"),
+            b"<< /Type /Page /Resources << /XObject << /H 2 0 R /B 3 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Page /Resources << /XObject << /H 2 0 R /B 3 0 R >> >> /Contents 6 0 R >>",
+        ]
+    )
+    texts = driver._pdf_page_texts(pdf)
+    assert len(texts) == 2
+    assert "This tool explains the numbers" in " ".join(texts[0].split())
+    assert "Revenue was one hundred million" in " ".join(texts[0].split())
+    assert "This tool explains the numbers" not in " ".join(texts[1].split())
+    assert driver._read_disclaimer_pages(texts) == "a printed page does not carry the disclaimer"
+    both = _pdf(
+        [
+            _stream("/Type /XObject /Subtype /Form", cmap),
+            _stream("/Type /XObject /Subtype /Form", header),
+            _stream("/Type /XObject /Subtype /Form", body),
+            _stream("/Type /XObject /Subtype /Form", decoy),
+            _stream("", b"0 792 cm\n/H Do\n/B Do\n"),
+            _stream("", b"0 792 cm\n/H Do\n/B Do\n"),
+            b"<< /Type /Page /Resources << /XObject << /H 2 0 R /B 3 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Page /Resources << /XObject << /H 2 0 R /B 3 0 R >> >> /Contents 6 0 R >>",
+        ]
+    )
+    assert driver._read_disclaimer_pages(driver._pdf_page_texts(both)) == ""
 
 
 def test_a_sec_url_is_not_split_across_printed_pages():

@@ -650,24 +650,123 @@ def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
         raise PageError("the disclaimer does not repeat on each printed page")
 
 
+def _pdf_objects(data: bytes) -> dict[int, tuple[bytes, bytes | None]]:
+    """Object number to (dictionary, decoded stream). A stream stays with the page that draws it."""
+    integers = {
+        int(match.group(1)): int(match.group(2))
+        for match in re.finditer(rb"(\d+)\s+\d+\s+obj\s+(\d+)\s+endobj", data)
+    }
+    objects: dict[int, tuple[bytes, bytes | None]] = {}
+    cursor = 0
+    while True:
+        match = re.search(rb"(\d+)\s+\d+\s+obj\b", data[cursor:])
+        if match is None:
+            break
+        number = int(match.group(1))
+        start = cursor + match.end()
+        endobj = data.find(b"endobj", start)
+        if endobj < 0:
+            break
+        window = data[start:endobj]
+        stream_at = re.search(rb"stream\r?\n", window)
+        if stream_at is None:
+            objects[number] = (window, None)
+            cursor = endobj + len(b"endobj")
+            continue
+        dictionary = window[: stream_at.start()]
+        raw_at = start + stream_at.end()
+        indirect = re.search(rb"/Length\s+(\d+)\s+\d+\s+R", dictionary)
+        direct = re.search(rb"/Length\s+(\d+)\b", dictionary)
+        if indirect:
+            length = integers.get(int(indirect.group(1)), 0)
+            raw = data[raw_at : raw_at + length]
+            cursor = data.find(b"endobj", raw_at + length)
+        elif direct:
+            length = int(direct.group(1))
+            raw = data[raw_at : raw_at + length]
+            cursor = data.find(b"endobj", raw_at + length)
+        else:
+            endstream = data.find(b"endstream", raw_at)
+            raw = data[raw_at:endstream].strip(b"\r\n")
+            cursor = data.find(b"endobj", endstream)
+        if cursor < 0:
+            break
+        decoded: bytes | None
+        if b"FlateDecode" in dictionary or raw.startswith((b"\x78\x9c", b"\x78\xda", b"\x78\x01")):
+            try:
+                decoded = zlib.decompress(raw)
+            except zlib.error:
+                decoded = None
+        else:
+            decoded = raw
+        objects[number] = (dictionary, decoded)
+        cursor += len(b"endobj")
+    return objects
+
+
+def _pdf_xobjects(dictionary: bytes) -> dict[str, int]:
+    found = re.search(rb"/XObject\s*<<([^>]*)>>", dictionary, re.S)
+    if found is None:
+        return {}
+    return {
+        name.decode(): int(number)
+        for name, number in re.findall(rb"/([A-Za-z0-9]+)\s+(\d+)\s+\d+\s+R", found.group(1))
+    }
+
+
+def _pdf_page_streams(data: bytes) -> list[bytes]:
+    """One blob per page: the page contents plus each form that page paints."""
+    objects = _pdf_objects(data)
+    pages: list[tuple[int, bytes]] = []
+    for number, (dictionary, _stream) in objects.items():
+        if re.search(rb"/Type\s*/Page(?!s)", dictionary) is None:
+            continue
+        array = re.search(rb"/Contents\s*\[([^\]]*)\]", dictionary)
+        if array is not None:
+            contents = [int(item) for item in re.findall(rb"(\d+)\s+\d+\s+R", array.group(1))]
+        else:
+            single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
+            contents = [int(single.group(1))] if single else []
+        mapping = _pdf_xobjects(dictionary)
+        resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
+        if resource and int(resource.group(1)) in objects:
+            mapping = _pdf_xobjects(objects[int(resource.group(1))][0]) or mapping
+        chunks: list[bytes] = []
+        seen: set[int] = set()
+
+        def paint(obj_num: int, names: dict[str, int]) -> None:
+            if obj_num in seen or obj_num not in objects:
+                return
+            seen.add(obj_num)
+            form_dict, blob = objects[obj_num]
+            if b"/Subtype /Image" in form_dict or b"/Subtype/Image" in form_dict:
+                return
+            local = _pdf_xobjects(form_dict) or names
+            if blob:
+                chunks.append(blob)
+            if not blob:
+                return
+            for name in re.findall(rb"/([A-Za-z0-9]+)\s+Do\b", blob):
+                paint(local.get(name.decode(), -1), local)
+
+        for content in contents:
+            paint(content, mapping)
+        if chunks:
+            pages.append((number, b"\n".join(chunks)))
+    if pages:
+        return [blob for _number, blob in sorted(pages)]
+    streams = [
+        blob
+        for _dictionary, blob in objects.values()
+        if blob and b"792" in blob and (b"Tj" in blob or b"TJ" in blob)
+    ]
+    return streams
+
+
 def _pdf_page_texts(data: bytes) -> list[str]:
     """Visible writing on each letter page. Each font keeps its own glyph map."""
-    streams: list[bytes] = []
-    for match in re.finditer(rb"stream\r?\n", data):
-        start = match.end()
-        window = data[max(0, match.start() - 80) : match.start()]
-        length_match = re.search(rb"/Length\s+(\d+)", window)
-        if length_match:
-            raw = data[start : start + int(length_match.group(1))]
-        else:
-            end = data.find(b"endstream", start)
-            if end < 0:
-                continue
-            raw = data[start:end].strip(b"\r\n")
-        try:
-            streams.append(zlib.decompress(raw))
-        except zlib.error:
-            continue
+    objects = _pdf_objects(data)
+    streams = [blob for _dictionary, blob in objects.values() if blob]
 
     def character(hex_digits: str) -> str:
         if len(hex_digits) > 4:
@@ -680,7 +779,7 @@ def _pdf_page_texts(data: bytes) -> list[str]:
 
     def font_map(blob: bytes) -> dict[int, str]:
         cmap: dict[int, str] = {}
-        for match in re.finditer(rb"beginbfrange\n(.*?)endbfrange", blob, re.S):
+        for match in re.finditer(rb"beginbfrange\s+(.*?)endbfrange", blob, re.S):
             body = match.group(1)
             for row in re.finditer(
                 rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
@@ -699,7 +798,7 @@ def _pdf_page_texts(data: bytes) -> list[str]:
                 left = int(row.group(1), 16)
                 for offset, dest in enumerate(re.findall(rb"<([0-9A-Fa-f]+)>", row.group(3))):
                     cmap[left + offset] = character(dest.decode())
-        for match in re.finditer(rb"beginbfchar\n(.*?)endbfchar", blob, re.S):
+        for match in re.finditer(rb"beginbfchar\s+(.*?)endbfchar", blob, re.S):
             for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", match.group(1)):
                 cmap[int(row.group(1), 16)] = character(row.group(2).decode())
         return cmap
@@ -755,11 +854,7 @@ def _pdf_page_texts(data: bytes) -> list[str]:
     )
     pages = []
     phrase = "This tool explains the numbers"
-    for stream in streams:
-        if b"Tj" not in stream and b"TJ" not in stream:
-            continue
-        if b"beginbfchar" in stream or b"beginbfrange" in stream:
-            continue
+    for stream in _pdf_page_streams(data):
         plain: list[str] = []
         coded: list[str] = []
         for item in shown.finditer(stream):
