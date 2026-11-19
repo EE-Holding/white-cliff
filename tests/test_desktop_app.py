@@ -1164,7 +1164,18 @@ def test_chrome_submits_setup_search_pick_and_erase(monkeypatch, tmp_path):
         except AssertionError as exc:
             if "navigated" not in str(exc):
                 raise
-        fresh = _wait_text(page, "Your name")
+        fresh = ""
+        for _ in range(80):
+            fresh = _eval(page, "document.body ? document.body.innerText : ''") or ""
+            if (
+                "Your name" in fresh
+                and "Erase" not in fresh
+                and not (app_data_dir() / "identity.json").exists()
+            ):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(fresh[:800])
         assert "Annual report" not in fresh
         assert not (app_data_dir() / "identity.json").exists()
     finally:
