@@ -737,6 +737,7 @@ def _search_form(
     *,
     focus: bool = True,
     query: str = "",
+    steps: bool = True,
 ) -> str:
     auto = " autofocus" if focus else ""
     return (
@@ -748,7 +749,7 @@ def _search_form(
         + f'<input id="query" name="query" autocomplete="off"{_value(query)}{auto}>'
         + f'<button type="submit">{html.escape(ui("explain"))}</button>'
         + "</div>\n"
-        + _steps_panel()
+        + (_steps_panel() if steps else "")
         + "</form>\n"
     )
 
@@ -1343,5 +1344,5 @@ def result_page(
         inner,
         result=True,
         token=token,
-        search=_search_form(token, focus=False),
+        search=_search_form(token, focus=False, steps=False),
     )

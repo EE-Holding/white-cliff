@@ -329,6 +329,7 @@ def _wide(page: DevTools, width: int) -> bool:
 
 
 _DEBUG_PORT = 0
+_CHROME_ERR: Path | None = None
 
 
 def _stamp_fields(page: DevTools) -> None:
@@ -1357,6 +1358,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     _DEBUG_PORT = port
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
+    global _CHROME_ERR
+    _CHROME_ERR = Path(stderr_name)
     stderr_path = Path(stderr_name)
     stderr_file = os.fdopen(stderr_fd, "wb")
     command = [
@@ -1884,8 +1887,13 @@ def main() -> int:
         stop(proc, log)
         proc, url, log = _start(binary, home)
         _confirm_german(url)
-    except PageError as exc:
+    except (PageError, OSError) as exc:
         print(exc, file=sys.stderr)
+        err = globals().get("_CHROME_ERR")
+        if err is not None and Path(err).is_file():
+            detail = Path(err).read_text(encoding="utf-8", errors="replace").strip()
+            if detail:
+                print(detail[-4000:], file=sys.stderr)
         return 1
     finally:
         if proc is not None and log is not None:
