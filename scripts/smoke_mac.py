@@ -22,7 +22,6 @@ from pathlib import Path
 
 TEST_NAME = "White Cliff Test"
 ARCH = platform.machine()
-_DISPLAY_WIDTH = 0
 
 
 def test_email() -> str:
@@ -253,39 +252,9 @@ def _crop_png(data: bytes, height: int) -> bytes:
     return _png_bytes(width, height, color, bit_depth, rows[:height])
 
 
-def _remember_display(page: DevTools) -> None:
-    """The real display, read before any emulation. Intel clamps a wider window to this."""
-    global _DISPLAY_WIDTH
-    try:
-        raw = _eval(page, "screen.availWidth || screen.width || 0")
-    except PageError:
-        raw = 0
-    if isinstance(raw, (int, float)) and int(raw) > 200:
-        _DISPLAY_WIDTH = int(raw)
-
-
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """A size the display can hold is a real window. A wider layout is emulated."""
+    """Emulate the layout. The real window cannot be wider than the Intel display."""
     del reset
-    width = int(width)
-    height = min(int(height), 900)
-    if _DISPLAY_WIDTH and width <= _DISPLAY_WIDTH - 16:
-        try:
-            page.call("Emulation.clearDeviceMetricsOverride")
-        except PageError:
-            pass
-        try:
-            window = page.call("Browser.getWindowForTarget")
-            page.call(
-                "Browser.setWindowBounds",
-                {
-                    "windowId": window["windowId"],
-                    "bounds": {"width": width, "height": height, "windowState": "normal"},
-                },
-            )
-        except PageError:
-            pass
-        return
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
@@ -293,7 +262,12 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
-            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
+            {
+                "width": int(width),
+                "height": min(int(height), 900),
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
         )
     except PageError:
         pass
@@ -515,15 +489,32 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
         raise PageError(f"{selector} showed {value!r}")
 
 
+def _reload(page: DevTools) -> None:
+    """A new document. Intel stops honoring a layout size after two wide screenshots."""
+    try:
+        page.call("Page.reload", {"ignoreCache": True})
+    except PageError:
+        return
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            if _eval(page, "document.readyState") == "complete":
+                return
+        except PageError:
+            pass
+        time.sleep(0.1)
+
+
 def _fit(page: DevTools, width: int, height: int) -> None:
     """Set the layout width. A full-page shot leaves innerWidth on the Intel display size."""
-    deadline = time.time() + 6
+    deadline = time.time() + 4
     while time.time() < deadline:
         _window(page, width, height)
         if _wide(page, width):
             return
         time.sleep(0.05)
-    _window(page, width, height, reset=True)
+    _reload(page)
+    _window(page, width, height)
     deadline = time.time() + 4
     while time.time() < deadline:
         if _wide(page, width):
@@ -785,7 +776,6 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     page = DevTools(info["webSocketDebuggerUrl"])
     page.call("Page.enable")
     page.call("Runtime.enable")
-    _remember_display(page)
     _window(page)
     page.call("Page.navigate", {"url": url})
     try:
