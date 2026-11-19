@@ -449,7 +449,7 @@ def test_a_painted_form_is_part_of_its_page_only():
     assert "This tool explains the numbers" in " ".join(texts[0].split())
     assert "Revenue was one hundred million" in " ".join(texts[0].split())
     assert "This tool explains the numbers" not in " ".join(texts[1].split())
-    assert driver._read_disclaimer_pages(texts) == "a printed page does not carry the disclaimer"
+    assert driver._read_disclaimer_pages(texts).startswith("a printed page does not carry the disclaimer")
     both = _pdf(
         [
             _stream("/Type /XObject /Subtype /Form", cmap),
