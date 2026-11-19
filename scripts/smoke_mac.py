@@ -220,14 +220,6 @@ def _shot(
                 )
                 if isinstance(raw, (int, float)) and raw > height:
                     height = int(raw)
-            result = fresh.call(
-                "Page.captureScreenshot",
-                {"format": "png", "optimizeForSpeed": True},
-                timeout=8,
-            )
-            data = base64.b64decode(result["data"])
-            got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-            if full or len(data) < 1000 or got != width:
                 result = fresh.call(
                     "Page.captureScreenshot",
                     {
@@ -235,9 +227,28 @@ def _shot(
                         "captureBeyondViewport": True,
                         "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
                     },
-                    timeout=20,
+                    timeout=60,
                 )
                 data = base64.b64decode(result["data"])
+            else:
+                result = fresh.call(
+                    "Page.captureScreenshot",
+                    {"format": "png", "optimizeForSpeed": True},
+                    timeout=8,
+                )
+                data = base64.b64decode(result["data"])
+                got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+                if len(data) < 1000 or got != width:
+                    result = fresh.call(
+                        "Page.captureScreenshot",
+                        {
+                            "format": "png",
+                            "captureBeyondViewport": True,
+                            "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
+                        },
+                        timeout=20,
+                    )
+                    data = base64.b64decode(result["data"])
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
@@ -741,7 +752,7 @@ def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: in
 def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:
     """German result, first run, and loading, at 1280 and 420."""
     try:
-        page.call("Emulation.setEmulatedMedia", {"features": []})
+        _motion(page, "no-preference")
     except PageError:
         pass
     _press(page, 'button[lang="de"]')
