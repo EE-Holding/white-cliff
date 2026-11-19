@@ -164,6 +164,67 @@ def test_intel_photo_shows_the_live_window(tmp_path):
     assert not _band(driver, cleared_bytes, 160, 240)
 
 
+def test_intel_photo_shows_the_card_beside_the_first(tmp_path, monkeypatch):
+    """The frame waits until the next card has painted, then shows that card."""
+    driver = _driver()
+    if driver.chrome_binary() is None:
+        pytest.skip("chrome is not installed")
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    page_path = tmp_path / "rise.html"
+    page_path.write_text(
+        "<!doctype html><style>"
+        "html,body{margin:0;background:#fff}"
+        ".grid{display:grid;grid-template-columns:1fr 1fr}"
+        "@keyframes rise { from { opacity: 0; } to { opacity: 1; } }"
+        "article{height:220px;background:#fff;animation:rise 300ms both;"
+        "animation-delay:calc(var(--c) * 700ms)}"
+        "</style>",
+        encoding="utf-8",
+    )
+    chrome, page = driver._open_chrome(page_path.as_uri())
+    try:
+        driver._eval(
+            page,
+            """(() => {
+              const grid = document.createElement("div");
+              grid.className = "grid";
+              grid.innerHTML = '<article style="--c:0"></article>'
+                + '<article id=b style="--c:1;background:#000"></article>';
+              document.body.appendChild(grid);
+              return true;
+            })()""",
+        )
+        shot = driver._intel_photo(
+            page, tmp_path, "rise.png", 1100, 400, keep_scroll=False, reveal=False
+        )
+    finally:
+        page.close()
+        if chrome.poll() is None:
+            os.killpg(chrome.pid, signal.SIGTERM)
+    data = shot.read_bytes()
+    assert struct.unpack(">I", data[16:20])[0] == 1100
+    assert _ink(driver, data, 700, 40)
+
+
+def test_intel_window_uses_the_screen_width(monkeypatch):
+    """The Intel display is narrower than the layout. The screen has to match it."""
+    driver = _driver()
+    if driver.chrome_binary() is None:
+        pytest.skip("chrome is not installed")
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    chrome, page = driver._open_chrome("about:blank")
+    try:
+        driver._window(page, 1280, 2200)
+        screen = driver._eval(page, "screen.width")
+        document = driver._eval(page, "document.documentElement.clientWidth")
+    finally:
+        page.close()
+        if chrome.poll() is None:
+            os.killpg(chrome.pid, signal.SIGTERM)
+    assert screen == 1280
+    assert document == 1280
+
+
 def test_launch_resolves_a_relative_binary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     binary = tmp_path / "dist" / "White Cliff"

@@ -285,16 +285,20 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
         pass
+    height_px = min(int(height), 900)
+    metrics = {
+        "width": int(width),
+        "height": height_px,
+        "deviceScaleFactor": 1,
+        "mobile": False,
+    }
+    # The Intel display is narrower than these layouts. Without the screen size,
+    # the metrics report the requested width while the cards stay in one column.
+    if _intel():
+        metrics["screenWidth"] = int(width)
+        metrics["screenHeight"] = height_px
     try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": min(int(height), 900),
-                "deviceScaleFactor": 1,
-                "mobile": False,
-            },
-        )
+        page.call("Emulation.setDeviceMetricsOverride", metrics)
     except PageError:
         pass
 
@@ -321,59 +325,77 @@ def _css_width(page: DevTools) -> int:
     return int(raw) if isinstance(raw, (int, float)) else 0
 
 
+def _document_width(page: DevTools) -> int:
+    if _PAUSED:
+        return 0
+    try:
+        raw = _eval(page, "document.documentElement.clientWidth")
+    except (PageError, TimeoutError, OSError):
+        return 0
+    return int(raw) if isinstance(raw, (int, float)) else 0
+
+
 def _wide(page: DevTools, width: int) -> bool:
-    if _css_width(page) == width:
-        return True
-    try:
-        return _eval(page, "window.innerWidth") == width
-    except PageError:
-        return False
+    if _css_width(page) != width:
+        try:
+            if _eval(page, "window.innerWidth") != width:
+                return False
+        except PageError:
+            return False
+    if _intel():
+        seen = _document_width(page)
+        if seen and abs(seen - int(width)) > 20:
+            return False
+    return True
 
 
-def _place(page: DevTools, width: int, height: int) -> None:
-    """Match the screen to this viewport. The Intel display is 906px wide."""
-    height_px = min(int(height), 900)
+def _settled(page: DevTools) -> None:
+    """Wait until a card's rise has painted. The next card stays invisible during its delay."""
+    _eval(
+        page,
+        """new Promise((resolve) => {
+          const start = Date.now();
+          const tick = () => {
+            const running = document.getAnimations().some((item) => item.playState === "running");
+            if (!running || Date.now() - start > 1500) {
+              resolve(true);
+              return;
+            }
+            setTimeout(tick, 50);
+          };
+          tick();
+        })""",
+    )
+
+
+def _ack_frame(page: DevTools, event: dict | None) -> None:
+    params = (event or {}).get("params") or {}
+    session = params.get("sessionId")
+    if session is None:
+        return
     try:
-        page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError:
+        page.call("Page.screencastFrameAck", {"sessionId": session})
+    except (PageError, TimeoutError, OSError):
         pass
-    try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": height_px,
-                "deviceScaleFactor": 1,
-                "mobile": False,
-                "screenWidth": int(width),
-                "screenHeight": height_px,
-            },
-        )
-    except PageError:
-        _window(page, width, height_px)
 
 
 def _live_frame(page: DevTools) -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
-    the next layout at the 906px display.
+    the next layout at the 906px display. The first screencast frame can be the
+    one from before the latest paint, so a later frame replaces it.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
     event: dict | None = None
     try:
         event = page.next_event("Page.screencastFrame", 5)
+        _ack_frame(page, event)
         if not _PAUSED:
             try:
-                event = page.next_event("Page.screencastFrame", 0.4)
+                event = page.next_event("Page.screencastFrame", 0.6)
+                _ack_frame(page, event)
             except (PageError, TimeoutError):
-                pass
-        params = (event or {}).get("params") or {}
-        session = params.get("sessionId")
-        if session is not None:
-            try:
-                page.call("Page.screencastFrameAck", {"sessionId": session})
-            except (PageError, TimeoutError, OSError):
                 pass
     finally:
         try:
@@ -409,22 +431,24 @@ def _intel_photo(
             fresh.call("Page.enable")
             fresh.call("Runtime.enable")
             if not _PAUSED:
-                if attempt or (width and not _wide(fresh, wanted)):
-                    _place(fresh, wanted, height_px)
-                    deadline = time.time() + 2
-                    while time.time() < deadline and not _wide(fresh, wanted):
-                        time.sleep(0.05)
+                _window(fresh, wanted, height_px)
+                deadline = time.time() + 2
+                while time.time() < deadline and not _wide(fresh, wanted):
+                    time.sleep(0.05)
                 if not _wide(fresh, wanted):
                     raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted}")
                 if motion:
                     _motion(fresh, motion)
                 if not keep_scroll:
                     _eval(fresh, "window.scrollTo(0, 0)")
+                _settled(fresh)
                 _eval(
                     fresh,
                     "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
                 )
             data = _live_frame(fresh)
+            if not _PAUSED:
+                _window(fresh, wanted, height_px)
             got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
             if len(data) < 1000 or got != wanted:
                 raise PageError(f"{name} is {got}px wide, wanted {wanted}")
@@ -525,31 +549,40 @@ def _shot(
 
 def _layout(page: DevTools, *, columns: int, width: float | None) -> None:
     """Cards sit in two columns above 900px and one column below. The column is 1160px at 1280."""
-    measured = _eval(
-        page,
-        """(() => {
-          const cards = Array.from(document.querySelectorAll('article.card')).slice(0, 2);
-          const boxes = cards.map((card) => {
-            const box = card.getBoundingClientRect();
-            return {top: box.top, left: box.left, bottom: box.bottom};
-          });
-          const column = document.querySelector('body.result .column');
-          const wide = column ? column.getBoundingClientRect().width : 0;
-          return {boxes, width: wide};
-        })()""",
-    )
-    if not isinstance(measured, dict):
-        raise PageError("the card layout was not measured")
-    boxes = measured.get("boxes") or []
-    if len(boxes) < 2:
-        raise PageError("the result did not show two cards")
-    first, second = boxes
-    if columns == 2 and abs(float(first["top"]) - float(second["top"])) > 2:
-        raise PageError("the cards did not share a row")
-    if columns == 1 and float(second["top"]) + 1 < float(first["bottom"]):
-        raise PageError("the cards did not stack")
-    if width is not None and abs(float(measured.get("width") or 0) - width) > 1:
-        raise PageError(f"result column is {measured.get('width')}px")
+    deadline = time.time() + 1
+    while True:
+        measured = _eval(
+            page,
+            """(() => {
+              const cards = Array.from(document.querySelectorAll('article.card')).slice(0, 2);
+              const boxes = cards.map((card) => {
+                const box = card.getBoundingClientRect();
+                return {top: box.top, left: box.left, bottom: box.bottom};
+              });
+              const column = document.querySelector('body.result .column');
+              const wide = column ? column.getBoundingClientRect().width : 0;
+              return {boxes, width: wide};
+            })()""",
+        )
+        if not isinstance(measured, dict):
+            raise PageError("the card layout was not measured")
+        boxes = measured.get("boxes") or []
+        if len(boxes) < 2:
+            raise PageError("the result did not show two cards")
+        first, second = boxes
+        if columns == 2 and abs(float(first["top"]) - float(second["top"])) > 2:
+            # The rise starts the next card a moment later, so its top is still lower.
+            stacked = float(second["top"]) + 1 >= float(first["bottom"])
+            if stacked or time.time() >= deadline:
+                seen = _document_width(page) or _css_width(page)
+                raise PageError(f"the cards did not share a row at {seen}px")
+            time.sleep(0.05)
+            continue
+        if columns == 1 and float(second["top"]) + 1 < float(first["bottom"]):
+            raise PageError("the cards did not stack")
+        if width is not None and abs(float(measured.get("width") or 0) - width) > 1:
+            raise PageError(f"result column is {measured.get('width')}px")
+        return
 
 
 def _eval(page: DevTools, expression: str):
@@ -655,7 +688,9 @@ def _fit(page: DevTools, width: int, height: int) -> None:
         seen = str(_eval(page, "window.innerWidth"))
     except PageError:
         seen = "unknown"
-    raise PageError(f"the window stayed at {layout}, wanted {width}, inner {seen}")
+    document = _document_width(page)
+    extra = f", document {document}" if document else ""
+    raise PageError(f"the window stayed at {layout}, wanted {width}, inner {seen}{extra}")
 
 
 def _motion(page: DevTools, value: str) -> None:
