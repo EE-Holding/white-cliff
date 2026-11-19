@@ -254,6 +254,12 @@ def _crop_png(data: bytes, height: int) -> bytes:
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
     """Give headless Chrome a real window. Old headless rejects the metrics call."""
+    width = int(width)
+    height = int(height)
+    try:
+        page.call("Emulation.clearDeviceMetricsOverride")
+    except PageError:
+        pass
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
@@ -262,6 +268,12 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
         return
     except PageError:
         pass
+    try:
+        screen = _eval(page, "screen.availWidth || screen.width || 0")
+        if isinstance(screen, (int, float)) and screen and width > int(screen):
+            return
+    except PageError:
+        return
     try:
         window = page.call("Browser.getWindowForTarget")
         page.call(
@@ -285,6 +297,7 @@ def _shot(
     full: bool = False,
 ) -> Path:
     last: Exception | None = None
+    asked = height
     for _ in range(2):
         fresh = page if full else DevTools(page.ws_url)
         try:
@@ -296,7 +309,7 @@ def _shot(
                     _motion(fresh, "reduce")
                 except PageError:
                     pass
-            _window(fresh, width, height)
+            _window(fresh, width, asked)
             deadline = time.time() + 2
             while time.time() < deadline:
                 try:
@@ -304,7 +317,7 @@ def _shot(
                         break
                 except PageError:
                     pass
-                _window(fresh, width, height)
+                _window(fresh, width, asked)
                 time.sleep(0.1)
             fresh.call(
                 "Runtime.evaluate",
@@ -315,15 +328,17 @@ def _shot(
                     fresh,
                     "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
                 )
-                if isinstance(raw, (int, float)) and raw > height:
-                    height = int(raw)
-                _window(fresh, width, height)
+                tall = asked
+                if isinstance(raw, (int, float)) and raw > asked:
+                    tall = int(raw)
+                _window(fresh, width, tall)
                 result = fresh.call(
                     "Page.captureScreenshot",
                     {"format": "png", "optimizeForSpeed": True},
                     timeout=60,
                 )
                 data = base64.b64decode(result["data"])
+                _window(fresh, width, min(asked, 2200))
             else:
                 result = fresh.call(
                     "Page.captureScreenshot",
