@@ -221,7 +221,8 @@ def test_plain_failures(monkeypatch, tmp_path):
     app.transport = transport
     missing = app.handle("POST", "/explain", {"query": "zzzznomatchqq"})
     assert NO_MATCH in missing.body
-    assert "Apple" not in missing.body
+    without_placeholder = missing.body.replace('placeholder="e.g. Apple or AAPL"', "")
+    assert "Apple" not in without_placeholder
 
     close = app.handle("POST", "/explain", {"query": "Microsft"})
     assert "No exact match. These names are on the SEC list." in close.body
@@ -856,7 +857,7 @@ def test_failures_keep_the_typed_query(monkeypatch, tmp_path):
     assert NO_MATCH in missing.body
     fresh = app.handle("GET", "/", {})
     assert 'class="failure"' not in fresh.body
-    assert 'id="query" name="query" autocomplete="off" autofocus' in fresh.body
+    assert 'id="query" name="query" placeholder="e.g. Apple or AAPL" autocomplete="off" autofocus' in fresh.body
 
 
 def test_a_multipart_post_is_accepted(monkeypatch, tmp_path):

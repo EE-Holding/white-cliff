@@ -64,7 +64,7 @@ def test_a_change_line_matches_the_percents_on_the_bars():
         measure="margin",
     )
     shown = _plain(apart)
-    assert "0.1 percentage points higher" in shown
+    assert "rose 0.1 percentage points from the prior quarter" in shown
     assert "unchanged" not in shown.casefold()
     assert "75.0 percent" in shown and "74.9 percent" in shown
     same = _html(

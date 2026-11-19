@@ -131,7 +131,9 @@ def test_check_sentences_carry_a_template_and_link_filing_numbers():
         form="10-K",
         period_end="2025-12-31",
     )
-    assert "Check: unusual" in page
+    assert "Check: marked" in page
+    assert "Check: unusual" not in page
+    assert "Check: consistent" not in page
     quarterly = quality_html(
         [income, prior, cash, cash_prior],
         form="10-Q",
@@ -205,6 +207,32 @@ def test_a_missing_current_diluted_count_and_a_zero_basic_count_name_themselves(
     assert zero_basic.reason == "The basic share count is zero or less."
 
 
+def test_a_falling_share_count_does_not_repeat_the_decrease_sentence():
+    diluted_now = _shares(
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "90",
+        "2025-01-01",
+        "2025-12-31",
+    )
+    diluted_then = _shares(
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "100",
+        "2024-01-01",
+        "2024-12-31",
+    )
+    basic_now = _shares("WeightedAverageNumberOfSharesOutstandingBasic", "80", "2025-01-01", "2025-12-31")
+    basic_then = _shares("WeightedAverageNumberOfSharesOutstandingBasic", "80", "2024-01-01", "2024-12-31")
+    page = quality_html(
+        [diluted_now, diluted_then, basic_now, basic_then],
+        form="10-K",
+        period_end="2025-12-31",
+    )
+    section = page.split('data-check="C6"', 1)[1].split("</section>", 1)[0]
+    assert 'data-template="NUMBERS"' in section
+    assert 'data-template="DECREASE"' not in section
+    assert section.count("The diluted share count fell") == 1
+
+
 def test_a_zero_change_in_diluted_shares_does_not_say_rose():
     diluted_now = _shares(
         "WeightedAverageNumberOfDilutedSharesOutstanding",
@@ -270,7 +298,8 @@ def test_an_in_line_check_lists_only_items_at_or_above_the_threshold():
     assert "restructuring charges" not in section
     quiet = quality_html([operating, small], form="10-K", period_end="2025-12-31")
     quiet_section = quiet.split('data-check="C4"', 1)[1].split("</section>", 1)[0]
-    assert "Check: consistent" in quiet_section
+    assert "Check: not marked" in quiet_section
+    assert "Check: consistent" not in quiet_section
     assert "restructuring charges" not in quiet_section
 
 
@@ -287,5 +316,6 @@ def test_the_disclaimer_comes_before_the_framing_line_and_there_is_no_heading():
     inner = quality_html([], form="10-K", period_end="2025-12-31")
     page = _shell(inner)
     assert "What stands out in this report" not in page
-    assert "<h2>" not in inner
+    assert inner.count("<h2>") == 1
+    assert "Checks on the company" in inner
     assert page.index(DISCLAIMER) < page.index("These checks compare the company")

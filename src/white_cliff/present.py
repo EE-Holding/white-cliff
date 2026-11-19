@@ -679,11 +679,17 @@ def _hidden(token: str) -> str:
 
 
 def _notice(sentence: str) -> str:
+    from white_cliff.lexicon import STRINGS
+
     hidden = "" if sentence else " hidden"
     kind = ' class="failure"' if sentence else ""
+    extra = ""
+    if sentence in {STRINGS["NO_MATCH"][0], STRINGS["NO_MATCH"][1]}:
+        extra = f'<p class="notice">{html.escape(phrase("U4.next"))}</p>\n'
     return (
         f"<div{kind} id=\"failure\" role=\"alert\"{hidden}>\n"
         f'<p class="notice" id="working">{html.escape(sentence)}</p>\n'
+        f"{extra}"
         "</div>\n"
     )
 
@@ -748,7 +754,7 @@ def _search_form(
         + _notice(notice)
         + f'<p><label for="query">{html.escape(ui("company_or_ticker"))}</label></p>\n'
         + '<div class="search-row">'
-        + f'<input id="query" name="query" autocomplete="off"{_value(query)}{auto}>'
+        + f'<input id="query" name="query" placeholder="{html.escape(phrase("U2.placeholder"), quote=True)}" autocomplete="off"{_value(query)}{auto}>'
         + f'<button type="submit">{html.escape(ui("explain"))}</button>'
         + "</div>\n"
         + (_steps_panel() if steps else "")
@@ -786,6 +792,7 @@ def first_run_page(
 ) -> str:
     note = shown_copy(notice or (ENTER_BOTH if rejected else ""))
     return _shell(
+        f"<p>{html.escape(phrase('U1.lead'))}</p>\n"
         f"<p>{html.escape(shown_copy(SEC_WHY))}</p>\n"
         + _identity_form(token, note, name=name, email=email),
         token=token,
@@ -806,6 +813,7 @@ def edit_page(
         + "</form>\n"
     )
     return _shell(
+        f"<p>{html.escape(phrase('U1.lead'))}</p>\n"
         f"<p>{html.escape(shown_copy(SEC_WHY))}</p>\n"
         + _identity_form(token, shown_copy(notice), name=name, email=email)
         + erase
@@ -948,9 +956,25 @@ def _plain_label(lead: str) -> str:
     text = re.sub(r"\s+was$", "", text)
     text = re.sub(r"\s+for the (fiscal year|quarter)$", "", text)
     text = text.strip()
+    named = _card_name(text)
+    if named:
+        return named
     if not german():
         return text
     return _german_label(text)
+
+
+def _card_name(text: str) -> str | None:
+    """The cleared card name. The old formula label stays in Explain."""
+    if text.startswith("The gross margin"):
+        return phrase("U8.lbl.gross_margin")
+    if text.startswith("The operating margin"):
+        return phrase("U8.lbl.operating_margin")
+    if text.startswith("The net margin"):
+        return phrase("U8.lbl.net_margin")
+    if text.endswith("minus cash and cash equivalents"):
+        return phrase("U9.lbl.net_debt")
+    return None
 
 
 def _german_label(text: str) -> str:

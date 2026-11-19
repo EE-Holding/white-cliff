@@ -502,6 +502,13 @@ def _eps_label(fact: Fact) -> str:
 
 
 def label_for(role: str, fact: Fact) -> str:
+    margin_name = {
+        "gross_margin": "U8.lbl.gross_margin",
+        "operating_margin": "U8.lbl.operating_margin",
+        "net_margin": "U8.lbl.net_margin",
+    }.get(role)
+    if margin_name:
+        return phrase(margin_name)
     if role == "net_debt" and german():
         return phrase("LBL.net_debt").replace("{debt_label}", _debt_noun(fact))
     if german() and (role == "per_share" or fact.unit.split()[0] == "USD/shares"):
@@ -593,23 +600,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = _margin_gap(current.value, prior.value)
-        if delta == 0:
-            return [[
-                ("text", f"{figure} was unchanged from "),
-                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
-                ("text", " at "),
-                ("link", show_measure(current.value, "percent"), fact_href(current.fact)),
-                ("text", "."),
-            ]]
-        word = "higher" if delta > 0 else "lower"
-        return [[
-            ("text", "It was "),
-            ("link", show_measure(abs(delta), "percentage points"), fact_href(current.fact)),
-            ("text", f" {word} than "),
-            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
-            ("text", "."),
-        ]]
+        return _margin_lines(current, prior)
     if measure == "net_debt":
         word = _higher(current.value, prior.value)
         return [[
@@ -706,23 +697,7 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = _margin_gap(current.value, prior.value)
-        if delta == 0:
-            return [[
-                ("text", f"Der Wert der Position „{figure}“ blieb gegenüber dem "),
-                earlier,
-                ("text", " unverändert bei "),
-                ("link", show_measure(current.value, "percent"), fact_href(current.fact)),
-                ("text", "."),
-            ]]
-        word = "höher" if delta > 0 else "niedriger"
-        return [[
-            ("text", "Der Wert war um "),
-            ("link", show_measure(abs(delta), "percentage points"), fact_href(current.fact)),
-            ("text", f" {word} als im "),
-            earlier,
-            ("text", "."),
-        ]]
+        return _margin_lines(current, prior)
     if measure == "net_debt":
         word = "höher" if current.value >= prior.value else "niedriger"
         return [[
@@ -798,23 +773,7 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = _margin_gap(current.value, prior.value)
-        if delta == 0:
-            return [[
-                ("text", f"{figure} was unchanged from "),
-                _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
-                ("text", " at "),
-                ("link", show_measure(current.value, "percent"), fact_href(current.fact)),
-                ("text", "."),
-            ]]
-        word = "higher" if delta > 0 else "lower"
-        return [[
-            ("text", "It was "),
-            ("link", show_measure(abs(delta), "percentage points"), fact_href(current.fact)),
-            ("text", f" {word} than "),
-            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
-            ("text", "."),
-        ]]
+        return _margin_lines(current, prior)
     if measure == "net_debt":
         word = _higher(current.value, prior.value)
         return [[
@@ -924,7 +883,15 @@ def _comparison_block(
         named = f'<p class="caption">{html.escape(current_caption)}</p>\n'
     chart = _chart(label, current, last, year, fact, form, current_caption)
     short = _short_line(label, current, last, year, measure, form, chunks)
-    face = named + short + chart
+    note = ""
+    if measure == "net_debt":
+        amounts = [fact.value]
+        for cell in (last, year):
+            if cell is not None and cell.value is not None:
+                amounts.append(cell.value)
+        if any(amount < 0 for amount in amounts):
+            note = f"<p>{html.escape(phrase('U9.neg'))}</p>\n"
+    face = named + note + short + chart
     return face, "".join(chunks)
 
 
@@ -1156,8 +1123,70 @@ def _anchor(class_name: str, display: str, href: str) -> str:
     )
 
 
+def _margin_lines(current: Cell, prior: Cell) -> list[list[tuple]]:
+    """One margin change. The gap is the two shown percents, and unchanged means they match."""
+    delta = _margin_gap(current.value, prior.value)
+    period = _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact)
+    if delta == 0:
+        if german():
+            return [[("text", "Der Wert blieb unverändert gegenüber "), period, ("text", ".")]]
+        return [[("text", "It was unchanged from "), period, ("text", ".")]]
+    linked = ("link", show_measure(abs(delta), "percentage points"), fact_href(current.fact))
+    if german():
+        verb = "stieg" if delta > 0 else "sank"
+        return [[("text", f"Der Wert {verb} um "), linked, ("text", " gegenüber "), period, ("text", ".")]]
+    verb = "rose" if delta > 0 else "fell"
+    return [[("text", f"It {verb} "), linked, ("text", " from "), period, ("text", ".")]]
+
+
+def _margin_clause(current: Cell, prior: Cell, spoken: str) -> tuple[str, str] | None:
+    if (
+        not spoken
+        or not prior.available
+        or prior.fact is None
+        or current.fact is None
+        or prior.value is None
+        or current.value is None
+        or prior.basis in {"currency", "length"}
+    ):
+        return None
+    delta = _margin_gap(current.value, prior.value)
+    period = _anchor("per", spoken, fact_href(prior.fact))
+    if delta == 0:
+        if german():
+            return "unchanged", "blieb unverändert gegenüber " + period
+        return "unchanged", "was unchanged from " + period
+    linked = _anchor("pct", show_measure(abs(delta), "percentage points"), fact_href(current.fact))
+    if german():
+        verb = "stieg" if delta > 0 else "sank"
+        return "change", f"{verb} um {linked} gegenüber {period}"
+    verb = "rose" if delta > 0 else "fell"
+    return "change", f"{verb} {linked} from {period}"
+
+
+def _margin_short(current: Cell, last: Cell | None, year: Cell | None, form: str) -> str:
+    clauses: list[str] = []
+    dated = False
+    for column, cell in (("c1", last), ("c2", year)):
+        if cell is None:
+            continue
+        if cell.available and cell.fact is not None and column_header(cell.kind, cell.period_start, cell.period_end):
+            dated = True
+        head = EN["prior_quarter"] if column == "c1" else _right_head(cell, current.fact, form)
+        clause = _margin_clause(current, cell, _phrase_for(head))
+        if clause is not None:
+            clauses.append(clause[1])
+    if not dated or not clauses:
+        return ""
+    body = (" und " if german() else " and ").join(clauses)
+    lead = "Der Wert " if german() else "It "
+    return f'<div class="cmp-slot"><p class="cmp" data-template="U8">{lead}{body}.</p></div>\n'
+
+
 def _short_line(label, current, last, year, measure, form, chunks: list[str]) -> str:
     """S1 on a card that shows an H1 head with its date. Both zeros stay on C3."""
+    if measure == "margin":
+        return _margin_short(current, last, year, form)
     clauses: list[tuple[str, str]] = []
     dated = False
     for column, cell in (("c1", last), ("c2", year)):
@@ -1362,11 +1391,11 @@ def _computed_formula(role: str, inputs: list | None = None) -> str:
     if german():
         revenue = phrase("LBL.revenue")
         if role == "gross_margin":
-            return _fill_formula("E2.formula.div", {"a": phrase("LBL.gross_profit"), "b": revenue})
+            return phrase("LBL.gross_margin")
         if role == "operating_margin":
-            return _fill_formula("E2.formula.div", {"a": phrase("LBL.operating_income"), "b": revenue})
+            return phrase("LBL.operating_margin")
         if role == "net_margin":
-            return _fill_formula("E2.formula.div", {"a": phrase("LBL.net_income"), "b": revenue})
+            return phrase("LBL.net_margin")
         if role == "net_debt":
             debt = used[0][1] if used else None
             return _fill_formula("E2.formula.minus", {"a": _debt_noun(debt), "b": phrase("LBL.cash")})
@@ -1383,12 +1412,18 @@ def _computed_formula(role: str, inputs: list | None = None) -> str:
             )
         return ""
     if role == "gross_margin":
-        return "gross profit divided by revenue"
+        return phrase("LBL.gross_margin")
     if role == "operating_margin":
-        return "operating income divided by revenue"
+        return phrase("LBL.operating_margin")
     if role == "net_margin":
-        return "net income divided by revenue"
+        return phrase("LBL.net_margin")
     if role == "net_debt":
+        if len(used) >= 2:
+            from white_cliff.explain import _net_debt_phrase
+
+            named = _net_debt_phrase(used[0][1], used[1][1])
+            if named:
+                return named
         return "debt minus cash"
     if role == "yoy_change":
         return "(revenue minus prior revenue) divided by prior revenue"
@@ -1540,19 +1575,13 @@ def _threshold(check_id: str, label: str) -> str:
 
 
 def _marker(outcome: str, reason: str) -> str:
-    if german():
-        if outcome == "unusual":
-            text = phrase("K.marker.unusual")
-        elif outcome == "consistent":
-            text = phrase("K.marker.consistent")
-        else:
-            text = phrase("K.marker.notrun").replace("{plain reason}", _german_reason(reason))
-    elif outcome == "unusual":
-        text = "Check: unusual"
+    if outcome == "unusual":
+        text = phrase("U10.marker.marked")
     elif outcome == "consistent":
-        text = "Check: consistent"
+        text = phrase("U10.marker.notmarked")
     else:
-        text = f"Check: not run: {reason}"
+        plain = _german_reason(reason) if german() else reason
+        text = phrase("U10.marker.notrun").replace("{plain reason}", plain)
     return f'<p class="marker" data-template="MARKER">{html.escape(text)}</p>\n'
 
 
@@ -1702,10 +1731,6 @@ def _check_numbers_de(result: CheckResult) -> str:
                 "period": _period_html(now),
                 "gap": _linked(_pct_num(gap), fact_href(now)),
             }))
-        if growth < 0:
-            body += (
-                f'<p data-template="DECREASE">{fill(STRINGS["C6.decrease"][1], {"x": _linked(_pct_num(growth), fact_href(now))})}</p>\n'
-            )
         return body
     if result.check_id == "C7":
         lines = []
@@ -1728,7 +1753,7 @@ def _check_numbers_de(result: CheckResult) -> str:
             })))
         return "".join(lines)
     if result.check_id == "C8" and facts:
-        return paragraph(fill(STRINGS["C8.numbers"][1], {
+        return paragraph(fill(STRINGS["U10.C8.numbers"][1], {
             "rate_t": _linked(_pct_num(result.numbers["rate_now"]), fact_href(facts[0])),
             "period": _period_html(facts[0]),
             "rate_p": _linked(_pct_num(result.numbers["rate_then"]), fact_href(facts[1])),
@@ -1902,14 +1927,7 @@ def _check_numbers(result: CheckResult) -> str:
             ])
         else:
             share_parts.append(("text", "."))
-        lines = [_parts_html("NUMBERS", share_parts)]
-        if growth < 0:
-            lines.append(_parts_html("DECREASE", [
-                ("text", "The diluted share count fell "),
-                ("link", show_measure(abs(growth), "percent"), fact_href(now)),
-                ("text", "."),
-            ]))
-        return "".join(lines)
+        return _parts_html("NUMBERS", share_parts)
     if result.check_id == "C7":
         lines = []
         if "gm_delta" in result.numbers and len(facts) >= 4:
@@ -1942,7 +1960,7 @@ def _check_numbers(result: CheckResult) -> str:
         return _parts_html("NUMBERS", [
             ("text", "Income tax was "),
             ("link", show_measure(result.numbers["rate_now"], "percent"), fact_href(facts[0])),
-            ("text", " of pre-tax income in "),
+            ("text", " of income before tax in "),
             _period_link(period_phrase(facts[0].period.kind, facts[0].period.start, facts[0].period.end or ""), facts[0]),
             ("text", " and "),
             ("link", show_measure(result.numbers["rate_then"], "percent"), fact_href(facts[1])),
@@ -1974,23 +1992,29 @@ def _unchanged_line(figure: str, prior: Fact, current: Fact) -> str:
 
 
 def _check_heading(result: CheckResult) -> str:
-    if not german():
-        heading = HEADINGS[result.check_id]
-        if result.check_id == "C3" and result.labels.get("cost") == "revenue":
-            return "Inventory and revenue"
-        return heading
-    if result.check_id == "C3" and result.labels.get("cost") == "revenue":
-        return "Vorräte und Umsatz"
-    names = {
-        "C1": "C1.title",
-        "C2": "C2.title",
-        "C3": "C3.title",
-        "C4": "C4.heading",
-        "C6": "C6.title",
-        "C7": "C7.title",
-        "C8": "C8.title",
-    }
-    return phrase(names[result.check_id])
+    return phrase("U10.h." + result.check_id)
+
+
+def _check_aside(result: CheckResult) -> str:
+    """Threshold, why, ordinary causes and the formula, behind Explain."""
+    label = result.labels.get("cost", "cost of sales")
+    parts = [_threshold(result.check_id, label)]
+    if german():
+        why = phrase(result.check_id + ".why")
+    else:
+        why = WHY[result.check_id]
+    if result.check_id == "C1":
+        causes = phrase("U10.C1.oc")
+    elif german():
+        causes = phrase(result.check_id + ".oc")
+    else:
+        causes = CAUSES[result.check_id]
+    parts.append(f'<p data-template="WHY">{html.escape(why)}</p>\n')
+    parts.append(f'<p data-template="CAUSES">{html.escape(causes)}</p>\n')
+    if result.formula and not german():
+        formula = html.escape(phrase("E2.formula.label") + " " + result.formula)
+        parts.append(f'<p data-template="FORMULA">{formula}.</p>\n')
+    return "".join(parts)
 
 
 def _period_lead(fact: Fact) -> str:
@@ -2010,38 +2034,21 @@ def _check_html(result: CheckResult) -> str:
             f"{_marker(result.outcome, result.reason)}"
             "</section>\n"
         )
-    label = result.labels.get("cost", "cost of sales")
-    body = _marker(result.outcome, result.reason) + _check_numbers(result) + _threshold(result.check_id, label)
-    if result.outcome == "unusual":
-        why = phrase(result.check_id + ".why") if german() else WHY[result.check_id]
-        causes = phrase(result.check_id + ".oc") if german() else CAUSES[result.check_id]
-        body += (
-            f'<p data-template="WHY">{html.escape(why)}</p>\n'
-            f'<p data-template="CAUSES">{html.escape(causes)}</p>\n'
-        )
-    limit = phrase("QCW.limit") if german() else LIMIT
-    body += f'<p data-template="LIMIT">{html.escape(limit)}</p>\n'
-    formula = html.escape(result.formula)
-    formula_line = ""
-    if formula and not german():
-        formula_line = f'<p data-template="FORMULA">Formula: {formula}.</p>\n'
-    button = ""
-    panel = ""
-    if formula_line:
-        button = (
-            f'<button type="button" class="explain tap" aria-expanded="false" '
-            f'aria-controls="formula-{ident}">{html.escape(ui("explain"))}'
-            '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"></path></svg>'
-            "</button>\n"
-        )
-        panel = (
-            f'<div id="formula-{ident}" class="detail" aria-hidden="true">'
-            f'<div class="detail-inner">{formula_line}</div></div>\n'
-        )
+    aside = _check_aside(result)
+    button = (
+        f'<button type="button" class="explain tap" aria-expanded="false" '
+        f'aria-controls="formula-{ident}">{html.escape(ui("explain"))}'
+        '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"></path></svg>'
+        "</button>\n"
+    )
+    panel = (
+        f'<div id="formula-{ident}" class="detail" aria-hidden="true">'
+        f'<div class="detail-inner">{aside}</div></div>\n'
+    )
     return (
         f'<section class="check" data-check="{result.check_id}">\n'
         f"<h3>{html.escape(heading)}</h3>\n"
-        f"{body}{button}{panel}</section>\n"
+        f"{_marker(result.outcome, result.reason)}{_check_numbers(result)}{button}{panel}</section>\n"
     )
 
 
@@ -2049,7 +2056,9 @@ def quality_html(facts: list[Fact], *, form: str, period_end: str | None) -> str
     blocks = [_check_html(result) for result in run_checks(facts, form=form, period_end=period_end)]
     return (
         '<section class="quality" id="quality">\n'
-        f'<p data-template="FRAME">{html.escape(phrase("F.checks") if german() else FRAME)}</p>\n'
+        f"<h2>{html.escape(phrase('U10.heading'))}</h2>\n"
+        f'<p data-template="FRAME">{html.escape(phrase("F.checks"))}</p>\n'
+        f'<p data-template="LIMIT">{html.escape(phrase("Q.limit"))}</p>\n'
         + "".join(blocks)
         + "</section>\n"
     )

@@ -105,7 +105,7 @@ def test_revenue_keeps_the_year_over_year_explain_and_margins_show_the_change(nv
     assert ">Revenue year over year</h3>" not in nvidia_page
     revenue = nvidia_page.split(">Revenue</h3>", 1)[1].split("</article>", 1)[0]
     assert "the change in revenue from the same period a year earlier" in revenue
-    gross = nvidia_page.split(">The gross margin", 1)[1].split("</article>", 1)[0]
+    gross = nvidia_page.split(">Gross margin: gross profit as a percent of revenue", 1)[1].split("</article>", 1)[0]
     assert "percentage points" in gross
     assert 'class="cmp"' in gross
 

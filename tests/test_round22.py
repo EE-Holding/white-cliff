@@ -81,8 +81,8 @@ def test_nvidia_gross_margin_matches_the_shown_bars_and_net_reads_9_5():
             "en",
             "gross margin",
             "net margin",
-            "0.1 percentage points higher than the quarter ended April 26, 2026",
-            "9.5 percentage points lower than the quarter ended April 26, 2026",
+            "rose 0.1 percentage points from the prior quarter",
+            "fell 9.5 percentage points from the prior quarter",
             "was unchanged",
             "9.4 percentage points",
         ),
@@ -90,8 +90,8 @@ def test_nvidia_gross_margin_matches_the_shown_bars_and_net_reads_9_5():
             "de",
             "bruttomarge",
             "nettomarge",
-            "0,1 Prozentpunkte höher als im Quartal zum 26. April 2026",
-            "9,5 Prozentpunkte niedriger als im Quartal zum 26. April 2026",
+            "stieg um 0,1 Prozentpunkte gegenüber dem Vorquartal",
+            "sank um 9,5 Prozentpunkte gegenüber dem Vorquartal",
             "unverändert",
             "9,4 Prozentpunkte",
         ),
@@ -150,8 +150,15 @@ def test_instant_bars_are_dated_and_duration_bars_name_the_period():
                         assert not head.startswith("As of")
                         assert not head.startswith("Zum")
                         template = H6_DE if language == "de" else H6_EN
+                        spoken = line
+                        if line == "Debt minus cash":
+                            spoken = sentence.split(f"For {filing.filer}, ", 1)[1].split(" was ", 1)[0]
+                            assert "minus cash and cash equivalents" in spoken
+                        elif line == "Finanzschulden abzüglich Zahlungsmittel":
+                            spoken = sentence.split("„", 1)[1].split("“", 1)[0]
+                            assert "Zahlungsmittel und Zahlungsmitteläquivalente" in spoken
                         expected = template.format(
-                            company=filing.filer, line=line, amount=amount, date=when
+                            company=filing.filer, line=spoken, amount=amount, date=when
                         )
                         assert sentence == expected, (accession, language, sentence)
                     else:

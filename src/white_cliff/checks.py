@@ -587,7 +587,7 @@ def check_margins(facts: list[Fact], *, form: str, period_end: str) -> CheckResu
         gm_then = gp_then.value / rev_then.value * Decimal(100)
         numbers["gm_now"] = _one(gm_now)
         numbers["gm_then"] = _one(gm_then)
-        numbers["gm_delta"] = gm_now - gm_then
+        numbers["gm_delta"] = numbers["gm_now"] - numbers["gm_then"]
         used.extend([gp_now, gp_then])
     elif gross == "The filing reports no gross profit or cost of sales." and isinstance(operating, str):
         return _not("C7", gross)
@@ -597,7 +597,7 @@ def check_margins(facts: list[Fact], *, form: str, period_end: str) -> CheckResu
         om_then = oi_then.value / rev_then.value * Decimal(100)
         numbers["om_now"] = _one(om_now)
         numbers["om_then"] = _one(om_then)
-        numbers["om_delta"] = om_now - om_then
+        numbers["om_delta"] = numbers["om_now"] - numbers["om_then"]
         used.extend([oi_now, oi_then])
     if "gm_delta" not in numbers and "om_delta" not in numbers:
         if gross == "The filing reports no gross profit or cost of sales.":

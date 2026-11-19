@@ -320,7 +320,7 @@ def test_an_amount_only_change_says_it_was_higher_or_lower():
     margin = _plain_page(
         _change_block(margin_now, _column(margin_then), None, measure="margin", role="gross_margin")
     )
-    assert "It was 4.2 percentage points higher than the quarter ended April 26, 2026." in margin
+    assert "It rose 4.2 percentage points from the prior quarter." in margin
     assert "That is" not in debt and "That is" not in margin
 
 
