@@ -404,6 +404,16 @@ def _intel_photo(
                     time.sleep(0.05)
                 else:
                     raise PageError("reduced motion was not emulated")
+                _eval(
+                    tab,
+                    """(() => {
+                      const arc = document.querySelector("li.active .arc");
+                      const dot = document.querySelector("li.active .dot");
+                      if (arc) arc.style.display = "none";
+                      if (dot) dot.style.display = "block";
+                      return true;
+                    })()""",
+                )
             if scroll_y:
                 _eval(tab, f"window.scrollTo(0, {scroll_y})")
             _eval(
@@ -417,7 +427,7 @@ def _intel_photo(
                 raise PageError(f"the window stayed at {_css_width(tab)}, wanted {wanted}")
             result = tab.call(
                 "Page.captureScreenshot",
-                {"format": "png", "optimizeForSpeed": True},
+                {"format": "png"},
                 timeout=60,
             )
             data = base64.b64decode(result["data"])
