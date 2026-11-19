@@ -168,7 +168,6 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200) -> None:
             "Emulation.setDeviceMetricsOverride",
             {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
         )
-        return
     except PageError:
         pass
     try:
@@ -373,7 +372,7 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
 
 def _fit(page: DevTools, width: int, height: int) -> None:
     """Set the window and wait until the page has that width, before anything is paused."""
-    deadline = time.time() + 3
+    deadline = time.time() + 12
     while time.time() < deadline:
         _window(page, width, height)
         try:
