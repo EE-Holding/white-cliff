@@ -123,6 +123,10 @@ def test_intel_photo_shows_the_live_window(tmp_path):
     try:
         driver._eval(
             page,
+            "document.readyState === 'complete' ? true : new Promise((resolve) => addEventListener('load', () => resolve(true)))",
+        )
+        driver._eval(
+            page,
             """(() => {
               const canvas = document.getElementById("c");
               const pen = canvas.getContext("2d");
@@ -183,6 +187,10 @@ def test_intel_photo_shows_the_card_beside_the_first(tmp_path, monkeypatch):
     )
     chrome, page = driver._open_chrome(page_path.as_uri())
     try:
+        driver._eval(
+            page,
+            "document.readyState === 'complete' ? true : new Promise((resolve) => addEventListener('load', () => resolve(true)))",
+        )
         driver._eval(
             page,
             """(() => {

@@ -279,15 +279,12 @@ def _intel() -> bool:
 
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """Emulate the layout. The real window cannot be wider than the Intel display.
-
-    Clearing first drops Intel back to that window, so only a reset clears.
-    """
-    if reset:
-        try:
-            page.call("Emulation.clearDeviceMetricsOverride")
-        except PageError:
-            pass
+    """Emulate the layout. The real window cannot be wider than the Intel display."""
+    del reset
+    try:
+        page.call("Emulation.clearDeviceMetricsOverride")
+    except PageError:
+        pass
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
@@ -415,10 +412,12 @@ def _intel_photo(
             fresh.call("Runtime.enable")
             if not _PAUSED:
                 if attempt or (width and not _wide(fresh, wanted)):
-                    _window(fresh, wanted, height_px, reset=bool(attempt))
+                    _window(fresh, wanted, height_px)
                     deadline = time.time() + 2
                     while time.time() < deadline and not _wide(fresh, wanted):
                         time.sleep(0.05)
+                if not _wide(fresh, wanted):
+                    raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted}")
                 if motion:
                     _motion(fresh, motion)
                 if not keep_scroll:
