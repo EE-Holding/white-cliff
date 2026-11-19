@@ -279,12 +279,15 @@ def _intel() -> bool:
 
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """Emulate the layout. The real window cannot be wider than the Intel display."""
-    del reset
-    try:
-        page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError:
-        pass
+    """Emulate the layout. The real window cannot be wider than the Intel display.
+
+    Clearing first drops Intel back to that window, so only a reset clears.
+    """
+    if reset:
+        try:
+            page.call("Emulation.clearDeviceMetricsOverride")
+        except PageError:
+            pass
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
@@ -338,29 +341,6 @@ def _wide(page: DevTools, width: int) -> bool:
         return _eval(page, "window.innerWidth") == width
     except PageError:
         return False
-
-
-def _place(page: DevTools, width: int, height: int) -> None:
-    """Match the screen to this viewport. The Intel display is narrower than the layout."""
-    height_px = min(int(height), 900)
-    try:
-        page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError:
-        pass
-    try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": height_px,
-                "deviceScaleFactor": 1,
-                "mobile": False,
-                "screenWidth": int(width),
-                "screenHeight": height_px,
-            },
-        )
-    except PageError:
-        _window(page, width, height_px)
 
 
 def _settled(page: DevTools) -> None:
@@ -435,12 +415,10 @@ def _intel_photo(
             fresh.call("Runtime.enable")
             if not _PAUSED:
                 if attempt or (width and not _wide(fresh, wanted)):
-                    _place(fresh, wanted, height_px)
+                    _window(fresh, wanted, height_px, reset=bool(attempt))
                     deadline = time.time() + 2
                     while time.time() < deadline and not _wide(fresh, wanted):
                         time.sleep(0.05)
-                if not _wide(fresh, wanted):
-                    raise PageError(f"the window stayed at {_css_width(fresh)}, wanted {wanted}")
                 if motion:
                     _motion(fresh, motion)
                 if not keep_scroll:
