@@ -355,6 +355,7 @@ def _intel_photo(
     *,
     keep_scroll: bool,
     reveal: bool,
+    motion: str = "",
 ) -> Path:
     """Copy the page into a new tab and photograph that viewport once."""
     html = _document_html(page)
@@ -371,9 +372,9 @@ def _intel_photo(
         try:
             tab.call("Page.enable")
             tab.call("Runtime.enable")
-            if reveal and not _PAUSED:
+            if motion or (reveal and not _PAUSED):
                 try:
-                    _motion(tab, "reduce")
+                    _motion(tab, motion or "reduce")
                 except PageError:
                     pass
             frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
@@ -396,6 +397,17 @@ def _intel_photo(
                 tab,
                 "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
             )
+            if not reveal:
+                _eval(
+                    tab,
+                    """(() => {
+                      document.getAnimations().forEach((item) => {
+                        item.pause();
+                        item.currentTime = 200;
+                      });
+                      return true;
+                    })()""",
+                )
             deadline = time.time() + 2
             while time.time() < deadline and not _wide(tab, wanted):
                 time.sleep(0.05)
@@ -661,11 +673,28 @@ def _spinning(page: DevTools) -> bool:
     return raw is True
 
 
-def _grab(page: DevTools, directory: Path, name: str, width: int = 0, height: int = 0, top: int = 0) -> Path:
+def _grab(
+    page: DevTools,
+    directory: Path,
+    name: str,
+    width: int = 0,
+    height: int = 0,
+    top: int = 0,
+    motion: str = "",
+) -> Path:
     """Photograph the page as it is. A new connection, and no clip, so a paused page still works."""
     del top
     if _intel():
-        return _intel_photo(page, directory, name, width, height, keep_scroll=True, reveal=True)
+        return _intel_photo(
+            page,
+            directory,
+            name,
+            width,
+            height,
+            keep_scroll=True,
+            reveal=not motion,
+            motion=motion,
+        )
     last: Exception | None = None
     for _ in range(2):
         fresh = DevTools(page.ws_url)
@@ -967,7 +996,7 @@ def drive(
                 if _reduced_steps(page):
                     _hold(page)
                     try:
-                        _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png")
+                        _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
                     finally:
                         _release(page)
                     break
