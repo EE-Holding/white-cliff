@@ -62,7 +62,7 @@ def _visible(page: str) -> str:
     text = re.sub(r"<style\b[^>]*>.*?</style>", " ", page, flags=re.I | re.S)
     text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<[^>]+>", " ", text)
-    return text.replace(DISCLAIMER, " ", 1)
+    return text.replace(DISCLAIMER, " ")
 
 
 def _figures(markdown: str) -> list[tuple[str, str]]:

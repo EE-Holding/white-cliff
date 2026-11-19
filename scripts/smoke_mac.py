@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -530,6 +531,109 @@ def _shot(
     raise PageError(last)
 
 
+def _print_preview(page: DevTools, out_dir: Path) -> None:
+    """Print preview at 1280. Each printed page opens with the disclaimer."""
+    tab = page
+    target_id = ""
+    try:
+        if _intel():
+            html = _document_html(page)
+            tab, target_id = _open_tab()
+            tab.call("Page.enable")
+            tab.call("Runtime.enable")
+            frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
+            tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
+        _window(tab, 1280, 2200)
+        tab.call("Emulation.setEmulatedMedia", {"media": "print"})
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            hidden = _eval(tab, "getComputedStyle(document.querySelector('.top')).display")
+            if hidden == "none" and _wide(tab, 1280):
+                break
+            time.sleep(0.05)
+        else:
+            raise PageError("print styles were not applied")
+        _eval(tab, "window.scrollTo(0, 0)")
+        shot = tab.call(
+            "Page.captureScreenshot",
+            {"format": "png", "optimizeForSpeed": True},
+            timeout=60,
+        )
+        data = base64.b64decode(shot["data"])
+        got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
+        if got != 1280:
+            raise PageError(f"print preview is {got}px wide")
+        path = out_dir / f"smoke-{ARCH}-21-print-1280.png"
+        path.write_bytes(data)
+        printed = tab.call(
+            "Page.printToPDF",
+            {
+                "printBackground": True,
+                "displayHeaderFooter": False,
+                "paperWidth": 8.5,
+                "paperHeight": 11,
+            },
+            timeout=60,
+        )
+        texts = _pdf_page_texts(base64.b64decode(printed["data"]))
+        if len(texts) < 2:
+            raise PageError("the print summary was one page")
+        for text in texts:
+            if not text.startswith("This tool explains the numbers"):
+                raise PageError("a printed page does not open with the disclaimer")
+    finally:
+        try:
+            tab.call("Emulation.setEmulatedMedia", {"media": "screen"})
+        except PageError:
+            pass
+        if target_id:
+            tab.close()
+            _close_tab(target_id)
+
+
+def _pdf_page_texts(data: bytes) -> list[str]:
+    """Visible writing on each letter page. Glyphs come from the font map."""
+    parts: list[bytes] = []
+    for match in re.finditer(rb"stream\r?\n", data):
+        start = match.end()
+        end = data.find(b"endstream", start)
+        raw = data[start:end].strip(b"\r\n")
+        try:
+            parts.append(zlib.decompress(raw))
+        except zlib.error:
+            parts.append(raw)
+    blob = b"\n".join(parts)
+    cmap: dict[int, int] = {}
+    for match in re.finditer(rb"beginbfrange\n(.*?)endbfrange", blob, re.S):
+        for row in re.finditer(
+            rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+            match.group(1),
+        ):
+            left, right, dest = (int(row.group(index), 16) for index in (1, 2, 3))
+            for offset, src in enumerate(range(left, right + 1)):
+                cmap[src] = dest + offset
+    for match in re.finditer(rb"beginbfchar\n(.*?)endbfchar", blob, re.S):
+        for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", match.group(1)):
+            cmap[int(row.group(1), 16)] = int(row.group(2), 16)
+
+    def decode(hex_text: str) -> str:
+        raw = bytes.fromhex(hex_text)
+        chars = []
+        for index in range(0, len(raw), 2):
+            code = int.from_bytes(raw[index : index + 2], "big")
+            chars.append(chr(cmap.get(code, 0xFFFD)))
+        return "".join(chars)
+
+    pages = []
+    for chunk in blob.split(b"792 cm")[1:]:
+        texts = [
+            decode(item.group(1).decode())
+            for item in re.finditer(rb"<([0-9A-Fa-f]+)>\s*Tj", chunk)
+        ]
+        pages.append("".join(texts))
+    return pages
+
+
 def _layout(page: DevTools, *, columns: int, width: float | None) -> None:
     """Cards sit in two columns above 900px and one column below. The column is 1160px at 1280."""
     measured = _eval(
@@ -993,6 +1097,7 @@ def drive(
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
+        _print_preview(page, out_dir)
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)

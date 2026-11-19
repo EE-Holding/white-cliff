@@ -391,10 +391,33 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "  .done-fill { opacity: 1; animation: none; }\n"
         "  .step-label { transition: none; }\n"
         "}\n"
+        "table.print-sheet { display: block; width: 100%; margin: 0; "
+        "border-collapse: collapse; border-spacing: 0; }\n"
+        "table.print-sheet > tbody, table.print-sheet > tbody > tr, "
+        "table.print-sheet > tbody > tr > td { display: block; }\n"
+        "thead.print-head { display: none; }\n"
+        "button.print { min-height: 64px; min-width: 280px; padding: 18px 32px; font-size: 24px; }\n"
+        ".sources { margin-top: 40px; }\n"
+        ".sources li { overflow-wrap: anywhere; margin-top: 8px; }\n"
+        ".limit-once { display: none; }\n"
+        "@media print {\n"
+        "  *, *::before, *::after { animation: none !important; transition: none !important; }\n"
+        "  .card, .fill, .hero, .column, .failure { opacity: 1 !important; transform: none !important; }\n"
+        "  thead.print-head { display: table-header-group; }\n"
+        "  table.print-sheet { display: table; width: 100%; }\n"
+        "  table.print-sheet > tbody { display: table-row-group; }\n"
+        "  table.print-sheet > thead > tr, table.print-sheet > tbody > tr { display: table-row; }\n"
+        "  table.print-sheet td { display: table-cell; }\n"
+        "  body.result > .disclaimer { display: none; }\n"
+        "  .top, .next, .lang, .change, .print-row, form { display: none !important; }\n"
+        "  input { display: none !important; }\n"
+        "  p[data-template=\"LIMIT\"] { display: none; }\n"
+        "  p.limit-once { display: block; }\n"
+        "  .print-head .disclaimer { padding-top: 0; padding-bottom: 6px; max-width: none; "
+        "font-size: 12px; line-height: 16px; }\n"
+        "}\n"
         "</style>\n"
-        '<div class="column">\n'
-        f"{inner}\n"
-        "</div>\n"
+        f"{_print_sheet(inner, disclaimer) if result else _column(inner)}"
         "<script>\n"
         "(function () {\n"
         f'  var closed = "{closed}";\n'
@@ -536,7 +559,11 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         '    var chosen = document.querySelector(".lang button[aria-pressed=\\"true\\"]");\n'
         "    if (chosen) chosen.focus();\n"
         "  }\n"
+        "  var printing = false;\n"
+        '  window.addEventListener("beforeprint", function () { printing = true; });\n'
+        '  window.addEventListener("afterprint", function () { printing = false; });\n'
         "  setInterval(function () {\n"
+        "    if (printing) return;\n"
         '    fetch("/stay", {cache: "no-store", credentials: "same-origin"}).catch(function () {\n'
         "      say(closed);\n"
         "    });\n"
@@ -974,6 +1001,74 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
     return "".join(pieces)
 
 
+def _column(inner: str) -> str:
+    return '<div class="column">\n' + inner + "</div>\n"
+
+
+def _print_sheet(inner: str, disclaimer: str) -> str:
+    """The print header is a table head, so each printed page opens with it."""
+    return (
+        '<table class="print-sheet">\n'
+        '<thead class="print-head"><tr><td>\n'
+        f"{disclaimer}"
+        "</td></tr></thead>\n"
+        "<tbody><tr><td>\n"
+        + _column(inner)
+        + "</td></tr></tbody>\n"
+        "</table>\n"
+    )
+
+
+def _with_print_limit(quality: str) -> str:
+    """Q.limit is on the screen under each check. Print shows that sentence once."""
+    marker = '<section class="quality" id="quality">\n'
+    if marker not in quality:
+        return quality
+    line = phrase("Q.limit")
+    extra = f'<p class="limit-once" data-template="LIMIT">{html.escape(line)}</p>\n'
+    frame = quality.find("</p>", quality.find(marker))
+    if frame < 0:
+        return quality
+    at = frame + len("</p>")
+    return quality[:at] + "\n" + extra + quality[at:]
+
+
+def _source_section(filing_url: str, *chunks: str) -> str:
+    """The filing and every shown fact, as visible sec.gov text."""
+    urls: list[str] = []
+
+    def add(raw: str) -> None:
+        url = html.unescape(raw).strip()
+        if url.startswith("https://www.sec.gov/") and url not in urls:
+            urls.append(url)
+
+    add(filing_url)
+    for chunk in chunks:
+        for match in re.finditer(r'href="([^"]+)"', chunk):
+            add(match.group(1))
+    if not urls:
+        return ""
+    title = "Quellen auf sec.gov" if german() else "Sources on sec.gov"
+    items = "".join(f"<li>{html.escape(url)}</li>\n" for url in urls)
+    return (
+        '<section class="sources">\n'
+        f"<h2>{html.escape(title)}</h2>\n"
+        "<ul>\n"
+        f"{items}"
+        "</ul>\n"
+        "</section>\n"
+    )
+
+
+def _print_button() -> str:
+    label = "Zusammenfassung drucken" if german() else "Print summary"
+    return (
+        '<p class="print-row"><button type="button" class="print" onclick="window.print()">'
+        + html.escape(label)
+        + "</button></p>\n"
+    )
+
+
 def _report_link() -> str:
     href = html.escape(ISSUE_URL, quote=True)
     return f'<p class="change"><a href="{href}">{html.escape(ui("report_error"))}</a></p>\n'
@@ -1036,11 +1131,15 @@ def result_page(
     if url.startswith("https://www.sec.gov/") or url.startswith("https://data.sec.gov/"):
         href = html.escape(url, quote=True)
         filing = f'<p class="filing"><a href="{href}">{html.escape(ui("the_filing"))}</a></p>\n'
+    rows = _rows(explained.html, additions, explained.store)
+    quality = _with_print_limit(additions.quality)
     inner = (
-        hero
-        + _rows(explained.html, additions, explained.store)
-        + additions.quality
+        _print_button()
+        + hero
+        + rows
+        + quality
         + filing
+        + _source_section(url, rows, quality, filing)
         + '<div class="next">\n'
         + _report_link()
         + _search_form(token, focus=False)

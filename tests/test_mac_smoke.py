@@ -62,6 +62,7 @@ def test_both_mac_jobs_smoke_the_built_binary():
     assert "smoke-{ARCH}-18-de-balance-1280.png" in driver
     assert "smoke-{ARCH}-19-de-checks-1280.png" in driver
     assert "smoke-{ARCH}-20-de-explain-1280.png" in driver
+    assert "smoke-{ARCH}-21-print-1280.png" in driver
     assert "German did not survive a restart" in driver
     assert "is blank" in driver
     assert "is the same picture as" in driver
@@ -144,6 +145,7 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
         f"smoke-{driver.ARCH}-18-de-balance-1280.png",
         f"smoke-{driver.ARCH}-19-de-checks-1280.png",
         f"smoke-{driver.ARCH}-20-de-explain-1280.png",
+        f"smoke-{driver.ARCH}-21-print-1280.png",
     ):
         assert (tmp_path / name).stat().st_size > 1000
     wide = (tmp_path / f"smoke-{driver.ARCH}-6-result-640.png").read_bytes()
@@ -173,9 +175,11 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     balance = (tmp_path / f"smoke-{driver.ARCH}-18-de-balance-1280.png").read_bytes()
     checks = (tmp_path / f"smoke-{driver.ARCH}-19-de-checks-1280.png").read_bytes()
     formula = (tmp_path / f"smoke-{driver.ARCH}-20-de-explain-1280.png").read_bytes()
+    printed = (tmp_path / f"smoke-{driver.ARCH}-21-print-1280.png").read_bytes()
     assert struct.unpack(">I", balance[16:20])[0] == 1280
     assert struct.unpack(">I", checks[16:20])[0] == 1280
     assert struct.unpack(">I", formula[16:20])[0] == 1280
+    assert struct.unpack(">I", printed[16:20])[0] == 1280
     assert de_loading != de_loading_narrow
     result = (tmp_path / f"smoke-{driver.ARCH}-3-nvda.png").read_bytes()
     reduced = (tmp_path / f"smoke-{driver.ARCH}-5-reduced.png").read_bytes()
