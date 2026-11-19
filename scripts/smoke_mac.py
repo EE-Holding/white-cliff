@@ -631,6 +631,15 @@ def _wait_result(
 
 def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
     """Start the built app. BROWSER records the URL and opens nothing."""
+    try:
+        return _start(binary)
+    except PageError as exc:
+        if "did not record a URL" not in str(exc):
+            raise
+    return _start(binary)
+
+
+def _start(binary: str) -> tuple[subprocess.Popen, str, object]:
     binary = str(Path(binary).resolve())
     home = Path(tempfile.mkdtemp(prefix="white-cliff-home-"))
     url_file = home / "opened-url"
@@ -667,8 +676,13 @@ def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
             log.close()
             raise PageError(f"app exited {proc.returncode}: {detail}")
         time.sleep(0.1)
+    log.flush()
+    detail = (home / "app.log").read_text(encoding="utf-8", errors="replace")[:800]
     stop(proc, log)
-    raise PageError("the built app did not record a URL")
+    message = "the built app did not record a URL"
+    if detail.strip():
+        message = f"{message}: {detail}"
+    raise PageError(message)
 
 
 def stop(proc: subprocess.Popen, log) -> None:
