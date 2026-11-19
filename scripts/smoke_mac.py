@@ -252,23 +252,30 @@ def _crop_png(data: bytes, height: int) -> bytes:
     return _png_bytes(width, height, color, bit_depth, rows[:height])
 
 
+def _intel() -> bool:
+    """The Intel Mac window is narrower than the layouts this smoke photographs."""
+    return sys.platform == "darwin" and ARCH == "x86_64"
+
+
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """Emulate the layout. The real window cannot be wider than the Intel display."""
+    """Emulate the layout. On Intel the screen matches it, so the viewport is not tiled."""
     del reset
+    height_px = min(int(height), 900)
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
         pass
+    metrics = {
+        "width": int(width),
+        "height": height_px,
+        "deviceScaleFactor": 1,
+        "mobile": False,
+    }
+    if _intel():
+        metrics["screenWidth"] = int(width)
+        metrics["screenHeight"] = height_px
     try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": min(int(height), 900),
-                "deviceScaleFactor": 1,
-                "mobile": False,
-            },
-        )
+        page.call("Emulation.setDeviceMetricsOverride", metrics)
     except PageError:
         pass
 
@@ -335,26 +342,20 @@ def _shot(
                 "Runtime.evaluate",
                 {"expression": "window.scrollTo(0, 0)", "returnByValue": True},
             )
+            if full and not _wide(fresh, width):
+                seen = _css_width(fresh)
+                raise PageError(f"the window stayed at {seen}, wanted {width}")
+            result = fresh.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=60 if full else 8,
+            )
+            data = base64.b64decode(result["data"])
             if full:
-                if not _wide(fresh, width):
-                    seen = _css_width(fresh)
-                    raise PageError(f"the window stayed at {seen}, wanted {width}")
-                result = fresh.call(
-                    "Page.captureScreenshot",
-                    {"format": "png", "optimizeForSpeed": True},
-                    timeout=60,
-                )
-                data = base64.b64decode(result["data"])
                 _window(fresh, width, asked)
             else:
-                result = fresh.call(
-                    "Page.captureScreenshot",
-                    {"format": "png", "optimizeForSpeed": True},
-                    timeout=8,
-                )
-                data = base64.b64decode(result["data"])
                 got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
-                if len(data) < 1000 or got != width:
+                if not _intel() and (len(data) < 1000 or got != width):
                     result = fresh.call(
                         "Page.captureScreenshot",
                         {
@@ -366,6 +367,8 @@ def _shot(
                     )
                     data = base64.b64decode(result["data"])
                     _window(fresh, width, asked, reset=True)
+                elif _intel() and (len(data) < 1000 or got != width):
+                    raise PageError(f"{name} is {got}px wide, wanted {width}")
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
@@ -489,32 +492,15 @@ def _fill(page: DevTools, selector: str, text: str) -> None:
         raise PageError(f"{selector} showed {value!r}")
 
 
-def _reload(page: DevTools) -> None:
-    """A new document. Intel stops honoring a layout size after two wide screenshots."""
-    try:
-        page.call("Page.reload", {"ignoreCache": True})
-    except PageError:
-        return
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        try:
-            if _eval(page, "document.readyState") == "complete":
-                return
-        except PageError:
-            pass
-        time.sleep(0.1)
-
-
 def _fit(page: DevTools, width: int, height: int) -> None:
-    """Set the layout width. A full-page shot leaves innerWidth on the Intel display size."""
-    deadline = time.time() + 4
+    """Set the layout width. A viewport shot can leave the next size on the Intel display."""
+    deadline = time.time() + 6
     while time.time() < deadline:
         _window(page, width, height)
         if _wide(page, width):
             return
         time.sleep(0.05)
-    _reload(page)
-    _window(page, width, height)
+    _window(page, width, height, reset=True)
     deadline = time.time() + 4
     while time.time() < deadline:
         if _wide(page, width):
@@ -953,7 +939,7 @@ def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: in
 
 
 def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: str) -> None:
-    """One German panel at 1280: balance-sheet cards, the checks, or an open formula."""
+    """One German panel at 1280. Scroll the named line into the viewport, then photograph it."""
     _fit(page, width, 900)
     if kind == "explain":
         opened = _eval(
@@ -975,37 +961,42 @@ def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: st
     script = {
         "balance": """
             (() => {
-              const cards = [...document.querySelectorAll("article.card")].filter((item) =>
-                /Finanzschulden|Zahlungsmittel/.test(item.textContent));
-              if (cards.length < 3) return null;
-              const first = cards[0].getBoundingClientRect();
-              const last = cards[cards.length - 1].getBoundingClientRect();
-              return {top: first.top + window.scrollY, height: Math.ceil(last.bottom - first.top)};
+              const card = [...document.querySelectorAll("article.card")].find((item) =>
+                item.textContent.includes("abzüglich Zahlungsmittel"));
+              if (!card) return false;
+              const heading = card.querySelector("h3") || card;
+              heading.scrollIntoView({block: "start", inline: "nearest"});
+              window.scrollBy(0, -24);
+              return true;
             })()
         """,
         "checks": """
             (() => {
-              const panel = document.querySelector("section.quality");
-              if (!panel) return null;
-              const found = panel.getBoundingClientRect();
-              return {top: found.top + window.scrollY, height: Math.ceil(found.height)};
+              const section = document.querySelector('section.check[data-check="C8"]');
+              if (!section) return false;
+              const hits = [section, ...section.querySelectorAll("*")].filter((item) =>
+                (item.textContent || "").includes("Die Ertragsteuer lag"));
+              hits.sort((a, b) => a.textContent.length - b.textContent.length);
+              (hits[0] || section).scrollIntoView({block: "start", inline: "nearest"});
+              window.scrollBy(0, -24);
+              return true;
             })()
         """,
         "explain": """
             (() => {
-              const card = [...document.querySelectorAll("article.card")].find((item) =>
-                item.textContent.includes("Formel:"));
-              if (!card) return null;
-              const found = card.getBoundingClientRect();
-              return {top: found.top + window.scrollY, height: Math.ceil(found.height)};
+              const hits = [...document.querySelectorAll("body *")].filter((item) =>
+                (item.textContent || "").includes("Formel:"));
+              if (!hits.length) return false;
+              hits.sort((a, b) => a.textContent.length - b.textContent.length);
+              hits[0].scrollIntoView({block: "start", inline: "nearest"});
+              window.scrollBy(0, -24);
+              return true;
             })()
         """,
     }[kind]
-    box = _eval(page, script)
-    if not isinstance(box, dict):
+    if _eval(page, script) is not True:
         raise PageError(f"the German {kind} picture was not on the page")
-    _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
-    _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
+    _grab(page, directory, name, 0, 0)
 
 
 def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:
