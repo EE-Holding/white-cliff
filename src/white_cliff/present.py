@@ -339,8 +339,8 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         ".bar-track::before { content: \"\"; position: absolute; left: var(--zero, 0%); top: -4px; "
         "bottom: -22px; width: 2px; background: #3a3a3c; border-radius: 1px; z-index: 1; }\n"
         ".bar-track::after { content: \"0\"; position: absolute; left: var(--zero, 0%); top: 18px; "
-        "transform: translateX(-50%); font-size: 18px; line-height: 27px; font-weight: 400; "
-        "color: #555559; }\n"
+        "width: 18px; margin-left: -9px; text-align: center; font-size: 18px; line-height: 27px; "
+        "font-weight: 400; color: #555559; }\n"
         ".fill { position: absolute; top: 0; height: 100%; border-radius: 0 7px 7px 0; "
         "background: #6f86a8; transform-origin: left center; "
         "animation: grow 400ms var(--ease-standard) both; "
@@ -469,9 +469,11 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         f"{_print_sheet(inner, disclaimer) if result else _column(inner)}"
         "<script>\n"
         "(function () {\n"
-        '  if (document.body.className.indexOf("result") !== -1 && location.pathname !== "/result") {\n'
-        '    history.pushState(null, "", "/result");\n'
-        "  }\n"
+        "  window.addEventListener(\"load\", function () {\n"
+        '    if (document.body.className.indexOf("result") !== -1 && location.pathname !== "/result") {\n'
+        '      history.pushState(null, "", "/result");\n'
+        "    }\n"
+        "  });\n"
         f'  var closed = "{closed}";\n'
         f'  var looking = "{looking}";\n'
         f'  var finding = "{finding}";\n'
