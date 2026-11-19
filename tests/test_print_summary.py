@@ -448,6 +448,28 @@ def test_a_painted_form_is_part_of_its_page_only():
     assert driver._read_disclaimer_pages(driver._pdf_page_texts(both)) == ""
 
 
+def test_a_header_drawn_from_the_page_tree_is_part_of_that_page_only():
+    driver = _driver()
+    cmap, header = _glyph_header()
+    body = b"(Revenue was one hundred million dollars in the quarter ended July.) Tj\n"
+    pdf = _pdf(
+        [
+            _stream("/Type /XObject /Subtype /Form", cmap),
+            _stream("/Type /XObject /Subtype /Form", header),
+            _stream("", b"0 792 cm\n/H Do\n" + body),
+            b"<< /Type /Pages /Resources << /XObject << /H 2 0 R >> >> /Kids [5 0 R 7 0 R] /Count 2 >>",
+            b"<< /Type /Page /Parent 4 0 R /Contents 3 0 R >>",
+            _stream("", b"0 792 cm\n" + body),
+            b"<< /Type /Page /Parent 4 0 R /Contents 6 0 R >>",
+        ]
+    )
+    texts = driver._pdf_page_texts(pdf)
+    assert len(texts) == 2
+    assert "This tool explains the numbers" in " ".join(texts[0].split())
+    assert "Revenue was one hundred million" in " ".join(texts[0].split())
+    assert "This tool explains the numbers" not in " ".join(texts[1].split())
+
+
 def test_a_sec_url_is_not_split_across_printed_pages():
     css = _print_css(_page()[1])
     rule = re.search(r"\.sources li \{[^}]*\}", css)
@@ -467,8 +489,17 @@ def test_the_printed_disclaimer_is_at_least_body_text():
 
 
 def test_a_card_is_not_split_across_printed_pages():
-    css = _print_css(_page()[1])
+    _filing, page = _page()
+    css = _print_css(page)
     rule = re.search(r"article\.card \{[^}]*\}", css)
     assert rule is not None
     assert "break-inside: avoid" in rule.group(0)
     assert "page-break-inside: avoid" in rule.group(0)
+    tbody = re.search(r"<tbody>(.*)</tbody>", page, re.S)
+    assert tbody is not None
+    rows = re.findall(r"<tr\b[^>]*>.*?</tr>", tbody.group(1), re.S)
+    card_rows = [row for row in rows if "<article" in row]
+    assert card_rows
+    assert all(row.count("<article") == 1 for row in card_rows)
+    assert len(card_rows) == tbody.group(1).count("<article")
+    assert "table.print-sheet > tbody > tr { break-inside: avoid; page-break-inside: avoid; }" in css

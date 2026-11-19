@@ -364,7 +364,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }\n"
         "body.result .hero { animation: rise 400ms var(--ease-decel) both; animation-delay: 60ms; }\n"
         "@media (max-width: 900px) {\n"
-        "  .grid { grid-template-columns: 1fr; }\n"
+        "  .grid, table.print-sheet > tbody { grid-template-columns: 1fr; }\n"
         "}\n"
         "@media (max-width: 480px) {\n"
         "  .disclaimer, .top, .column { padding-left: 20px; padding-right: 20px; }\n"
@@ -393,8 +393,14 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "}\n"
         "table.print-sheet { display: block; width: 100%; margin: 0; "
         "border-collapse: collapse; border-spacing: 0; }\n"
-        "table.print-sheet > tbody, table.print-sheet > tbody > tr, "
-        "table.print-sheet > tbody > tr > td { display: block; }\n"
+        "table.print-sheet > tbody { display: grid; grid-template-columns: 1fr 1fr; "
+        "gap: 24px; align-items: stretch; }\n"
+        "table.print-sheet > tbody > tr, table.print-sheet > tbody > tr > td { display: block; "
+        "min-width: 0; }\n"
+        "table.print-sheet > tbody > tr.wide { grid-column: 1 / -1; }\n"
+        "@media (max-width: 900px) {\n"
+        "  table.print-sheet > tbody { grid-template-columns: 1fr; }\n"
+        "}\n"
         "thead.print-head { display: none; }\n"
         "button.print { min-height: 64px; min-width: 280px; padding: 18px 32px; font-size: 24px; }\n"
         ".sources { margin-top: 40px; }\n"
@@ -407,6 +413,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "") -> str:
         "  table.print-sheet { display: table; width: 100%; }\n"
         "  table.print-sheet > tbody { display: table-row-group; }\n"
         "  table.print-sheet > thead > tr, table.print-sheet > tbody > tr { display: table-row; }\n"
+        "  table.print-sheet > tbody > tr { break-inside: avoid; page-break-inside: avoid; }\n"
         "  table.print-sheet td { display: table-cell; }\n"
         "  body.result > .disclaimer { display: none; }\n"
         "  .top, .next, .lang, .change, .print-row, form { display: none !important; }\n"
@@ -1007,16 +1014,72 @@ def _column(inner: str) -> str:
     return '<div class="column">\n' + inner + "</div>\n"
 
 
+def _top_blocks(fragment: str) -> list[str]:
+    """Elements that sit next to each other, ignoring the text between them."""
+    blocks: list[str] = []
+    depth = 0
+    begin = 0
+    index = 0
+    void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+    while index < len(fragment):
+        if fragment[index] != "<":
+            index += 1
+            continue
+        end = fragment.find(">", index)
+        if end < 0:
+            break
+        token = fragment[index + 1 : end].strip()
+        name = token.split()[0].strip("/").lower() if token else ""
+        closing = token.startswith("/")
+        self_closing = token.endswith("/") or name in void
+        if closing:
+            depth -= 1
+            if depth <= 0:
+                blocks.append(fragment[begin : end + 1].strip())
+                depth = 0
+                begin = end + 1
+        elif self_closing and depth == 0:
+            blocks.append(fragment[index : end + 1].strip())
+            begin = end + 1
+        elif not self_closing:
+            if depth == 0:
+                begin = index
+            depth += 1
+        index = end + 1
+    return [block for block in blocks if block]
+
+
+def _print_row(block: str, *, wide: bool) -> str:
+    kind = ' class="wide"' if wide else ""
+    return f"<tr{kind}><td>\n{block}\n</td></tr>\n"
+
+
+def _print_rows(inner: str) -> str:
+    """One row per card, so a later page can open with the header instead of a split card."""
+    fragment = inner.strip()
+    if fragment.startswith('<div class="column">') and fragment.endswith("</div>"):
+        fragment = fragment[len('<div class="column">') : -len("</div>")].strip()
+    rows: list[str] = []
+    for block in _top_blocks(fragment):
+        if block.startswith('<div class="grid">') and block.endswith("</div>"):
+            cards = block[len('<div class="grid">') : -len("</div>")]
+            for card in _top_blocks(cards):
+                rows.append(_print_row(card, wide=False))
+            continue
+        rows.append(_print_row(block, wide=True))
+    return "".join(rows)
+
+
 def _print_sheet(inner: str, disclaimer: str) -> str:
     """The print header is a table head, so each printed page opens with it."""
     return (
-        '<table class="print-sheet">\n'
+        '<table class="print-sheet column">\n'
         '<thead class="print-head"><tr><td>\n'
         f"{disclaimer}"
         "</td></tr></thead>\n"
-        "<tbody><tr><td>\n"
-        + _column(inner)
-        + "</td></tr></tbody>\n"
+        "<tbody>\n"
+        + _print_rows(inner)
+        + "</tbody>\n"
         "</table>\n"
     )
 

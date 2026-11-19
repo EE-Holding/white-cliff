@@ -704,14 +704,39 @@ def _pdf_objects(data: bytes) -> dict[int, tuple[bytes, bytes | None]]:
     return objects
 
 
-def _pdf_xobjects(dictionary: bytes) -> dict[str, int]:
+def _pdf_xobjects(dictionary: bytes, objects: dict[int, tuple[bytes, bytes | None]]) -> dict[str, int]:
     found = re.search(rb"/XObject\s*<<([^>]*)>>", dictionary, re.S)
+    if found is None:
+        indirect = re.search(rb"/XObject\s+(\d+)\s+\d+\s+R", dictionary)
+        if indirect and int(indirect.group(1)) in objects:
+            found = re.search(
+                rb"<<([^>]*)>>",
+                objects[int(indirect.group(1))][0],
+                re.S,
+            )
     if found is None:
         return {}
     return {
         name.decode(): int(number)
         for name, number in re.findall(rb"/([A-Za-z0-9]+)\s+(\d+)\s+\d+\s+R", found.group(1))
     }
+
+
+def _pdf_resource_map(dictionary: bytes, objects: dict[int, tuple[bytes, bytes | None]]) -> dict[str, int]:
+    """Form names this page can paint, including names inherited from its page tree."""
+    mapping = _pdf_xobjects(dictionary, objects)
+    resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
+    if resource and int(resource.group(1)) in objects:
+        mapping = _pdf_xobjects(objects[int(resource.group(1))][0], objects) or mapping
+    seen: set[int] = set()
+    parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", dictionary)
+    while parent and int(parent.group(1)) not in seen and int(parent.group(1)) in objects:
+        number = int(parent.group(1))
+        seen.add(number)
+        parent_dict = objects[number][0]
+        mapping = mapping or _pdf_resource_map(parent_dict, objects)
+        parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", parent_dict)
+    return mapping
 
 
 def _pdf_page_streams(data: bytes) -> list[bytes]:
@@ -727,10 +752,7 @@ def _pdf_page_streams(data: bytes) -> list[bytes]:
         else:
             single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
             contents = [int(single.group(1))] if single else []
-        mapping = _pdf_xobjects(dictionary)
-        resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
-        if resource and int(resource.group(1)) in objects:
-            mapping = _pdf_xobjects(objects[int(resource.group(1))][0]) or mapping
+        mapping = _pdf_resource_map(dictionary, objects)
         chunks: list[bytes] = []
         seen: set[int] = set()
 
@@ -741,7 +763,7 @@ def _pdf_page_streams(data: bytes) -> list[bytes]:
             form_dict, blob = objects[obj_num]
             if b"/Subtype /Image" in form_dict or b"/Subtype/Image" in form_dict:
                 return
-            local = _pdf_xobjects(form_dict) or names
+            local = _pdf_xobjects(form_dict, objects) or names
             if blob:
                 chunks.append(blob)
             if not blob:
