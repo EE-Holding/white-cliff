@@ -281,20 +281,26 @@ def _intel() -> bool:
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
     """Emulate the layout. The real window cannot be wider than the Intel display."""
     del reset
+    height_px = min(int(height), 900)
+    metrics = {
+        "width": int(width),
+        "height": height_px,
+        "deviceScaleFactor": 1,
+        "mobile": False,
+    }
+    if _intel():
+        # The picture is the window. The screen has to be named with the layout
+        # or the frame stays at the display. Clearing first puts it back there.
+        metrics["screenWidth"] = int(width)
+        metrics["screenHeight"] = height_px
+        page.call("Emulation.setDeviceMetricsOverride", metrics)
+        return
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
         pass
     try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": min(int(height), 900),
-                "deviceScaleFactor": 1,
-                "mobile": False,
-            },
-        )
+        page.call("Emulation.setDeviceMetricsOverride", metrics)
     except PageError:
         pass
 
