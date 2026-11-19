@@ -70,6 +70,8 @@ def test_both_mac_jobs_smoke_the_built_binary():
     settled = driver.split("def _settled_pair", 1)[1].split("\ndef ", 1)[0]
     assert "_intel()" in settled
     assert 'node.setAttribute("value", node.value)' in driver
+    assert "display:none" in driver
+    assert '<circle class="arc"' in driver
     assert "getBoundingClientRect" in driver
     assert "prefers-reduced-motion" in driver
     assert "Page.navigate" in driver

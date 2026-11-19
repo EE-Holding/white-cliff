@@ -366,6 +366,25 @@ def _close_tab(target_id: str) -> None:
         pass
 
 
+def _static_ring(html: str) -> str:
+    """The reduced-motion ring, written into the copy so the first paint is already still."""
+    html = html.replace(
+        '<circle class="arc"',
+        '<circle class="arc" style="display:none"',
+        1,
+    )
+    html = html.replace(
+        '<circle class="dot"',
+        '<circle class="dot" style="display:block"',
+        1,
+    )
+    return html.replace(
+        '<circle class="track"',
+        '<circle class="track" style="stroke:#0a4b8f;stroke-width:4"',
+        1,
+    )
+
+
 def _intel_photo(
     page: DevTools,
     directory: Path,
@@ -379,6 +398,8 @@ def _intel_photo(
 ) -> Path:
     """Copy the page into a new tab and photograph that viewport once."""
     html = _document_html(page)
+    if motion == "reduce":
+        html = _static_ring(html)
     scroll_y = 0
     if keep_scroll and not _PAUSED:
         try:
