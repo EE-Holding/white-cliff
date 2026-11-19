@@ -525,6 +525,10 @@ def drive(
         _fill(page, "#query", query)
         _click(page, 'form[action="/explain"] button')
         _wait_result(page, out_dir, heading, suffix, loading=True)
+        loading_shot = out_dir / f"smoke-{ARCH}-4-loading.png"
+        result_shot = out_dir / f"smoke-{ARCH}-3-nvda.png"
+        if loading_shot.read_bytes() == result_shot.read_bytes():
+            raise PageError("the loading picture is the result page")
         _window(page, 1280, 2200)
         _layout(page, columns=2, width=1160)
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200)
@@ -596,10 +600,14 @@ def _wait_result(
         if loading and not saw_loading:
             try:
                 if _loading(page):
-                    _grab(page, out_dir, f"smoke-{ARCH}-4-loading.png")
+                    _hold(page)
+                    try:
+                        _grab(page, out_dir, f"smoke-{ARCH}-4-loading.png")
+                    finally:
+                        _release(page)
                     saw_loading = True
             except PageError:
-                pass
+                _release(page)
         try:
             state = _state(page)
         except PageError:
