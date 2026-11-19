@@ -280,6 +280,9 @@ def _intel() -> bool:
 
 
 _SCREEN_LEFT: int | None = None
+_BROWSER: DevTools | None = None
+_TARGET_ID = ""
+_BOUNDS = ""
 
 
 def _screen_width(page: DevTools) -> int:
@@ -293,45 +296,64 @@ def _screen_width(page: DevTools) -> int:
 
 
 def _fit_window(page: DevTools, width: int, height: int) -> None:
-    """Ask for the real window. A headless screen of 800px leaves the frame near 759px."""
+    """Put the window on a screen wide enough for the picture.
+
+    The headless screen starts at 800px. A metrics override then reports a wide
+    screen while the photographed window stays near 777px.
+    """
     if not _intel():
         return
-    global _SCREEN_LEFT
+    global _SCREEN_LEFT, _BOUNDS
     if _SCREEN_LEFT is None:
-        screen = _screen_width(page)
         _SCREEN_LEFT = 0
-        if screen and screen < int(width):
+        makers = [page]
+        if _BROWSER is not None and _BROWSER is not page:
+            makers.insert(0, _BROWSER)
+        for session in makers:
             try:
-                added = page.call(
+                added = session.call(
                     "Emulation.addScreen",
-                    {
-                        "left": screen,
-                        "top": 0,
-                        "width": max(int(width), 1400),
-                        "height": max(int(height), 2400),
-                    },
+                    {"left": 2000, "top": 0, "width": 1600, "height": 2400},
                 )
                 info = added.get("screenInfo") if isinstance(added, dict) else None
-                _SCREEN_LEFT = int((info or {}).get("left") or screen)
-            except (PageError, TypeError, ValueError):
-                _SCREEN_LEFT = 0
-    try:
-        found = page.call("Browser.getWindowForTarget")
-        page.call(
-            "Browser.setWindowBounds",
-            {
-                "windowId": found["windowId"],
-                "bounds": {
-                    "left": _SCREEN_LEFT,
-                    "top": 0,
-                    "width": int(width),
-                    "height": int(min(height, 1400)),
-                    "windowState": "normal",
-                },
-            },
-        )
-    except (PageError, KeyError, TypeError):
-        pass
+                _SCREEN_LEFT = int((info or {}).get("left") or 2000)
+                break
+            except (PageError, TypeError, ValueError) as exc:
+                _BOUNDS = str(exc)
+    bounds = {
+        "left": _SCREEN_LEFT,
+        "top": 0,
+        "width": int(width),
+        "height": int(min(height, 1400)),
+        "windowState": "normal",
+    }
+    attempts: list[tuple[DevTools, dict]] = [(page, {})]
+    if _BROWSER is not None and _BROWSER is not page and _TARGET_ID:
+        attempts.insert(0, (_BROWSER, {"targetId": _TARGET_ID}))
+    last = ""
+    for session, params in attempts:
+        try:
+            found = session.call("Browser.getWindowForTarget", params)
+            window_id = found["windowId"]
+            session.call(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "normal"}},
+            )
+            session.call(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": bounds},
+            )
+            seen = session.call("Browser.getWindowForTarget", params).get("bounds") or {}
+            _BOUNDS = (
+                f"{seen.get('left')},{seen.get('top')} "
+                f"{seen.get('width')}x{seen.get('height')}"
+            )
+            if int(seen.get("width") or 0) >= int(width):
+                return
+        except (PageError, KeyError, TypeError, ValueError) as exc:
+            last = str(exc)
+    if last:
+        _BOUNDS = f"{_BOUNDS} {last}".strip()
 
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
@@ -558,7 +580,9 @@ def _intel_photo(
             got = int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
             if len(data) < 1000 or got != wanted:
                 screen = 0 if _PAUSED else _screen_width(fresh)
-                raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
+                raise PageError(
+                    f"{name} is {got}px wide, wanted {wanted}, screen {screen}, window {_BOUNDS}"
+                )
             if height:
                 png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
                 if png_height > height:
@@ -1245,9 +1269,12 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT, _SCREEN_LEFT
+    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS
     _DEBUG_PORT = port
     _SCREEN_LEFT = None
+    _BROWSER = None
+    _TARGET_ID = ""
+    _BOUNDS = ""
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
     stderr_path = Path(stderr_name)
@@ -1304,6 +1331,15 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
             message = f"{message}: {detail[-4000:]}"
         raise PageError(message)
     page = DevTools(info["webSocketDebuggerUrl"])
+    _TARGET_ID = str(info.get("id") or "")
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
+            version = json.loads(response.read().decode("utf-8"))
+        browser_url = version.get("webSocketDebuggerUrl")
+        if browser_url:
+            _BROWSER = DevTools(browser_url)
+    except (OSError, json.JSONDecodeError, PageError):
+        _BROWSER = None
     page.call("Page.enable")
     page.call("Runtime.enable")
     _window(page)
