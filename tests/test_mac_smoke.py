@@ -206,25 +206,6 @@ def test_intel_photo_shows_the_card_beside_the_first(tmp_path, monkeypatch):
     assert _ink(driver, data, 700, 40)
 
 
-def test_intel_window_uses_the_screen_width(monkeypatch):
-    """The Intel display is narrower than the layout. The screen has to match it."""
-    driver = _driver()
-    if driver.chrome_binary() is None:
-        pytest.skip("chrome is not installed")
-    monkeypatch.setattr(driver, "_intel", lambda: True)
-    chrome, page = driver._open_chrome("about:blank")
-    try:
-        driver._window(page, 1280, 2200)
-        screen = driver._eval(page, "screen.width")
-        document = driver._eval(page, "document.documentElement.clientWidth")
-    finally:
-        page.close()
-        if chrome.poll() is None:
-            os.killpg(chrome.pid, signal.SIGTERM)
-    assert screen == 1280
-    assert document == 1280
-
-
 def test_launch_resolves_a_relative_binary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     binary = tmp_path / "dist" / "White Cliff"

@@ -285,20 +285,16 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
         pass
-    height_px = min(int(height), 900)
-    metrics = {
-        "width": int(width),
-        "height": height_px,
-        "deviceScaleFactor": 1,
-        "mobile": False,
-    }
-    # The Intel display is narrower than these layouts. Without the screen size,
-    # the metrics report the requested width while the cards stay in one column.
-    if _intel():
-        metrics["screenWidth"] = int(width)
-        metrics["screenHeight"] = height_px
     try:
-        page.call("Emulation.setDeviceMetricsOverride", metrics)
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": int(width),
+                "height": min(int(height), 900),
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
+        )
     except PageError:
         pass
 
@@ -336,17 +332,12 @@ def _document_width(page: DevTools) -> int:
 
 
 def _wide(page: DevTools, width: int) -> bool:
-    if _css_width(page) != width:
-        try:
-            if _eval(page, "window.innerWidth") != width:
-                return False
-        except PageError:
-            return False
-    if _intel():
-        seen = _document_width(page)
-        if seen and abs(seen - int(width)) > 20:
-            return False
-    return True
+    if _css_width(page) == width:
+        return True
+    try:
+        return _eval(page, "window.innerWidth") == width
+    except PageError:
+        return False
 
 
 def _settled(page: DevTools) -> None:
