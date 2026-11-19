@@ -389,6 +389,26 @@ def _intel_photo(
             )
             if motion or (reveal and not _PAUSED):
                 _motion(tab, motion or "reduce")
+            elif not motion:
+                _motion(tab, "no-preference")
+                _eval(
+                    tab,
+                    """(() => {
+                      const arc = document.querySelector("li.active .arc");
+                      const dot = document.querySelector("li.active .dot");
+                      const track = document.querySelector("li.active .track");
+                      if (arc) {
+                        arc.style.display = "inline";
+                        arc.style.transform = "rotate(140deg)";
+                      }
+                      if (dot) dot.style.display = "none";
+                      if (track) {
+                        track.style.stroke = "#d2d2d7";
+                        track.style.strokeWidth = "3px";
+                      }
+                      return true;
+                    })()""",
+                )
             if motion:
                 shown = ""
                 deadline = time.time() + 2
