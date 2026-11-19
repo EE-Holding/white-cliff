@@ -359,34 +359,58 @@ def _settled(page: DevTools) -> None:
     )
 
 
+def _frame_png(event: dict | None) -> bytes:
+    params = (event or {}).get("params") or {}
+    encoded = params.get("data")
+    if not isinstance(encoded, str) or not encoded:
+        return b""
+    return base64.b64decode(encoded)
+
+
+def _ack_frame(page: DevTools, event: dict | None) -> None:
+    params = (event or {}).get("params") or {}
+    session = params.get("sessionId")
+    if session is None:
+        return
+    try:
+        page.call("Page.screencastFrameAck", {"sessionId": session})
+    except (PageError, TimeoutError, OSError):
+        pass
+
+
 def _live_frame(page: DevTools) -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
-    the next layout at the 906px display. Acknowledging the first frame asks
-    for another, and that one comes back at the real window width.
+    the next layout at the 906px display. The first screencast frame can still
+    show the previous scroll. The next frame replaces it when it is as wide.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
-    event: dict | None = None
     try:
         event = page.next_event("Page.screencastFrame", 5)
-        params = (event or {}).get("params") or {}
-        session = params.get("sessionId")
-        if session is not None:
+        _ack_frame(page, event)
+        chosen = _frame_png(event)
+        if not _PAUSED:
             try:
-                page.call("Page.screencastFrameAck", {"sessionId": session})
-            except (PageError, TimeoutError, OSError):
+                later = page.next_event("Page.screencastFrame", 0.6)
+                _ack_frame(page, later)
+                fresh = _frame_png(later)
+                if fresh and (not chosen or _png_width(fresh) >= _png_width(chosen)):
+                    chosen = fresh
+            except (PageError, TimeoutError):
                 pass
     finally:
         try:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    params = (event or {}).get("params") or {}
-    encoded = params.get("data")
-    if not isinstance(encoded, str) or not encoded:
+    if not chosen:
         raise PageError("the window had no frame")
-    return base64.b64decode(encoded)
+    return chosen
+
+
+def _png_width(data: bytes) -> int:
+    return int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
 
 
 def _intel_photo(
