@@ -639,11 +639,6 @@ def _wait_result(
 
 def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
     """Start the built app. BROWSER records the URL and opens nothing."""
-    try:
-        return _start(binary)
-    except PageError as exc:
-        if "did not record a URL" not in str(exc):
-            raise
     return _start(binary)
 
 
@@ -663,6 +658,7 @@ def _start(binary: str) -> tuple[subprocess.Popen, str, object]:
     env["URL_FILE"] = str(url_file)
     env["BROWSER"] = str(recorder)
     log = open(home / "app.log", "wb")
+    port_file = home / "Library" / "Application Support" / "White Cliff" / "instance.port"
     proc = subprocess.Popen(
         [binary],
         env=env,
@@ -671,11 +667,20 @@ def _start(binary: str) -> tuple[subprocess.Popen, str, object]:
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
-    deadline = time.time() + 30
+    deadline = time.time() + 120
     while time.time() < deadline:
         if url_file.is_file():
             url = url_file.read_text(encoding="utf-8").strip()
             if url.startswith("http://127.0.0.1:"):
+                print(f"app {url}", flush=True)
+                return proc, url, log
+        if port_file.is_file():
+            try:
+                port = int(port_file.read_text(encoding="ascii").split()[1])
+            except (OSError, ValueError, IndexError):
+                port = 0
+            if 0 < port <= 65535:
+                url = f"http://127.0.0.1:{port}/"
                 print(f"app {url}", flush=True)
                 return proc, url, log
         if proc.poll() is not None:
