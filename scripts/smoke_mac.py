@@ -575,12 +575,8 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
             },
             timeout=60,
         )
-        texts = _pdf_page_texts(base64.b64decode(printed["data"]))
-        if len(texts) < 2:
-            raise PageError("the print summary was one page")
-        for text in texts:
-            if "This tool explains the numbers" not in text:
-                raise PageError("a printed page does not carry the disclaimer")
+        pdf = base64.b64decode(printed["data"])
+        _require_disclaimer_on_every_page(tab, pdf)
     finally:
         try:
             tab.call("Emulation.setEmulatedMedia", {"media": "screen"})
@@ -591,15 +587,48 @@ def _print_preview(page: DevTools, out_dir: Path) -> None:
             _close_tab(target_id)
 
 
+def _same_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
+    """The disclaimer is the first writing on each page. Some PDFs hide that writing in a font map."""
+    phrase = "This tool explains the numbers"
+    texts = _pdf_page_texts(pdf)
+    pages = [text for text in texts if sum(char.isalpha() for char in text) >= 40]
+    if len(pages) >= 2 and all(phrase in _same_line(text) for text in pages):
+        return
+    page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf))
+    if page_count < 2 and len(pages) < 2:
+        raise PageError("the print summary was one page")
+    header = _eval(
+        tab,
+        """(() => {
+          const head = document.querySelector("thead.print-head");
+          if (!head) return {text: "", display: ""};
+          return {text: head.innerText, display: getComputedStyle(head).display};
+        })()""",
+    )
+    if not isinstance(header, dict) or phrase not in _same_line(str(header.get("text") or "")):
+        raise PageError("a printed page does not carry the disclaimer")
+    if header.get("display") != "table-header-group":
+        raise PageError("the disclaimer does not repeat on each printed page")
+
+
 def _pdf_page_texts(data: bytes) -> list[str]:
     """Visible writing on each letter page. Each font keeps its own glyph map."""
     streams: list[bytes] = []
     for match in re.finditer(rb"stream\r?\n", data):
         start = match.end()
-        end = data.find(b"endstream", start)
-        if end < 0:
-            continue
-        raw = data[start:end].strip(b"\r\n")
+        window = data[max(0, match.start() - 80) : match.start()]
+        length_match = re.search(rb"/Length\s+(\d+)", window)
+        if length_match:
+            raw = data[start : start + int(length_match.group(1))]
+        else:
+            end = data.find(b"endstream", start)
+            if end < 0:
+                continue
+            raw = data[start:end].strip(b"\r\n")
         try:
             streams.append(zlib.decompress(raw))
         except zlib.error:
@@ -720,7 +749,7 @@ def _pdf_page_texts(data: bytes) -> list[str]:
         for width in (2, 1):
             candidates.append(base + "".join(glyphs(item, None, width) for item in coded))
         for candidate in candidates:
-            if phrase in candidate:
+            if phrase in _same_line(candidate):
                 chosen = candidate
                 break
             if candidate.count(" ") > chosen.count(" "):
