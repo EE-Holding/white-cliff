@@ -22,6 +22,7 @@ from pathlib import Path
 
 TEST_NAME = "White Cliff Test"
 ARCH = platform.machine()
+_DISPLAY_WIDTH = 0
 
 
 def test_email() -> str:
@@ -252,9 +253,39 @@ def _crop_png(data: bytes, height: int) -> bytes:
     return _png_bytes(width, height, color, bit_depth, rows[:height])
 
 
+def _remember_display(page: DevTools) -> None:
+    """The real display, read before any emulation. Intel clamps a wider window to this."""
+    global _DISPLAY_WIDTH
+    try:
+        raw = _eval(page, "screen.availWidth || screen.width || 0")
+    except PageError:
+        raw = 0
+    if isinstance(raw, (int, float)) and int(raw) > 200:
+        _DISPLAY_WIDTH = int(raw)
+
+
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
-    """Emulate the layout size. Clear the previous override first; a screenshot leaves it stuck on Intel."""
+    """A size the display can hold is a real window. A wider layout is emulated."""
     del reset
+    width = int(width)
+    height = min(int(height), 900)
+    if _DISPLAY_WIDTH and width <= _DISPLAY_WIDTH - 16:
+        try:
+            page.call("Emulation.clearDeviceMetricsOverride")
+        except PageError:
+            pass
+        try:
+            window = page.call("Browser.getWindowForTarget")
+            page.call(
+                "Browser.setWindowBounds",
+                {
+                    "windowId": window["windowId"],
+                    "bounds": {"width": width, "height": height, "windowState": "normal"},
+                },
+            )
+        except PageError:
+            pass
+        return
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
     except PageError:
@@ -262,12 +293,7 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": min(int(height), 900),
-                "deviceScaleFactor": 1,
-                "mobile": False,
-            },
+            {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
         )
     except PageError:
         pass
@@ -759,6 +785,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     page = DevTools(info["webSocketDebuggerUrl"])
     page.call("Page.enable")
     page.call("Runtime.enable")
+    _remember_display(page)
     _window(page)
     page.call("Page.navigate", {"url": url})
     try:
