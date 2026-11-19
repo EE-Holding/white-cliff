@@ -92,8 +92,10 @@ def load_language(path: Path) -> str:
 
 
 def _backup_private(path: Path) -> None:
-    """Keep an unreadable identity file. The copy is owner-only."""
+    """Keep an unreadable identity file. The copy is owner-only and is never replaced."""
     backup = path.with_name(path.name + ".bak")
+    if backup.exists():
+        return
     payload = path.read_bytes()
     fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
@@ -107,21 +109,26 @@ def _backup_private(path: Path) -> None:
     os.chmod(backup, 0o600)
 
 
+def _load_object(path: Path) -> dict:
+    """The stored object. A corrupt file is copied aside once, then treated as empty."""
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        _backup_private(path)
+        return {}
+    if not isinstance(loaded, dict):
+        _backup_private(path)
+        return {}
+    return loaded
+
+
 def save_language(path: Path, code: str) -> None:
     """Store the language beside the name and email. It is not sent anywhere."""
     if code not in {"en", "de"}:
         return
-    data: dict = {}
-    if path.is_file():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            _backup_private(path)
-            loaded = {}
-        if not isinstance(loaded, dict):
-            _backup_private(path)
-            loaded = {}
-        data = loaded
+    data = _load_object(path)
     data["language"] = code
     _write_private(path, json.dumps(data, indent=2) + "\n")
 
@@ -130,11 +137,10 @@ def save_identity(path: Path, name: str, email: str) -> Identity | None:
     identity = _checked(name, email)
     if identity is None:
         return None
-    data = _read_json(path)
-    payload = {"name": identity.name, "email": identity.email}
-    if data.get("language") in {"en", "de"}:
-        payload["language"] = data["language"]
-    _write_private(path, json.dumps(payload, indent=2) + "\n")
+    data = _load_object(path)
+    data["name"] = identity.name
+    data["email"] = identity.email
+    _write_private(path, json.dumps(data, indent=2) + "\n")
     return identity
 
 

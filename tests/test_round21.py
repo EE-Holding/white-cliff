@@ -180,7 +180,8 @@ def test_german_check_reasons_use_the_cleared_labels():
     assert "Auf das Unternehmen entfallendes Nettoergebnis" in net
     assert "Operating income" not in operating
     assert "Net income" not in net
-    assert "Diluted shares" in diluted
+    assert diluted == "„Verwässerte Aktienzahl“ ist im Bericht nicht enthalten."
+    assert "Diluted shares" not in diluted
 
 
 def test_a_german_per_share_figure_keeps_the_english_label():

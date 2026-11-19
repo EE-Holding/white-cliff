@@ -313,7 +313,26 @@ def _wide(page: DevTools, width: int) -> bool:
 _DEBUG_PORT = 0
 
 
+def _stamp_fields(page: DevTools) -> None:
+    """Keep a typed ticker in a copied document. The value property is not in the markup."""
+    if _PAUSED:
+        return
+    try:
+        _eval(
+            page,
+            """(() => {
+              document.querySelectorAll("input, textarea").forEach((node) => {
+                node.setAttribute("value", node.value);
+              });
+              return true;
+            })()""",
+        )
+    except (PageError, TimeoutError, OSError):
+        return
+
+
 def _document_html(page: DevTools) -> str:
+    _stamp_fields(page)
     root = page.call("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
     found = page.call("DOM.querySelector", {"nodeId": root, "selector": "html"})
     node = int(found.get("nodeId") or 0)
@@ -1184,7 +1203,9 @@ def _distinct(directory: Path) -> None:
 
 
 def _settled_pair(first: str, second: str) -> bool:
-    """The first result and the 1100 result are one settled viewport."""
+    """Intel photographs both settled results from one viewport. Other machines must differ."""
+    if not _intel():
+        return False
     kinds = {first.split("-", 2)[-1], second.split("-", 2)[-1]}
     return kinds == {"3-nvda.png", "8-result-1100.png"}
 
@@ -1235,6 +1256,7 @@ _PAUSED = False
 def _hold(page: DevTools) -> None:
     """Stop the page while the picture is taken, so the result cannot replace the steps."""
     global _PAUSED
+    _stamp_fields(page)
     _PAUSED = True
     try:
         page.call("Debugger.enable")

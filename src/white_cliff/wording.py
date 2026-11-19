@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from white_cliff.advice import advice_reason
 from white_cliff.checks import ONE_OFF, CheckResult, run_checks
-from white_cliff.compare import Cell, columns_for, percent_change, points_change
+from white_cliff.compare import Cell, columns_for, percent_change
 from white_cliff.explain import _lead, _span, statement_name
 from white_cliff.facts import Fact, format_decimal
 from white_cliff.german import format_measure, german_hit
@@ -432,8 +432,10 @@ def _parts_html(template_id: str, parts: list[tuple], class_name: str = "") -> s
         display, href = part[1], part[2]
         if not href.startswith("https://www.sec.gov/"):
             raise ValueError("number without a filing link")
+        folded = display.casefold()
+        link_class = ' class="pct"' if "percent" in folded or "prozent" in folded else ""
         body.append(
-            f'<a href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
+            f'<a{link_class} href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
         )
     class_attr = f' class="{class_name}"' if class_name else ""
     note_html = "".join(note[1] for note in notes)
@@ -525,6 +527,22 @@ def label_for(role: str, fact: Fact) -> str:
     return text
 
 
+def _shown_margin(value: Decimal) -> Decimal:
+    """The one-decimal percent a bar actually shows."""
+    return value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+
+def _margin_gap(current: Decimal, prior: Decimal) -> Decimal:
+    """Difference of the shown percents. The words use this, not the raw ratio."""
+    return _shown_margin(current) - _shown_margin(prior)
+
+
+def _displays_match(current: Cell, prior: Cell) -> bool:
+    unit = current.unit or prior.unit or ""
+    other = prior.unit or unit
+    return show_measure(current.value, unit) == show_measure(prior.value, other)
+
+
 def _direction(current: Decimal, prior: Decimal) -> str:
     if current > prior:
         return "rose"
@@ -571,7 +589,7 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = points_change(current.value, prior.value)
+        delta = _margin_gap(current.value, prior.value)
         if delta == 0:
             return [[
                 ("text", f"{figure} was unchanged from "),
@@ -597,13 +615,22 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
             ("text", "."),
         ]]
-    pct = percent_change(current.value, prior.value)
-    if pct == 0:
+    if _displays_match(current, prior):
         return [[
             ("text", f"{figure} was unchanged from "),
             _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
             ("text", " at "),
             _link_fact(current.fact),
+            ("text", "."),
+        ]]
+    pct = percent_change(current.value, prior.value)
+    if pct == 0:
+        word = _higher(current.value, prior.value)
+        return [[
+            ("text", "It was "),
+            ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
+            ("text", f" {word} than "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
             ("text", "."),
         ]]
     sign_flip = current.value != 0 and prior.value != 0 and (current.value > 0) != (prior.value > 0)
@@ -675,7 +702,7 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = points_change(current.value, prior.value)
+        delta = _margin_gap(current.value, prior.value)
         if delta == 0:
             return [[
                 ("text", f"Der Wert der Position „{figure}“ blieb gegenüber dem "),
@@ -701,13 +728,22 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             earlier,
             ("text", "."),
         ]]
-    pct = percent_change(current.value, prior.value)
-    if pct == 0 or _direction(current.value, prior.value) == "was unchanged":
+    if _displays_match(current, prior):
         return [[
             ("text", f"Der Wert der Position „{figure}“ blieb gegenüber dem "),
             earlier,
             ("text", " unverändert bei "),
             _link_fact(current.fact),
+            ("text", "."),
+        ]]
+    pct = percent_change(current.value, prior.value)
+    if pct == 0:
+        word = "höher" if current.value >= prior.value else "niedriger"
+        return [[
+            ("text", "Der Wert war um "),
+            ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
+            ("text", f" {word} als im "),
+            earlier,
             ("text", "."),
         ]]
     if pct is None:
@@ -758,7 +794,7 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", "."),
         ]]
     if measure == "margin":
-        delta = points_change(current.value, prior.value)
+        delta = _margin_gap(current.value, prior.value)
         if delta == 0:
             return [[
                 ("text", f"{figure} was unchanged from "),
@@ -784,13 +820,22 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
             ("text", "."),
         ]]
-    pct = percent_change(current.value, prior.value)
-    if pct == 0:
+    if _displays_match(current, prior):
         return [[
             ("text", f"{figure} was unchanged from "),
             _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
             ("text", " at "),
             _link_fact(current.fact),
+            ("text", "."),
+        ]]
+    pct = percent_change(current.value, prior.value)
+    if pct == 0:
+        word = _higher(current.value, prior.value)
+        return [[
+            ("text", "It was "),
+            ("link", show_measure(abs(current.value - prior.value), current.unit), fact_href(current.fact)),
+            ("text", f" {word} than "),
+            _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
             ("text", "."),
         ]]
     sign_flip = current.value != 0 and prior.value != 0 and (current.value > 0) != (prior.value > 0)
@@ -1049,7 +1094,10 @@ def _chart(
                 f'<div class="fill{negative}" style="left:{left}%;width:{width}%"></div></div></li>'
             )
         index += 1
-    label_text = html.escape(ui("bar_chart") + " " + "; ".join(spoken) + ".", quote=True)
+    spoken_text = "; ".join(part.rstrip(".") for part in spoken)
+    title = ui("bar_chart").rstrip(".")
+    label = f"{title}. {spoken_text}." if spoken_text else title + "."
+    label_text = html.escape(label, quote=True)
     return f'<ul class="chart" role="img" aria-label="{label_text}">{"".join(items)}</ul>\n'
 
 
@@ -1067,12 +1115,12 @@ def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[s
     ):
         return None
     period = _anchor("per", phrase, fact_href(prior.fact))
-    if current.value == prior.value:
+    if _displays_match(current, prior):
         if german():
             return "unchanged", "blieb unverändert gegenüber " + period
         return "unchanged", "was unchanged from " + period
     pct = percent_change(current.value, prior.value)
-    if measure == "net_debt" or pct is None:
+    if measure == "net_debt" or pct is None or pct == 0:
         diff = show_measure(abs(current.value - prior.value), current.unit)
         linked = _anchor("pct", diff, fact_href(current.fact))
         if german():
@@ -1086,10 +1134,6 @@ def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[s
         word = "higher" if current.value >= prior.value else "lower"
         return "amount", f"was {linked} {word} than {period}"
     direction = _direction(current.value, prior.value)
-    if pct == 0 or direction == "was unchanged":
-        if german():
-            return "unchanged", "blieb unverändert gegenüber " + period
-        return "unchanged", "was unchanged from " + period
     percent = _anchor("pct", show_measure(abs(pct), "percent"), fact_href(current.fact))
     if german():
         verb = "stieg" if direction == "rose" else "sank"
@@ -1100,6 +1144,9 @@ def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[s
 def _anchor(class_name: str, display: str, href: str) -> str:
     if not href.startswith("https://www.sec.gov/"):
         raise ValueError("number without a filing link")
+    folded = display.casefold()
+    if class_name == "pct" and "percent" not in folded and "prozent" not in folded:
+        class_name = "fig"
     return (
         f'<a class="{class_name}" href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
     )
@@ -1512,6 +1559,9 @@ def _german_figure(name: str) -> str:
         "Net income": "LBL.net_income",
         "Revenue": "LBL.revenue",
         "Gross profit": "LBL.gross_profit",
+        "Diluted shares": "LBL.diluted_shares",
+        "Income tax": "LBL.income_tax",
+        "Accounts receivable": "LBL.accounts_receivable",
     }
     ident = labels.get(name)
     if ident:

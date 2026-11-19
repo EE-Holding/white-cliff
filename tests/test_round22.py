@@ -75,31 +75,33 @@ def _card(page: str, needle: str) -> str:
     raise AssertionError(needle)
 
 
-def test_nvidia_gross_margin_of_a_hundredth_reads_unchanged_and_net_reads_9_4():
-    for language, gross_name, net_name, unchanged, lower, wrong_gross, wrong_net in (
+def test_nvidia_gross_margin_matches_the_shown_bars_and_net_reads_9_5():
+    for language, gross_name, net_name, higher, lower, wrong_gross, wrong_net in (
         (
             "en",
             "gross margin",
             "net margin",
-            "was unchanged from the quarter ended April 26, 2026",
-            "9.4 percentage points lower than the quarter ended April 26, 2026",
-            "0.1 percentage point",
-            "9.5 percentage points",
+            "0.1 percentage points higher than the quarter ended April 26, 2026",
+            "9.5 percentage points lower than the quarter ended April 26, 2026",
+            "was unchanged",
+            "9.4 percentage points",
         ),
         (
             "de",
             "bruttomarge",
             "nettomarge",
-            "blieb gegenüber dem Quartal zum 26. April 2026 unverändert",
-            "9,4 Prozentpunkte niedriger als im Quartal zum 26. April 2026",
-            "0,1 Prozentpunkt",
-            "9,5 Prozentpunkte",
+            "0,1 Prozentpunkte höher als im Quartal zum 26. April 2026",
+            "9,5 Prozentpunkte niedriger als im Quartal zum 26. April 2026",
+            "unverändert",
+            "9,4 Prozentpunkte",
         ),
     ):
         page, _explained = _page("0001045810-26-000075", language, "0001045810-26-000052")
         gross = _plain(_card(page, gross_name))
         net = _plain(_card(page, net_name))
-        assert unchanged in gross
+        assert higher in gross
+        assert "unchanged" not in gross.casefold()
+        assert "unverändert" not in gross.casefold()
         assert wrong_gross not in gross
         assert lower in net
         assert wrong_net not in net

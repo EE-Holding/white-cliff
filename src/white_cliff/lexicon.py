@@ -270,6 +270,9 @@ STRINGS: dict[str, tuple[str, str]] = {
     'LBL.operating_margin': ('The operating margin (operating income / revenue)', 'Operative Marge (Betriebsergebnis / Umsatz)'),
     'LBL.net_margin': ('The net margin (net income attributable to the company / revenue)', 'Nettomarge (auf das Unternehmen entfallendes Nettoergebnis / Umsatz)'),
     'LBL.yoy': ('The year over year change in revenue', 'Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum'),
+    'LBL.diluted_shares': ('Diluted shares', 'Verwässerte Aktienzahl'),
+    'LBL.income_tax': ('Income tax', 'Ertragsteuer'),
+    'LBL.accounts_receivable': ('Accounts receivable', 'Forderungen aus Lieferungen und Leistungen'),
     'PRINT.button': ('Print summary', 'Zusammenfassung drucken'),
     'PRINT.sources': ('Sources on sec.gov', 'Quellen auf sec.gov'),
 }
