@@ -540,106 +540,55 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
         pass
 
 
-_SAVED = b""
-_BEGIN = ""
-
-
-def _begin_png(page: DevTools) -> bytes:
-    """Paint one headless frame and return it.
-
-    A screencast can keep returning the previous picture after the page has
-    changed. This asks the headless renderer to paint now.
-    """
-    global _BEGIN
-    try:
-        result = page.call(
-            "HeadlessExperimental.beginFrame",
-            {"screenshot": {"format": "png", "optimizeForSpeed": True}},
-            timeout=8,
-        )
-    except (PageError, TimeoutError, OSError) as exc:
-        _BEGIN = str(exc)[:180]
-        return b""
-    encoded = result.get("screenshotData") if isinstance(result, dict) else ""
-    if not isinstance(encoded, str) or not encoded:
-        _BEGIN = "no screenshot " + str(result)[:140]
-        return b""
-    try:
-        return base64.b64decode(encoded)
-    except ValueError:
-        return b""
-
-
-def _live_frame(page: DevTools, ignore: bytes = b"") -> bytes:
+def _live_frame(page: DevTools) -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
     the next layout at the 906px display. The first screencast frame can still
-    be the previous picture. Wait until a later frame is as wide and is not
-    that picture. Stopping the cast afterwards lets the next layout resize.
+    show the previous scroll. The next frame replaces it when it is as wide.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
-    unwanted = {item for item in (_SAVED, ignore) if item}
     chosen = b""
     try:
-        if not _PAUSED:
+        try:
+            event = page.next_event("Page.screencastFrame", 5)
+        except (PageError, TimeoutError):
+            event = None
+        _ack_frame(page, event)
+        chosen = _frame_png(event)
+        if chosen and not _PAUSED:
             try:
-                _eval(
-                    page,
-                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                )
-            except (PageError, TimeoutError, OSError):
-                pass
-        deadline = time.time() + (0.4 if _PAUSED else 0.8)
-        while time.time() < deadline:
-            try:
-                event = page.next_event(
-                    "Page.screencastFrame", max(0.05, min(0.4, deadline - time.time()))
-                )
+                later = page.next_event("Page.screencastFrame", 0.6)
+                _ack_frame(page, later)
+                fresh = _frame_png(later)
+                if fresh and (not chosen or _png_width(fresh) >= _png_width(chosen)):
+                    chosen = fresh
             except (PageError, TimeoutError):
-                if chosen and chosen not in unwanted:
-                    break
-                continue
-            _ack_frame(page, event)
-            fresh = _frame_png(event)
-            if not fresh:
-                continue
-            if not chosen or _png_width(fresh) >= _png_width(chosen):
-                chosen = fresh
-            if chosen not in unwanted:
-                if unwanted:
-                    break
-                try:
-                    later = page.next_event("Page.screencastFrame", 0.4)
-                    _ack_frame(page, later)
-                    newer = _frame_png(later)
-                    if newer and _png_width(newer) >= _png_width(chosen):
-                        chosen = newer
-                except (PageError, TimeoutError):
-                    pass
-                break
+                pass
     finally:
         try:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    if chosen and _PAUSED and chosen in unwanted:
-        chosen = b""
-    if (not chosen or chosen in unwanted) and not _PAUSED:
-        painted = _begin_png(page)
-        if painted and painted not in unwanted:
-            chosen = painted
-    if (not chosen or chosen in unwanted) and not _PAUSED:
+    if not chosen and not _PAUSED:
         result = page.call(
             "Page.captureScreenshot",
             {"format": "png", "captureBeyondViewport": True, "optimizeForSpeed": True},
             timeout=8,
         )
-        painted = base64.b64decode(result["data"])
-        if painted and painted not in unwanted:
-            chosen = painted
-        elif not chosen:
-            chosen = painted
+        chosen = base64.b64decode(result["data"])
+    if not chosen and _PAUSED:
+        # The resized window can have no screencast frame while it is paused.
+        # The visible viewport is enough; the whole document is thousands of pixels.
+        try:
+            result = page.call(
+                "Page.captureScreenshot",
+                {"format": "png", "optimizeForSpeed": True},
+                timeout=5,
+            )
+            chosen = base64.b64decode(result["data"])
+        except (PageError, TimeoutError, OSError):
+            chosen = b""
     if not chosen:
         raise PageError("the window had no frame")
     return chosen
@@ -664,13 +613,16 @@ def _intel_photo(
     del reveal
     wanted = int(width or _css_width(page) or 1100)
     height_px = min(int(height or 900), 900)
-    global _SAVED
     last: Exception | None = None
-    rejected = b""
     for attempt in range(2):
-        # A second connection keeps the search page after this page has moved on.
-        fresh = page
+        # A new connection keeps the search page picture after the result is on
+        # this page. Use this connection, and a new one only while it is paused.
+        own = bool(_PAUSED)
+        fresh = DevTools(page.ws_url) if own else page
         try:
+            if own:
+                fresh.call("Page.enable")
+                fresh.call("Runtime.enable")
             if not _PAUSED:
                 _window(fresh, wanted, height_px)
                 try:
@@ -691,35 +643,28 @@ def _intel_photo(
             data = b""
             got = 0
             while True:
-                data = _live_frame(fresh, rejected)
+                data = _live_frame(fresh)
                 got = _png_width(data)
-                if len(data) >= 1000 and got == wanted and data not in {_SAVED, rejected}:
+                if len(data) >= 1000 and got == wanted:
                     break
-                if data in {_SAVED, rejected} or got != wanted:
-                    rejected = data
                 if _PAUSED or time.time() >= deadline:
-                    if len(data) >= 1000 and got == wanted and data not in {_SAVED, rejected}:
-                        break
-                    if len(data) >= 1000 and got == wanted and not _SAVED:
-                        break
-                    if len(data) >= 1000 and got == wanted:
-                        raise PageError(f"{name} repeated the previous picture ({_BEGIN or 'unchanged'})")
                     screen = 0 if _PAUSED else _screen_width(fresh)
-                    detail = f", {_BEGIN}" if _BEGIN else ""
-                    raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}{detail}")
+                    raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
-            _SAVED = data
-            if height:
-                png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
-                if png_height > height:
-                    data = _crop_png(data, height)
+            limit = height or height_px
+            png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
+            if png_height > limit:
+                data = _crop_png(data, limit)
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
+        finally:
+            if own:
+                fresh.close()
     raise PageError(last)
 
 
@@ -1456,8 +1401,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS, _SAVED
-    _SAVED = b""
+    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS
     _DEBUG_PORT = port
     _SCREEN_LEFT = None
     _BROWSER = None
@@ -1695,26 +1639,12 @@ def _grab_steps(
     height: int = 0,
     motion: str = "",
 ) -> Path:
-    """Freeze the steps, then photograph them.
-
-    A paused Intel frame can be the previous picture, or never arrive after a
-    resize. When that happens, take the frame while the page can still paint.
-    """
-    previous = _SAVED
+    """Freeze the steps, then photograph them."""
+    _hold(page)
     try:
-        _hold(page)
-        try:
-            path = _grab(page, directory, name, width, height, motion=motion)
-        finally:
-            _release(page)
-    except (PageError, TimeoutError, OSError):
+        return _grab(page, directory, name, width, height, motion=motion)
+    finally:
         _release(page)
-        if not _intel():
-            raise
-        return _grab(page, directory, name, width, height, motion=motion)
-    if _intel() and previous and _SAVED == previous:
-        return _grab(page, directory, name, width, height, motion=motion)
-    return path
 
 
 def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: int) -> None:
