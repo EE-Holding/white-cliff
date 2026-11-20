@@ -328,6 +328,8 @@ def _png_rows(data: bytes) -> tuple[int, int, int, int, list[bytes]]:
     index = 0
     previous = bytearray(stride)
     for _ in range(height):
+        if index >= len(raw):
+            raise PageError("the picture is truncated")
         filter_type = raw[index]
         index += 1
         row = bytearray(raw[index : index + stride])
@@ -969,6 +971,130 @@ def _intel_photo(
     raise PageError(last)
 
 
+def _page_url(page: DevTools) -> str:
+    """The address a new window should open. A result drawn in place lives at /result."""
+    href = _eval(page, "location.href")
+    if not isinstance(href, str) or not href.startswith("http"):
+        raise PageError("the page had no address")
+    parts = urllib.parse.urlsplit(href)
+    if parts.path.rstrip("/") == "/result":
+        return href
+    is_result = _eval(page, "document.body && document.body.className.indexOf('result') !== -1")
+    if is_result is True:
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/result", "", ""))
+    return href
+
+
+def _painted_frame(page: DevTools, seconds: float, previous: bytes = b"") -> bytes:
+    """The newest screencast frame that has ink and is not the frame from before a scroll."""
+    best = b""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            event = page.next_event("Page.screencastFrame", 0.3)
+        except (PageError, TimeoutError):
+            if best:
+                return best
+            continue
+        _ack_frame(page, event)
+        data = _frame_png(event)
+        if not data or data == previous or _blank(data):
+            continue
+        best = data
+    return best
+
+
+def _born_shot(
+    directory: Path,
+    name: str,
+    width: int,
+    height: int,
+    url: str,
+    *,
+    reduced: bool = False,
+    prepare=None,
+) -> Path:
+    """Photograph a window created at this width. The window already on screen is not resized."""
+    trace: list[str] = []
+    started = time.monotonic()
+
+    def mark(step: str) -> None:
+        trace.append(f"{int((time.monotonic() - started) * 1000)} {step}")
+
+    def fail(message: str) -> None:
+        detail = "\n".join(trace)
+        raise PageError(f"{message}\n{detail}" if detail else message) from None
+
+    shot = None
+    try:
+        shot = _fresh_target(width, 900)
+        mark(f"Target.createTarget {width}x900")
+        shot.call("Page.enable")
+        mark("Page.enable")
+        shot.call("Runtime.enable")
+        mark("Runtime.enable")
+        if width < 500:
+            try:
+                shot.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
+            mark(f"Emulation.setDeviceMetricsOverride {width}x900")
+        if reduced:
+            _motion(shot, "reduce")
+            mark("Emulation.setEmulatedMedia")
+        shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+        mark("Page.startScreencast")
+        shot.call("Page.navigate", {"url": url})
+        mark("Page.navigate")
+        _wait_ready(shot, 30)
+        deadline = time.time() + 20
+        ready = False
+        while time.time() < deadline:
+            try:
+                length = _eval(shot, "document.body ? document.body.innerText.length : 0") or 0
+                ready = int(length) > 20 and _column_shown(shot)
+            except (PageError, TypeError, ValueError):
+                ready = False
+            if ready:
+                break
+            time.sleep(0.05)
+        if not ready:
+            fail("the page did not paint")
+        mark("paint-ready")
+        _paint(shot)
+        before = _painted_frame(shot, 1.5)
+        if not before:
+            fail("the page did not paint")
+        mark("painted")
+        if prepare is not None:
+            crop = prepare(shot)
+            if isinstance(crop, int) and crop > 0:
+                height = crop
+            mark("prepare")
+            _paint(shot)
+            data = _painted_frame(shot, 1.5, previous=before)
+            if not data:
+                fail("the picture did not change")
+        else:
+            data = before
+        mark(f"frame {_png_width(data)}")
+        try:
+            return _commit_live_frame(directory, name, data, width, height)
+        except PageError as exc:
+            fail(str(exc))
+    finally:
+        if shot is not None:
+            _close_loading_target(shot)
+
+
 def _shot(
     page: DevTools,
     directory: Path,
@@ -979,13 +1105,8 @@ def _shot(
     full: bool = False,
 ) -> Path:
     if _intel():
-        if full:
-            try:
-                _motion(page, "reduce")
-            except PageError:
-                pass
-        _window(page, width, height)
-        return _intel_photo(page, directory, name, width, height, keep_scroll=False, reveal=full)
+        # The open window's cast stays at the size it first painted. A new window does not.
+        return _born_shot(directory, name, width, height, _page_url(page), reduced=full)
     last: Exception | None = None
     asked = height
     for _ in range(2):
@@ -2256,15 +2377,7 @@ def _wait_text(page: DevTools, needle: str, timeout: float = 20) -> None:
     raise PageError(last[:400] or "the expected text did not appear")
 
 
-def _share_card(page: DevTools, directory: Path, name: str, width: int, height: int) -> None:
-    """One named picture of the German share-count card at this width."""
-    deadline = time.time() + 8
-    while time.time() < deadline:
-        _window(page, width, max(height, 1100))
-        if _wide(page, width):
-            break
-        time.sleep(0.1)
-    _eval(page, "window.scrollTo(0, 0)")
+def _share_box(page: DevTools) -> dict:
     box = _eval(
         page,
         """
@@ -2282,6 +2395,67 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
             "JSON.stringify([...document.querySelectorAll('h3.label')].map((item) => item.textContent))",
         )
         raise PageError(f"the German share card was not on the page: {labels}")
+    return box
+
+
+_PANEL_SCRIPT = {
+    "balance": """
+        (() => {
+          const card = [...document.querySelectorAll("article.card")].find((item) =>
+            item.textContent.includes("abzüglich Zahlungsmittel"));
+          if (!card) return false;
+          const heading = card.querySelector("h3") || card;
+          heading.scrollIntoView({block: "start", inline: "nearest"});
+          window.scrollBy(0, -24);
+          return true;
+        })()
+    """,
+    "checks": """
+        (() => {
+          const section = document.querySelector('section.check[data-check="C8"]');
+          if (!section) return false;
+          const hits = [section, ...section.querySelectorAll("*")].filter((item) =>
+            (item.textContent || "").includes("Die Ertragsteuer lag"));
+          hits.sort((a, b) => a.textContent.length - b.textContent.length);
+          (hits[0] || section).scrollIntoView({block: "start", inline: "nearest"});
+          window.scrollBy(0, -24);
+          return true;
+        })()
+    """,
+    "explain": """
+        (() => {
+          const hits = [...document.querySelectorAll("body *")].filter((item) =>
+            (item.textContent || "").includes("Formel:"));
+          if (!hits.length) return false;
+          hits.sort((a, b) => a.textContent.length - b.textContent.length);
+          hits[0].scrollIntoView({block: "start", inline: "nearest"});
+          window.scrollBy(0, -24);
+          return true;
+        })()
+    """,
+}
+
+
+def _share_card(page: DevTools, directory: Path, name: str, width: int, height: int) -> None:
+    """One named picture of the German share-count card at this width."""
+    if _intel():
+
+        def prepare(shot: DevTools) -> int:
+            _eval(shot, "window.scrollTo(0, 0)")
+            box = _share_box(shot)
+            _eval(shot, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
+            return max(int(box["height"]) + 16, 280)
+
+        _born_shot(directory, name, width, height, _page_url(page), prepare=prepare)
+        return
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        _window(page, width, max(height, 1100))
+        if _wide(page, width):
+            break
+        time.sleep(0.1)
+    _eval(page, "window.scrollTo(0, 0)")
+    box = _share_box(page)
     _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
     _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
 
@@ -2559,7 +2733,33 @@ def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: in
 
 
 def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: str) -> None:
-    """One German panel at 1280. Scroll the named line into the viewport, then photograph it."""
+    """One German panel at this width. Scroll the named line into the viewport, then photograph it."""
+    if _intel():
+        url = _page_url(page)
+
+        def prepare(shot: DevTools) -> None:
+            if kind == "explain":
+                opened = _eval(
+                    shot,
+                    """
+                    (() => {
+                      const card = [...document.querySelectorAll("article.card")].find((item) =>
+                        item.textContent.includes("Formel:"));
+                      if (!card) return false;
+                      const button = card.querySelector("button.explain");
+                      if (button) button.click();
+                      return true;
+                    })()
+                    """,
+                )
+                if opened is not True:
+                    raise PageError("the German formula line was not on the page")
+                _wait_text(shot, "Formel:")
+            if _eval(shot, _PANEL_SCRIPT[kind]) is not True:
+                raise PageError(f"the German {kind} picture was not on the page")
+
+        _born_shot(directory, name, width, 900, url, prepare=prepare)
+        return
     _fit(page, width, 900)
     if kind == "explain":
         opened = _eval(
@@ -2578,43 +2778,7 @@ def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: st
         if opened is not True:
             raise PageError("the German formula line was not on the page")
         _wait_text(page, "Formel:")
-    script = {
-        "balance": """
-            (() => {
-              const card = [...document.querySelectorAll("article.card")].find((item) =>
-                item.textContent.includes("abzüglich Zahlungsmittel"));
-              if (!card) return false;
-              const heading = card.querySelector("h3") || card;
-              heading.scrollIntoView({block: "start", inline: "nearest"});
-              window.scrollBy(0, -24);
-              return true;
-            })()
-        """,
-        "checks": """
-            (() => {
-              const section = document.querySelector('section.check[data-check="C8"]');
-              if (!section) return false;
-              const hits = [section, ...section.querySelectorAll("*")].filter((item) =>
-                (item.textContent || "").includes("Die Ertragsteuer lag"));
-              hits.sort((a, b) => a.textContent.length - b.textContent.length);
-              (hits[0] || section).scrollIntoView({block: "start", inline: "nearest"});
-              window.scrollBy(0, -24);
-              return true;
-            })()
-        """,
-        "explain": """
-            (() => {
-              const hits = [...document.querySelectorAll("body *")].filter((item) =>
-                (item.textContent || "").includes("Formel:"));
-              if (!hits.length) return false;
-              hits.sort((a, b) => a.textContent.length - b.textContent.length);
-              hits[0].scrollIntoView({block: "start", inline: "nearest"});
-              window.scrollBy(0, -24);
-              return true;
-            })()
-        """,
-    }[kind]
-    if _eval(page, script) is not True:
+    if _eval(page, _PANEL_SCRIPT[kind]) is not True:
         raise PageError(f"the German {kind} picture was not on the page")
     _grab(page, directory, name, 0, 0)
 

@@ -349,6 +349,83 @@ def test_the_result_picture_does_not_wait_on_the_renderer(tmp_path, monkeypatch)
     assert waited == [False] * len(waited)
 
 
+def test_a_wider_result_picture_comes_from_a_new_window(tmp_path, monkeypatch):
+    """A wider result is a new window. Resizing the open window keeps the old bitmap."""
+    driver = _driver()
+
+    def picture(seed: int, width: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(width * 3)
+            for x in range(width * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(width, 60, 2, 8, rows)
+
+    fresh = picture(6, 1280)
+    order: list[str] = []
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def call(self, method, params=None, timeout=20):
+            order.append(method)
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if method == "Emulation.setEmulatedMedia":
+                features = params.get("features") or [{}]
+                order.append("media " + str(features[0].get("value")))
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            if "requestAnimationFrame" in expression:
+                order.append("paint")
+            return {}
+
+        def next_event(self, method, timeout):
+            if "paint" not in order:
+                raise driver.PageError(method)
+            raw = __import__("base64").b64encode(fresh).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(
+        driver,
+        "_fresh_target",
+        lambda width, height: order.append(f"createTarget {width}x{height}") or Shot(),
+    )
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(
+        driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied"))
+    )
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: order.append("close"))
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._shot(
+            Source(), tmp_path, "smoke-x86_64-9-result-1280.png", width=1280, height=2200, full=True
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert path.read_bytes() == fresh
+    assert order.index("createTarget 1280x900") < order.index("Page.startScreencast")
+    assert order.index("Page.startScreencast") < order.index("Page.navigate")
+    assert order.index("media reduce") < order.index("Page.navigate")
+    assert "resize" not in order
+    assert "Page.captureScreenshot" not in order
+
+
 def test_the_filing_request_waits_until_the_loading_shot_releases():
     """The second sec.gov page stays unanswered until the shot releases it."""
     driver = _driver()
