@@ -20,6 +20,9 @@ from white_cliff.wording import FRAME
 
 PINNED = Path(__file__).resolve().parents[1] / "pinned" / "filings"
 GERMAN = STRINGS["§1.DISCLAIMER"][1]
+# Headless print-to-PDF text was checked with Google Chrome 157.0.8103.50.
+# A different major version can change the font maps these tests decode.
+PRINT_CHROME_MAJOR = "157"
 PRINT_LABEL = "Print summary"
 PRINT_LABEL_DE = "Zusammenfassung drucken"
 SOURCES = "Sources on sec.gov"
@@ -242,11 +245,7 @@ def test_the_printed_summary_has_no_personal_data_and_no_new_words():
 
 
 def test_multi_page_print_repeats_both_disclaimers_before_the_numbers(tmp_path):
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
-    if chrome is None:
-        import pytest
-
-        pytest.skip("chrome is not installed")
+    chrome = _print_chrome()
     filing = load_directory(PINNED / "0000320193-26-000026")
     explained = explain_filing(filing)
     with using("de"):
@@ -280,15 +279,17 @@ def test_multi_page_print_repeats_both_disclaimers_before_the_numbers(tmp_path):
         stderr=subprocess.DEVNULL,
     )
     assert pdf_path.is_file()
-    pages = _pdf_pages(pdf_path.read_bytes())
+    pages = _pdf_lines(pdf_path.read_bytes())
     assert len(pages) >= 2
     saw_number = False
-    for text in pages:
-        assert text.startswith("This tool explains the numbers")
-        german_at = text.index("Dieses Werkzeug")
-        digit = re.search(r"\d", text)
+    for lines in pages:
+        flat = " ".join(" ".join(lines).split())
+        assert flat.startswith(DISCLAIMER), flat[:300]
+        rest = flat[len(DISCLAIMER) :].lstrip()
+        assert rest.startswith(GERMAN), rest[:300]
+        digit = re.search(r"\d", flat)
         if digit is not None:
-            assert german_at < digit.start()
+            assert flat.index(GERMAN) < digit.start()
             saw_number = True
     assert saw_number
 
@@ -532,10 +533,53 @@ def test_the_smoke_requires_the_full_disclaimer_lines():
     assert driver._read_disclaimer_pages([both, both], german=True) == ""
 
 
-def _chrome_pdf(page: str, tmp_path: Path) -> bytes:
+def test_the_smoke_compares_the_disclaimer_byte_for_byte():
+    """Whitespace may differ. A changed letter or a dropped comma is a different line."""
+    driver = _driver()
+    tail = " Revenue was one hundred million dollars in the quarter ended July."
+    spaced = DISCLAIMER.replace(" ", "\n") + tail
+    assert driver._read_disclaimer_pages([spaced, spaced]) == ""
+    lowered = DISCLAIMER.replace("This", "this") + tail
+    assert driver._read_disclaimer_pages([lowered, lowered]).startswith(
+        "a printed page does not carry the disclaimer"
+    )
+    bare = DISCLAIMER.replace(",", "") + tail
+    assert driver._read_disclaimer_pages([bare, bare]).startswith(
+        "a printed page does not carry the disclaimer"
+    )
+    german = DISCLAIMER + " " + GERMAN.replace("Dieses", "dieses") + tail
+    assert driver._read_disclaimer_pages([german, german], german=True).startswith(
+        "a printed page does not carry the disclaimer"
+    )
+    both = DISCLAIMER.replace(" ", "  ") + "\n" + GERMAN + tail
+    assert driver._read_disclaimer_pages([both, both], german=True) == ""
+
+
+def test_print_tests_name_the_chrome_they_need():
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    assert f"Google Chrome {PRINT_CHROME_MAJOR}" in readme
+    assert _chrome_major("Google Chrome 157.0.8103.50") == PRINT_CHROME_MAJOR
+    assert _chrome_major("Google Chrome 120.0.6099.109") != PRINT_CHROME_MAJOR
+
+
+def _chrome_major(version: str) -> str:
+    match = re.search(r"(\d+)\.", version)
+    return match.group(1) if match else ""
+
+
+def _print_chrome() -> str:
     chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if chrome is None:
         pytest.skip("chrome is not installed")
+    version = subprocess.run([chrome, "--version"], check=False, capture_output=True, text=True)
+    text = (version.stdout or version.stderr).strip()
+    if _chrome_major(text) != PRINT_CHROME_MAJOR:
+        pytest.fail(f"print tests need Google Chrome {PRINT_CHROME_MAJOR}; found {text or chrome}")
+    return chrome
+
+
+def _chrome_pdf(page: str, tmp_path: Path) -> bytes:
+    chrome = _print_chrome()
     html_path = tmp_path / "summary.html"
     pdf_path = tmp_path / "summary.pdf"
     html_path.write_text(page, encoding="utf-8")
@@ -673,9 +717,7 @@ def _rect_heights(data: bytes) -> set[int]:
 
 def test_a_collapsed_explain_adds_no_print_box(tmp_path):
     """A closed Explain is not a tall invisible box on the printed page."""
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
-    if chrome is None:
-        pytest.skip("chrome is not installed")
+    chrome = _print_chrome()
     _filing, page = _page()
     style = re.search(r"<style>(.*)</style>", page, re.S).group(1)
     filler = "<p>" + ("Closed explanation. " * 40) + "</p>" * 30
@@ -722,19 +764,46 @@ _CHECK_HEADINGS = [STRINGS[key][0] for key in STRINGS if key.startswith("U10.h."
 
 
 def _cmap(blob: bytes | None) -> dict[int, str]:
+    """One font's ToUnicode map. A bfchar pair is not read as a range."""
     mapping: dict[int, str] = {}
     if not blob:
         return mapping
-    for row in re.finditer(
-        rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
-        blob,
-    ):
-        left, right, dest = (int(row.group(index), 16) for index in (1, 2, 3))
-        for offset, src in enumerate(range(left, right + 1)):
-            mapping[src] = chr(dest + offset)
-    for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blob):
-        mapping.setdefault(int(row.group(1), 16), chr(int(row.group(2), 16)))
+    for section in re.finditer(rb"beginbfrange\s+(.*?)endbfrange", blob, re.S):
+        body = section.group(1)
+        for row in re.finditer(
+            rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+            body,
+        ):
+            left, right, dest = (int(row.group(index), 16) for index in (1, 2, 3))
+            for offset, src in enumerate(range(left, right + 1)):
+                mapping[src] = chr(dest + offset)
+        for row in re.finditer(
+            rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]*)\]",
+            body,
+        ):
+            left = int(row.group(1), 16)
+            for offset, dest in enumerate(re.findall(rb"<([0-9A-Fa-f]+)>", row.group(3))):
+                mapping[left + offset] = chr(int(dest, 16))
+    for section in re.finditer(rb"beginbfchar\s+(.*?)endbfchar", blob, re.S):
+        for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", section.group(1)):
+            mapping[int(row.group(1), 16)] = chr(int(row.group(2), 16))
     return mapping
+
+
+def _pdf_literal(body: bytes) -> str:
+    chars: list[str] = []
+    index = 0
+    while index < len(body):
+        byte = body[index]
+        if byte == 0x5C and index + 1 < len(body):
+            index += 1
+            nxt = body[index]
+            named = {ord("n"): "\n", ord("r"): "\r", ord("t"): "\t", ord("("): "(", ord(")"): ")", ord("\\"): "\\"}
+            chars.append(named.get(nxt, chr(nxt)))
+        else:
+            chars.append(chr(byte))
+        index += 1
+    return "".join(chars)
 
 
 def _font_maps(dictionary: bytes, objects: dict) -> dict[str, dict[int, str]]:
@@ -774,8 +843,14 @@ def _pdf_lines(data: bytes) -> list[list[str]]:
         current: dict[int, str] = {}
         rows: dict[float, str] = {}
         line_y = 0.0
+        actual: str | None = None
+        used_actual = False
         for match in re.finditer(
-            rb"/([A-Za-z0-9]+)\s+[\d.]+\s+Tf|1 0 0 -1 [\d.]+ ([\d.]+) Tm|<([0-9A-Fa-f]+)>\s*Tj",
+            rb"/([A-Za-z0-9]+)\s+[\d.]+\s+Tf"
+            rb"|1 0 0 -1 [\d.]+ ([\d.]+) Tm"
+            rb"|/ActualText\s*\(((?:\\.|[^\\)])*)\)"
+            rb"|EMC\b"
+            rb"|<([0-9A-Fa-f]+)>\s*Tj",
             blob,
         ):
             if match.group(1):
@@ -784,11 +859,24 @@ def _pdf_lines(data: bytes) -> list[list[str]]:
             if match.group(2):
                 line_y = float(match.group(2))
                 continue
-            raw = bytes.fromhex(match.group(3).decode())
-            text = "".join(
-                current.get(int.from_bytes(raw[index : index + 2], "big"), "")
-                for index in range(0, len(raw) - 1, 2)
-            )
+            if match.group(3) is not None:
+                actual = _pdf_literal(match.group(3))
+                used_actual = False
+                continue
+            if match.group(0).startswith(b"EMC"):
+                actual = None
+                continue
+            if actual is not None:
+                if used_actual:
+                    continue
+                text = actual
+                used_actual = True
+            else:
+                raw = bytes.fromhex(match.group(4).decode())
+                text = "".join(
+                    current.get(int.from_bytes(raw[index : index + 2], "big"), "")
+                    for index in range(0, len(raw) - 1, 2)
+                )
             rows[line_y] = rows.get(line_y, "") + text
         pages.append((number, [rows[key] for key in sorted(rows)]))
     return [lines for _number, lines in sorted(pages)]
@@ -819,9 +907,6 @@ def test_an_unreadable_printed_page_fails_with_a_clear_reason():
 
 
 def test_a_long_filing_keeps_each_check_together_and_does_not_orphan_explain(tmp_path):
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
-    if chrome is None:
-        pytest.skip("chrome is not installed")
     filing = load_directory(PINNED / "0000104169-26-000055")
     explained = explain_filing(filing)
     page = result_page(

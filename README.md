@@ -57,6 +57,10 @@ https://github.com/EE-Holding/white-cliff/issues/new?template=filing_error.md
 
 A confirmed misstatement is corrected or the output pulled within 2 business days, with a dated correction note. The log is [CORRECTIONS.md](CORRECTIONS.md).
 
+## Print tests
+
+Print tests that render a PDF need Google Chrome 157. They were checked with Google Chrome 157.0.8103.50. Another major version is a failure, not a skip.
+
 ## Pinned filings
 
 The `pinned` directory holds real EDGAR filings, the SHA-256 of each raw file, and hand-checked expected facts. The manifest is a list, so the set can grow to 30 filings. Each filing's sector is the SIC description recorded from its EDGAR submissions file. The set includes an annual report, a quarterly report, and an earnings exhibit.

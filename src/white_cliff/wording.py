@@ -1457,8 +1457,27 @@ def _filled_parts(ident: str, text_slots: dict[str, str], link_slots: dict[str, 
     return parts
 
 
+def _explain_figure(role: str, fact: Fact) -> str:
+    """The LBL name inside an explanation. Card faces keep the shorter U8 name."""
+    ident = {
+        "gross_margin": "LBL.gross_margin",
+        "operating_margin": "LBL.operating_margin",
+        "net_margin": "LBL.net_margin",
+    }.get(role)
+    if ident:
+        return phrase(ident)
+    return label_for(role, fact)
+
+
+def _mid_sentence(text: str) -> str:
+    """A label that starts a sentence begins with 'The'. Mid-sentence it does not."""
+    if text.startswith("The "):
+        return "the " + text[4:]
+    return text
+
+
 def _explain_block(role: str, fact: Fact, company: str, statement: str, formula: str, inputs: list[tuple[str, Fact]]) -> str:
-    label = label_for(role, fact)
+    label = _explain_figure(role, fact)
     definition = DEFINITIONS.get(role, "a figure reported in the filing")
     period = period_phrase(fact.period.kind, fact.period.start, fact.period.end or "")
     amount = _explain_amount(role, fact, inputs)
@@ -1488,7 +1507,7 @@ def _explain_block(role: str, fact: Fact, company: str, statement: str, formula:
             _parts_html("E2", sentence),
         ]
         if formula and inputs:
-            input_parts: list[tuple] = [("text", f"It is calculated as {formula}, using ")]
+            input_parts: list[tuple] = [("text", f"It is calculated as {_mid_sentence(formula)}, using ")]
             for index, (name, source) in enumerate(inputs):
                 if index:
                     input_parts.append(("text", " and " if index == len(inputs) - 1 else ", "))
@@ -1515,7 +1534,7 @@ def _explain_block(role: str, fact: Fact, company: str, statement: str, formula:
     parts = [
         _parts_html("E1", [("text", f"{label} is {definition}.")]),
         _parts_html("E2", [
-            ("text", f"For {company}, {label} was "),
+            ("text", f"For {company}, {_mid_sentence(label)} was "),
             amount,
             ("text", " in "),
             _period_link(period, fact),
@@ -1523,7 +1542,7 @@ def _explain_block(role: str, fact: Fact, company: str, statement: str, formula:
         ]),
     ]
     if formula and inputs:
-        input_parts: list[tuple] = [("text", f"It is calculated as {formula}, using ")]
+        input_parts: list[tuple] = [("text", f"It is calculated as {_mid_sentence(formula)}, using ")]
         for index, (name, source) in enumerate(inputs):
             if index:
                 input_parts.append(("text", " and " if index == len(inputs) - 1 else ", "))

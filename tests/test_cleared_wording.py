@@ -295,8 +295,69 @@ def test_margin_names_move_behind_explain_and_a_negative_debt_note_shows_once():
             ("revenue", _money("100", "revfull")),
         ],
     )
-    assert OLD_GROSS in shown
-    assert U8_GROSS_EN in shown
+    plain = _plain(shown)
+    assert "The gross margin (gross profit / revenue) is gross profit divided by revenue." in plain
+    assert "It is calculated as the gross margin (gross profit / revenue), using " in plain
+    assert "It is calculated as The " not in plain
+    assert U8_GROSS_EN not in plain
+
+
+def test_explain_sentences_use_the_lbl_names_in_english_and_german():
+    from white_cliff.wording import _computed_formula, _explain_block
+
+    formula = _computed_formula("net_margin")
+    shown = _explain_block(
+        "net_margin",
+        _percent("10", "nmfact", "2026-04-27", "2026-07-26"),
+        "Example Co",
+        "Income statement",
+        formula,
+        [
+            ("net income", _money("10", "nifull", role="net_income", concept="NetIncomeLoss")),
+            ("revenue", _money("100", "nmrev")),
+        ],
+    )
+    plain = _plain(shown)
+    assert (
+        "The net margin (net income attributable to the company / revenue) is net income divided by revenue."
+        in plain
+    )
+    assert U8_NET_EN not in plain
+    assert "It is calculated as the net margin (net income attributable to the company / revenue), using " in plain
+    with using("de"):
+        german_formula = _computed_formula("operating_margin")
+        german = _explain_block(
+            "operating_margin",
+            _percent("20", "omfact", "2026-04-27", "2026-07-26"),
+            "Example Co",
+            "Income statement",
+            german_formula,
+            [
+                ("operating income", _money("20", "oifull", role="operating_income", concept="OperatingIncomeLoss")),
+                ("revenue", _money("100", "omrev")),
+            ],
+        )
+    german_plain = _plain(german)
+    assert STRINGS["LBL.operating_margin"][1] in german_plain
+    assert STRINGS["U8.lbl.operating_margin"][1] not in german_plain
+    assert "It is calculated as The " not in german_plain
+
+
+def test_a_zero_margin_change_keeps_the_cleared_c7_line():
+    """C7 has no cleared 'was unchanged' sentence, so a zero change stays the numbers line."""
+    revenue_now, revenue_then = _pair("Revenues", "revenue", "1000", "1000")
+    gross_now, gross_then = _pair("GrossProfit", "gross_profit", "500", "500")
+    operating_now, operating_then = _pair("OperatingIncomeLoss", "operating_income", "200", "200")
+    facts = [revenue_now, revenue_then, gross_now, gross_then, operating_now, operating_then]
+    page = quality_html(facts, form="10-K", period_end="2025-12-31")
+    check = _plain(page.split('data-check="C7"', 1)[1].split("</section>", 1)[0])
+    assert "a change of 0.0 percentage points" in check
+    assert "was unchanged" not in check
+    with using("de"):
+        german = quality_html(facts, form="10-K", period_end="2025-12-31")
+    german_check = german.split('data-check="C7"', 1)[1].split("</section>", 1)[0]
+    assert "eine Veränderung um 0,0 Prozentpunkte" in _plain(german_check)
+    assert "blieb unverändert" not in _plain(german_check)
 
 
 def test_negative_money_keeps_the_minus_before_the_dollar():

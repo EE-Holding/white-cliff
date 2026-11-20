@@ -657,7 +657,6 @@ _COMMON = frozenset(
     "the and for was from with million quarter filing this that are not year "
     "rose percent company report".split()
 )
-_LIGATURES = (("ﬁ", "fi"), ("ﬂ", "fl"), ("ﬀ", "ff"), ("ﬃ", "ffi"), ("ﬄ", "ffl"))
 
 
 def _same_line(text: str) -> str:
@@ -666,10 +665,9 @@ def _same_line(text: str) -> str:
     return " ".join(text.split())
 
 
-def _folded(text: str) -> str:
-    for src, dst in _LIGATURES:
-        text = text.replace(src, dst)
-    return "".join(char.casefold() for char in text if char.isalnum())
+def _disclaimer_text(text: str) -> str:
+    """The disclaimer compared byte for byte, with whitespace collapsed and nothing else changed."""
+    return " ".join(text.split())
 
 
 def _page_can_be_read(text: str) -> bool:
@@ -712,9 +710,9 @@ def _read_disclaimer_pages(texts: list[str], *, german: bool = False) -> str:
     if german:
         lines.append(GERMAN_DISCLAIMER)
     for text in pages:
-        folded = _folded(text)
+        folded = _disclaimer_text(text)
         for line in lines:
-            if _folded(line) not in folded:
+            if _disclaimer_text(line) not in folded:
                 sample = re.sub(r"\S+@\S+", "", _same_line(text))[:80]
                 return f"a printed page does not carry the disclaimer ({sample})"
     return ""
@@ -751,7 +749,7 @@ def _require_disclaimer_on_every_page(tab: DevTools, pdf: bytes) -> None:
     lines = [DISCLAIMER]
     if german:
         lines.append(GERMAN_DISCLAIMER)
-    if any(_folded(line) not in _folded(text) for line in lines):
+    if any(_disclaimer_text(line) not in _disclaimer_text(text) for line in lines):
         raise PageError("a printed page does not carry the disclaimer")
     if header.get("display") != "table-header-group":
         raise PageError("the disclaimer does not repeat on each printed page")
@@ -977,13 +975,95 @@ def _pdf_page_texts(data: bytes) -> list[str]:
                 chars.append(cmap.get(code, "\ufffd"))
         return "".join(chars)
 
+    def page_fonts(dictionary: bytes) -> dict[str, dict[int, str]]:
+        found = re.search(rb"/Font\s*<<([^>]*)>>", dictionary, re.S)
+        if found is None:
+            resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
+            if resource and int(resource.group(1)) in objects:
+                return page_fonts(objects[int(resource.group(1))][0])
+            parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", dictionary)
+            if parent and int(parent.group(1)) in objects:
+                return page_fonts(objects[int(parent.group(1))][0])
+            return {}
+        found_maps: dict[str, dict[int, str]] = {}
+        for name, number in re.findall(rb"/([A-Za-z0-9]+)\s+(\d+)\s+\d+\s+R", found.group(1)):
+            font, _blob = objects[int(number)]
+            link = re.search(rb"/ToUnicode\s+(\d+)\s+\d+\s+R", font)
+            blob = objects[int(link.group(1))][1] if link else None
+            found_maps[name.decode()] = font_map(blob or b"")
+        return found_maps
+
+    def decode_typed(stream: bytes, fonts: dict[str, dict[int, str]]) -> str:
+        """Each glyph uses the font named before it. ActualText is the source writing."""
+        parts: list[str] = []
+        current: dict[int, str] = {}
+        actual: str | None = None
+        used = False
+        line_y: float | None = None
+        tokens = re.compile(
+            rb"/([A-Za-z0-9]+)\s+[\d.]+\s+Tf"
+            rb"|1 0 0 -1 [\d.]+ ([\d.]+) Tm"
+            rb"|/ActualText\s*\(((?:\\.|[^\\)])*)\)"
+            rb"|EMC\b"
+            rb"|<([0-9A-Fa-f]+)>\s*Tj"
+            rb"|\(((?:\\.|[^\\)])*)\)\s*Tj"
+        )
+
+        def break_line(y: float) -> None:
+            nonlocal line_y
+            if line_y is not None and y != line_y and parts and not parts[-1][-1].isspace():
+                parts.append(" ")
+            line_y = y
+
+        for match in tokens.finditer(stream):
+            if match.group(1):
+                current = fonts.get(match.group(1).decode(), {})
+                continue
+            if match.group(2):
+                break_line(float(match.group(2)))
+                continue
+            if match.group(3) is not None:
+                actual = literal(match.group(3))
+                used = False
+                continue
+            if match.group(0).startswith(b"EMC"):
+                actual = None
+                continue
+            if actual is not None:
+                if not used:
+                    parts.append(actual)
+                    used = True
+                continue
+            if match.group(4) is not None:
+                raw = bytes.fromhex(match.group(4).decode())
+                parts.append(
+                    "".join(
+                        current.get(int.from_bytes(raw[index : index + 2], "big"), "")
+                        for index in range(0, len(raw) - 1, 2)
+                    )
+                )
+                continue
+            if match.group(5) is not None:
+                parts.append(literal(match.group(5)))
+        return "".join(parts)
+
     shown = re.compile(
         rb"<[0-9A-Fa-f]+>\s*Tj|\((?:\\.|[^\\)])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ",
         re.S,
     )
+    page_dicts = [
+        dictionary
+        for _number, (dictionary, _stream) in sorted(objects.items())
+        if re.search(rb"/Type\s*/Page(?!s)", dictionary)
+    ]
     pages = []
     phrase = "This tool explains the numbers"
-    for stream in _pdf_page_streams(data):
+    for index, stream in enumerate(_pdf_page_streams(data)):
+        if index < len(page_dicts) and (b" Tf" in stream or b"/ActualText" in stream):
+            typed = decode_typed(stream, page_fonts(page_dicts[index]))
+            if phrase in _same_line(typed) or "Dieses Werkzeug" in typed:
+                pages.append(typed)
+                continue
         plain: list[str] = []
         coded: list[str] = []
         for item in shown.finditer(stream):
