@@ -549,7 +549,7 @@ def _live_frame(page: DevTools) -> bytes:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    if not chosen and not _PAUSED:
+    if not chosen:
         result = page.call(
             "Page.captureScreenshot",
             {"format": "png", "captureBeyondViewport": True, "optimizeForSpeed": True},
