@@ -313,6 +313,8 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; "
         "text-decoration: underline; text-decoration-color: #c7c7cc; text-decoration-thickness: 2px; "
         "text-underline-offset: 7px; }\n"
+        ".detail a.figure { font-size: 20px; line-height: 30px; font-weight: 600; "
+        "letter-spacing: 0; text-underline-offset: 3px; }\n"
         ".cmp { margin: 12px 0 0; font-size: 18px; line-height: 27px; color: #3a3a3c; font-weight: 400; }\n"
         ".cmp a.pct, .change-line a.pct { color: #0a4b8f; font-weight: 700; text-decoration: underline; "
         "text-underline-offset: 3px; white-space: nowrap; }\n"
@@ -1135,9 +1137,18 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
                     f'aria-controls="{control}">{html.escape(ui("explain"))}{_CHEVRON}</button>'
                 )
         face, detail = _split_div(after, "face")
+        parked_lines = []
         for parked_amount, parked_href in parked.get(identifier, []):
             escaped = html.escape(parked_amount)
-            detail += f'<p><a class="figure" href="{parked_href}">{escaped}</a></p>'
+            yoy_label = html.escape(phrase("LBL.yoy"))
+            parked_lines.append(
+                f'<p>{yoy_label} <a class="figure" href="{parked_href}">{escaped}</a></p>'
+            )
+        if parked_lines:
+            extra = "".join(parked_lines)
+            end = detail.rfind("</div></div>")
+            if end >= 0:
+                detail = detail[:end] + extra + detail[end:]
         caption, face = _leading_caption(face)
         label_id = "lab-" + re.sub(r"[^a-z0-9]+", "-", identifier.lower())
         article = (
