@@ -96,8 +96,7 @@ class DevTools:
                 if "error" in data:
                     raise PageError(data["error"])
                 return data.get("result", {})
-            if data.get("method"):
-                self._events.append(data)
+            self._keep(data)
         raise PageError(method)
 
     def next_event(self, method: str, timeout: float) -> dict:
@@ -115,8 +114,30 @@ class DevTools:
             if not message:
                 continue
             data = json.loads(message)
+            self._keep(data)
+
+    def _keep(self, data: dict) -> None:
+        """Ack a screencast frame as it arrives, so the next one is not held back."""
+        if data.get("method") != "Page.screencastFrame":
             if data.get("method"):
                 self._events.append(data)
+            return
+        params = data.get("params") or {}
+        session = params.get("sessionId")
+        if session is not None:
+            self._next += 1
+            payload = json.dumps(
+                {
+                    "id": self._next,
+                    "method": "Page.screencastFrameAck",
+                    "params": {"sessionId": session},
+                }
+            ).encode()
+            try:
+                self._send(0x81, payload)
+            except OSError:
+                pass
+        self._events.append(data)
 
     def close(self) -> None:
         sock = getattr(self, "sock", None)
@@ -519,36 +540,64 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
         pass
 
 
-def _live_frame(page: DevTools) -> bytes:
+_SAVED = b""
+
+
+def _live_frame(page: DevTools, ignore: bytes = b"") -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
     the next layout at the 906px display. The first screencast frame can still
-    show the previous scroll. The next frame replaces it when it is as wide.
+    be the previous picture. Wait until a later frame is as wide and is not
+    that picture. Stopping the cast afterwards lets the next layout resize.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+    unwanted = {item for item in (_SAVED, ignore) if item}
     chosen = b""
     try:
-        try:
-            event = page.next_event("Page.screencastFrame", 5)
-        except (PageError, TimeoutError):
-            event = None
-        _ack_frame(page, event)
-        chosen = _frame_png(event)
-        if chosen and not _PAUSED:
+        if not _PAUSED:
             try:
-                later = page.next_event("Page.screencastFrame", 0.6)
-                _ack_frame(page, later)
-                fresh = _frame_png(later)
-                if fresh and (not chosen or _png_width(fresh) >= _png_width(chosen)):
-                    chosen = fresh
-            except (PageError, TimeoutError):
+                _eval(
+                    page,
+                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                )
+            except (PageError, TimeoutError, OSError):
                 pass
+        deadline = time.time() + (1.0 if _PAUSED else 3.0)
+        while time.time() < deadline:
+            try:
+                event = page.next_event(
+                    "Page.screencastFrame", max(0.05, min(0.4, deadline - time.time()))
+                )
+            except (PageError, TimeoutError):
+                if chosen and chosen not in unwanted:
+                    break
+                continue
+            _ack_frame(page, event)
+            fresh = _frame_png(event)
+            if not fresh:
+                continue
+            if not chosen or _png_width(fresh) >= _png_width(chosen):
+                chosen = fresh
+            if chosen not in unwanted:
+                if unwanted:
+                    break
+                try:
+                    later = page.next_event("Page.screencastFrame", 0.4)
+                    _ack_frame(page, later)
+                    newer = _frame_png(later)
+                    if newer and _png_width(newer) >= _png_width(chosen):
+                        chosen = newer
+                except (PageError, TimeoutError):
+                    pass
+                break
     finally:
         try:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
+    if chosen and _PAUSED and chosen in unwanted:
+        chosen = b""
     if not chosen and not _PAUSED:
         result = page.call(
             "Page.captureScreenshot",
@@ -580,16 +629,13 @@ def _intel_photo(
     del reveal
     wanted = int(width or _css_width(page) or 1100)
     height_px = min(int(height or 900), 900)
+    global _SAVED
     last: Exception | None = None
+    rejected = b""
     for attempt in range(2):
-        # A new connection keeps the search page picture after the result is on
-        # this page. Use this connection, and a new one only while it is paused.
-        own = bool(_PAUSED)
-        fresh = DevTools(page.ws_url) if own else page
+        # A second connection keeps the search page after this page has moved on.
+        fresh = page
         try:
-            if own:
-                fresh.call("Page.enable")
-                fresh.call("Runtime.enable")
             if not _PAUSED:
                 _window(fresh, wanted, height_px)
                 try:
@@ -610,15 +656,20 @@ def _intel_photo(
             data = b""
             got = 0
             while True:
-                data = _live_frame(fresh)
+                data = _live_frame(fresh, rejected)
                 got = _png_width(data)
-                if len(data) >= 1000 and got == wanted:
+                if len(data) >= 1000 and got == wanted and data not in {_SAVED, rejected}:
                     break
+                if data in {_SAVED, rejected} or got != wanted:
+                    rejected = data
                 if _PAUSED or time.time() >= deadline:
+                    if len(data) >= 1000 and got == wanted:
+                        break
                     screen = 0 if _PAUSED else _screen_width(fresh)
                     raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
+            _SAVED = data
             if height:
                 png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
                 if png_height > height:
@@ -629,9 +680,6 @@ def _intel_photo(
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
-        finally:
-            if own:
-                fresh.close()
     raise PageError(last)
 
 
@@ -1368,7 +1416,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS
+    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS, _SAVED
+    _SAVED = b""
     _DEBUG_PORT = port
     _SCREEN_LEFT = None
     _BROWSER = None
@@ -1516,11 +1565,7 @@ def drive(
         while time.time() < reduced_deadline:
             try:
                 if _reduced_steps(page):
-                    _hold(page)
-                    try:
-                        _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
-                    finally:
-                        _release(page)
+                    _grab_steps(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
                     break
             except PageError:
                 _release(page)
@@ -1602,93 +1647,55 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
     _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
 
 
-def _take_cast(page: DevTools, timeout: float) -> bytes:
-    """The newest screencast frame. Every frame is acknowledged so the next one arrives."""
-    latest = b""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+def _grab_steps(
+    page: DevTools,
+    directory: Path,
+    name: str,
+    width: int = 0,
+    height: int = 0,
+    motion: str = "",
+) -> Path:
+    """Freeze the steps, then photograph them.
+
+    A paused Intel frame can be the previous picture, or never arrive after a
+    resize. When that happens, take the frame while the page can still paint.
+    """
+    previous = _SAVED
+    try:
+        _hold(page)
         try:
-            event = page.next_event("Page.screencastFrame", max(0.05, deadline - time.time()))
-        except (PageError, TimeoutError):
-            break
-        _ack_frame(page, event)
-        data = _frame_png(event)
-        if data:
-            latest = data
-    return latest
-
-
-def _save_shot(directory: Path, name: str, data: bytes, height: int) -> Path:
-    if height:
-        png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
-        if png_height > height:
-            data = _crop_png(data, height)
-    path = directory / name
-    path.write_bytes(data)
-    print(f"screenshot {path}", flush=True)
+            path = _grab(page, directory, name, width, height, motion=motion)
+        finally:
+            _release(page)
+    except (PageError, TimeoutError, OSError):
+        _release(page)
+        if not _intel():
+            raise
+        return _grab(page, directory, name, width, height, motion=motion)
+    if _intel() and previous and _SAVED == previous:
+        return _grab(page, directory, name, width, height, motion=motion)
     return path
 
 
 def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: int) -> None:
-    """Photograph the spinning steps after the window is already this wide.
-
-    Pausing first freezes the renderer, so a window that just changed size has
-    no frame, and the frame that does exist is still the empty search field.
-    The cast runs while the steps are allowed to paint, and the pause is only
-    the fallback.
-    """
+    """Photograph the spinning steps after the window is already this wide."""
     try:
         _motion(page, "no-preference")
     except PageError:
         pass
-    started = False
-    latest = b""
     deadline = time.time() + 60
-    try:
-        while time.time() < deadline:
-            if _intel() and not started:
-                page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
-                started = True
-            if started:
-                latest = _take_cast(page, 0.05) or latest
-            try:
-                loading = _loading(page)
-            except PageError:
-                loading = False
-            if not loading:
-                time.sleep(0.02)
-                continue
+    while time.time() < deadline:
+        try:
+            loading = _loading(page)
+        except PageError:
+            loading = False
+        if loading:
             if not _spinning(page):
                 raise PageError("the loading picture is the reduced-motion ring")
-            if started:
-                try:
-                    _eval(
-                        page,
-                        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                    )
-                except (PageError, TimeoutError, OSError):
-                    pass
-                latest = _take_cast(page, 0.8) or latest
-                if len(latest) < 1000 or _png_width(latest) != width:
-                    _window(page, width, max(height, 900))
-                    latest = _take_cast(page, 1.0) or latest
-            if len(latest) >= 1000 and _png_width(latest) == width:
-                _save_shot(out_dir, name, latest, height)
-                return
-            break
-        else:
-            raise PageError("the German loading steps were not shown")
-    finally:
-        if started:
-            try:
-                page.call("Page.stopScreencast")
-            except (PageError, TimeoutError, OSError):
-                pass
-    _hold(page)
-    try:
-        _grab(page, out_dir, name, width, height)
-    finally:
-        _release(page)
+            _grab_steps(page, out_dir, name, width, height)
+            return
+        time.sleep(0.02)
+    raise PageError("the German loading steps were not shown")
 
 
 def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: str) -> None:
@@ -1834,11 +1841,7 @@ def _wait_result(
                 if _loading(page):
                     if not _spinning(page):
                         raise PageError("the loading picture is the reduced-motion ring")
-                    _hold(page)
-                    try:
-                        _grab(page, out_dir, f"smoke-{ARCH}-4-loading.png")
-                    finally:
-                        _release(page)
+                    _grab_steps(page, out_dir, f"smoke-{ARCH}-4-loading.png")
                     saw_loading = True
             except PageError:
                 _release(page)
