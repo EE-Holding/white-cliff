@@ -1086,17 +1086,17 @@ def _born_shot(
             if isinstance(crop, int) and crop > 0:
                 height = crop
             mark("prepare")
+            # The cast that photographed the top of the page can go quiet after a
+            # scroll. Start it again and require a frame of the scrolled page.
+            try:
+                shot.call("Page.stopScreencast")
+            except PageError:
+                pass
+            shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+            mark("Page.startScreencast")
             _paint(shot)
             data, note = _painted_frame(shot, 4.0, previous=before)
             mark(note)
-            if not data:
-                # The cast can go quiet when the scroll does not change the bitmap.
-                # A further scroll has to produce a new frame, or the picture is not live.
-                _eval(shot, "window.scrollBy(0, 120)")
-                mark("scroll")
-                _paint(shot)
-                data, note = _painted_frame(shot, 2.0, previous=before)
-                mark(note)
             if not data:
                 fail("the picture did not change")
         else:
