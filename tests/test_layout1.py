@@ -137,9 +137,11 @@ def test_print_has_side_margins_and_space_under_the_disclaimer():
     printed = style.split("@media print", 1)[1]
     disclaimer = printed.split(".print-head .disclaimer {", 1)[1].split("}", 1)[0]
     assert "padding-bottom: 24px" in disclaimer
-    sheet = printed.split("table.print-sheet.column {", 1)[1].split("}", 1)[0]
-    assert "padding-left: 48px" in sheet
-    assert "padding-right: 48px" in sheet
+    cells = printed.split("table.print-sheet > tbody > tr > td {", 1)[1].split("}", 1)[0]
+    assert "padding-left: 48px" in cells
+    assert "padding-right: 48px" in cells
+    assert "padding-left: 48px" in disclaimer
+    assert "padding-right: 48px" in disclaimer
 
 
 def test_the_header_search_input_is_at_least_360():
@@ -218,6 +220,150 @@ def test_left_edges_match_and_the_search_is_wide(tmp_path):
             assert measured["sectionSize"] == "18px"
             assert measured["headingSize"] == "22px"
             assert measured["headingWeight"] == "600"
+    finally:
+        page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
+
+
+def test_the_narrow_search_input_is_one_line_tall():
+    narrow = _style().split("@media (max-width: 480px)", 1)[1].split("@media", 1)[0]
+    rule = narrow.split("form.search input", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 auto" in rule
+    assert "width: 100%" in rule
+    assert "min-width: 0" in rule
+    assert "height: 48px" in rule
+
+
+def test_the_narrow_search_input_is_48px_tall(tmp_path):
+    from tests.test_desktop_app import _chrome_binary, _chrome_page, _eval
+
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    html_path = tmp_path / "result.html"
+    html_path.write_text(_page("en"), encoding="utf-8")
+    chrome, stderr_file, page = _chrome_page(binary, tmp_path / "profile", tmp_path / "chrome.txt")
+    try:
+        page.call("Page.enable")
+        page.call("Runtime.enable")
+        page.call("Page.navigate", {"url": html_path.as_uri()})
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 420, "height": 900, "deviceScaleFactor": 1, "mobile": False},
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _eval(page, "document.querySelector('#query') !== null"):
+                break
+            time.sleep(0.05)
+        box = _eval(page, """(() => {
+          const input = document.querySelector('#query').getBoundingClientRect();
+          return {height: input.height, width: input.width};
+        })()""")
+        assert abs(box["height"] - 48) <= 2
+        assert box["width"] > 300
+    finally:
+        page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
+
+
+def test_printed_content_starts_48px_in(tmp_path):
+    import re
+    import subprocess
+
+    from tests.test_print_summary import _driver, _print_chrome
+
+    page = _page("en")
+    html_path = tmp_path / "result.html"
+    pdf_path = tmp_path / "result.pdf"
+    html_path.write_text(page, encoding="utf-8")
+    subprocess.run(
+        [
+            "timeout",
+            "40",
+            _print_chrome(),
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    objects = _driver()._pdf_objects(pdf_path.read_bytes())
+    starts: list[float] = []
+    for dictionary, _stream in objects.values():
+        if re.search(rb"/Type\s*/Page(?!s)", dictionary) is None:
+            continue
+        array = re.search(rb"/Contents\s*\[([^\]]*)\]", dictionary)
+        if array is not None:
+            contents = [int(item) for item in re.findall(rb"(\d+)\s+\d+\s+R", array.group(1))]
+        else:
+            single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
+            contents = [int(single.group(1))] if single else []
+        blob = b"\n".join(objects[item][1] or b"" for item in contents)
+        found = [float(item) for item in re.findall(rb"1 0 0 -1 ([\d.]+) [\d.]+ Tm", blob)]
+        if found:
+            starts.append(min(found))
+    assert starts
+    # Chrome records the 48px inset in the text matrix. Every page starts there.
+    assert all(46 <= item <= 52 for item in starts)
+
+
+def test_a_collapsed_section_note_does_not_hold_a_row(tmp_path):
+    from tests.test_desktop_app import _chrome_binary, _chrome_page, _eval
+
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    html_path = tmp_path / "result.html"
+    html_path.write_text(_page("en"), encoding="utf-8")
+    chrome, stderr_file, page = _chrome_page(binary, tmp_path / "profile", tmp_path / "chrome.txt")
+    try:
+        page.call("Page.enable")
+        page.call("Runtime.enable")
+        page.call("Page.navigate", {"url": html_path.as_uri()})
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 1280, "height": 1400, "deviceScaleFactor": 1, "mobile": False},
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _eval(page, "document.querySelector('article.card') !== null"):
+                break
+            time.sleep(0.05)
+        time.sleep(0.6)
+        closed = _eval(
+            page,
+            """(() => {
+              const heading = document.querySelector('h2').getBoundingClientRect();
+              const card = document.querySelector('article.card').getBoundingClientRect();
+              return card.top - heading.bottom;
+            })()""",
+        )
+        assert closed < 52
+        opened = _eval(
+            page,
+            """(() => {
+              const button = document.querySelector('h2 button.tap');
+              button.click();
+              const note = document.getElementById(button.getAttribute('aria-controls'));
+              const box = note.getBoundingClientRect();
+              return {expanded: button.getAttribute('aria-expanded'), height: box.height, display: getComputedStyle(note).display};
+            })()""",
+        )
+        assert opened["expanded"] == "true"
+        assert opened["display"] != "none"
+        assert opened["height"] > 18
     finally:
         page.close()
         chrome.kill()
