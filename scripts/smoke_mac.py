@@ -612,8 +612,6 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    if not chosen:
-        raise PageError("the window had no frame")
     return chosen
 
 
@@ -668,10 +666,10 @@ def _intel_photo(
             while True:
                 data = _live_frame(fresh, wanted)
                 got = _png_width(data)
-                stale = bool(_LAST) and data == _LAST
+                stale = bool(data) and bool(_LAST) and data == _LAST
                 if len(data) >= 1000 and got == wanted and not stale:
                     break
-                if _PAUSED or time.time() >= deadline:
+                if _PAUSED or not data or time.time() >= deadline:
                     # One copy, after the window has had its chance to resize.
                     # Copying the main window sticks the next layout near 906px.
                     alt = _copied_png(fresh, wanted)
