@@ -427,6 +427,72 @@ def test_a_wider_result_picture_comes_from_a_new_window(tmp_path, monkeypatch):
     assert "Page.captureScreenshot" not in order
 
 
+def test_a_silent_cast_opens_one_more_window(tmp_path, monkeypatch):
+    """A window whose cast sends nothing is opened once more. A repeat is not."""
+    driver = _driver()
+
+    def picture() -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 60, 2, 8, rows)
+
+    seed = 8
+    fresh = picture()
+    opened = {"n": 0}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/"}}
+            return {}
+
+    class Silent:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            raise driver.PageError(method)
+
+    class Talking(Silent):
+        def next_event(self, method, timeout):
+            if getattr(self, "sent", False):
+                raise driver.PageError(method)
+            self.sent = True
+            raw = __import__("base64").b64encode(fresh).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    def fresh_target(width, height):
+        opened["n"] += 1
+        return Silent() if opened["n"] == 1 else Talking()
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", fresh_target)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._shot(Source(), tmp_path, "smoke-x86_64-1-first-run.png", width=1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert opened["n"] == 2
+    assert path.read_bytes() == fresh
+
+
 def test_a_repeated_result_from_a_new_window_is_rejected(tmp_path, monkeypatch):
     """A new window that paints the same pixels is still a repeated frame."""
     driver = _driver()

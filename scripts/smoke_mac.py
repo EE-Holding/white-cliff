@@ -1010,7 +1010,7 @@ def _painted_frame(page: DevTools, seconds: float, previous: bytes = b"") -> tup
     return best, f"frames {saw} blank {blank} empty {empty}"
 
 
-def _born_shot(
+def _open_born_shot(
     directory: Path,
     name: str,
     width: int,
@@ -1101,6 +1101,29 @@ def _born_shot(
     finally:
         if shot is not None:
             _close_loading_target(shot)
+
+
+def _born_shot(
+    directory: Path,
+    name: str,
+    width: int,
+    height: int,
+    url: str,
+    *,
+    reduced: bool = False,
+    prepare=None,
+) -> Path:
+    """One new window. If its cast sends no frame at all, open one more window."""
+    try:
+        return _open_born_shot(
+            directory, name, width, height, url, reduced=reduced, prepare=prepare
+        )
+    except PageError as exc:
+        if "frames 0 blank 0 empty 0" not in str(exc):
+            raise
+        return _open_born_shot(
+            directory, name, width, height, url, reduced=reduced, prepare=prepare
+        )
 
 
 def _shot(
