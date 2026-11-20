@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -16,6 +17,7 @@ MARKERS = (
     "generated-by:",
     "signed-off-by:",
 )
+_BY_LINE = re.compile(r"(?im)^[ \t]*[A-Za-z-]+-by:")
 
 
 def _git_config(key: str) -> str:
@@ -93,7 +95,7 @@ def check_range(expr: str) -> int:
         stderr=subprocess.PIPE,
     )
     matched = subprocess.run(
-        ["grep", "-iE", r"^[A-Za-z-]+-by:"],
+        ["grep", "-iE", r"^[[:space:]]*[A-Za-z-]+-by:"],
         input=bodies,
         text=True,
         capture_output=True,
@@ -123,7 +125,7 @@ def check_message(path: str) -> int:
         check=False,
     )
     lowered = body.lower()
-    if parsed.stdout.strip() or any(marker in lowered for marker in MARKERS):
+    if parsed.stdout.strip() or any(marker in lowered for marker in MARKERS) or _BY_LINE.search(body):
         print("commit message contains a trailer")
         return 1
     return 0

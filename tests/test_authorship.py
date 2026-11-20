@@ -255,6 +255,48 @@ def test_authorship_script_rejects_other_identities_and_trailers(tmp_path):
     assert HOOK.is_file()
 
 
+def test_an_indented_by_line_is_rejected(tmp_path):
+    """A by-line is a trailer when spaces or a tab sit in front of it."""
+    env = _env("Erik Eicke", "ada@example.com")
+    env["GITHUB_ACTIONS"] = "true"
+    env.pop("AUTHOR_EMAIL", None)
+
+    def commit(directory, body: str) -> subprocess.CompletedProcess[str]:
+        directory.mkdir()
+        subprocess.check_call(["git", "init"], cwd=directory, env=env)
+        (directory / "note.txt").write_text("note\n", encoding="utf-8")
+        message = directory / "message.txt"
+        message.write_text(body, encoding="utf-8")
+        subprocess.check_call(["git", "add", "note.txt"], cwd=directory, env=env)
+        subprocess.check_call(["git", "commit", "-F", str(message)], cwd=directory, env=env)
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--range", "HEAD"],
+            cwd=directory,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+
+    spaced = commit(
+        tmp_path / "spaced",
+        "Add a note\n\n  Signed-off-by: Pat Example <pat@example.com>\n",
+    )
+    assert spaced.returncode != 0
+    tabbed = commit(
+        tmp_path / "tabbed",
+        "Add a note\n\n\tReviewed-by: Pat Example <pat@example.com>\n",
+    )
+    assert tabbed.returncode != 0
+    hooked = subprocess.run(
+        [sys.executable, str(SCRIPT), "--commit-msg", str(tmp_path / "tabbed" / "message.txt")],
+        cwd=tmp_path / "tabbed",
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert hooked.returncode != 0
+
+
 def test_a_coauthor_line_without_a_blank_line_is_rejected(tmp_path):
     """A line like the blocked merge is a trailer even when git does not parse it."""
     env = _env("Erik Eicke", "ada@example.com")
