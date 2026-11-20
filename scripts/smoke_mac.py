@@ -40,27 +40,31 @@ class _SecHold:
         self._release = threading.Event()
         self._release.set()
         self._armed = False
+        self._all = False
         self._www = 0
 
-    def arm(self) -> None:
+    def arm(self, everything: bool = False) -> None:
         with self._lock:
             self._www = 0
             self._armed = True
+            self._all = everything
             self._release.clear()
 
     def release(self) -> None:
         with self._lock:
             self._armed = False
+            self._all = False
         self._release.set()
 
     def wait(self, host: str) -> None:
         with self._lock:
             armed = self._armed
+            block_all = getattr(self, "_all", False)
             if host == "www.sec.gov":
                 self._www += 1
-                hold = armed and self._www >= 2
+                hold = armed and (block_all or self._www >= 2)
             else:
-                hold = False
+                hold = armed and block_all
         if hold:
             self._release.wait()
 
@@ -1794,6 +1798,22 @@ def _loading(page: DevTools) -> bool:
     return raw is True
 
 
+def _steps_visible(page: DevTools) -> bool:
+    """The steps panel is open. The first step is enough; the filing reply is still held."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const panel = document.getElementById("steps");
+          if (!panel || panel.hidden) return false;
+          const active = panel.querySelectorAll("li.active").length;
+          return active === 1;
+        })()
+        """,
+    )
+    return raw is True
+
+
 def _reduced_steps(page: DevTools) -> bool:
     """True when this lookup is showing the static ring, not a spinning arc."""
     raw = _eval(
@@ -2229,24 +2249,15 @@ def _close_loading_target(page: DevTools) -> None:
             pass
 
 
-def _newest_queued_frame(page: DevTools) -> bytes:
-    """The latest frame already read. Earlier ones are from before the steps."""
-    kept = b""
-    events = getattr(page, "_events", None)
-    if not events:
-        return b""
-    index = 0
-    while index < len(events):
-        event = events[index]
-        if event.get("method") != "Page.screencastFrame":
-            index += 1
-            continue
-        events.pop(index)
+def _discard_queued_frames(page: DevTools) -> None:
+    """Drop frames already queued. Stop even if a spinning page keeps sending them."""
+    deadline = time.time() + 0.15
+    while time.time() < deadline:
+        try:
+            event = page.next_event("Page.screencastFrame", 0.05)
+        except (PageError, TimeoutError):
+            return
         _ack_frame(page, event)
-        data = _frame_png(event)
-        if data:
-            kept = data
-    return kept
 
 
 def _loading_shot(
@@ -2275,7 +2286,7 @@ def _loading_shot(
         raise PageError(f"{message}\n{detail}" if detail else message) from None
 
     page = None
-    _sec_hold.arm()
+    _sec_hold.arm(everything=not reduced)
     mark("hold")
     try:
         page = _fresh_target(width, 900)
@@ -2296,13 +2307,13 @@ def _loading_shot(
             _press(page, 'button[lang="de"]')
             _wait_node(page, "#query", 20)
         _fill(page, "#query", query)
-        _click(page, 'form[action="/explain"] button')
+        _press(page, 'form[action="/explain"] button')
         mark("click")
         deadline = time.time() + 90
         ready = False
         while time.time() < deadline:
             try:
-                ready = _reduced_steps(page) if reduced else _loading(page)
+                ready = _reduced_steps(page) if reduced else _steps_visible(page)
             except PageError:
                 ready = False
             if ready and not reduced:
@@ -2316,7 +2327,7 @@ def _loading_shot(
         if not ready:
             fail("the loading steps were not shown")
         mark("steps")
-        kept = _newest_queued_frame(page)
+        _discard_queued_frames(page)
         try:
             page.call(
                 "Runtime.evaluate",
@@ -2339,8 +2350,6 @@ def _loading_shot(
                 continue
             _ack_frame(page, event)
             data = _frame_png(event)
-        if not data:
-            data = kept
         mark(f"frame {_png_width(data)}")
         try:
             return _commit_live_frame(directory, name, data, width, 900)
