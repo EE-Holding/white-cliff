@@ -274,6 +274,8 @@ def test_the_narrow_loading_picture_is_painted_after_the_resize(tmp_path, monkey
     class Page:
         def call(self, method, params=None, timeout=20):
             order.append(method)
+            if "requestAnimationFrame" in str((params or {}).get("expression") or ""):
+                order.append("paint")
             return {}
 
         def next_event(self, method, timeout):

@@ -724,37 +724,37 @@ def _frame_after_resize(page: DevTools, width: int) -> bytes:
             and data != _LAST
         )
 
-    chosen = b""
+    def nudge() -> None:
+        # Do not await the paint. Awaiting it holds the renderer, and this
+        # loading page then navigates before a frame is sent.
+        try:
+            page.call(
+                "Runtime.evaluate",
+                {
+                    "expression": "requestAnimationFrame(() => requestAnimationFrame(() => {}))",
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                1,
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
+
     try:
         # The window is already this wide. Paint after the cast starts, and
         # keep a frame from that paint. Resize again only when it is not.
-        try:
-            _eval(
-                page,
-                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-            )
-        except (PageError, TimeoutError, OSError):
-            pass
-        chosen = take(1)
-        if good(chosen):
-            return chosen
+        nudge()
+        fresh = take(0.6)
+        if good(fresh):
+            return fresh
         _window(page, width, 900)
-        try:
-            _eval(
-                page,
-                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-            )
-        except (PageError, TimeoutError, OSError):
-            pass
-        deadline = time.time() + 2.5
+        nudge()
+        deadline = time.time() + 1
         while time.time() < deadline:
-            fresh = take(0.4)
-            if not fresh:
-                continue
-            chosen = fresh
+            fresh = take(0.3)
             if good(fresh):
                 return fresh
-        return chosen
+        return b""
     finally:
         try:
             page.call("Page.stopScreencast")
@@ -2174,11 +2174,13 @@ def _grab_steps(
                 wanted = 1100
         _window(page, wanted, int(height or 900))
         data = _frame_after_resize(page, wanted)
-        _hold(page)
-        try:
-            return _commit_live_frame(directory, name, data, wanted, int(height or 0))
-        finally:
-            _release(page)
+        if data:
+            _hold(page)
+            try:
+                return _commit_live_frame(directory, name, data, wanted, int(height or 0))
+            finally:
+                _release(page)
+        # No frame yet. Pausing flushes a picture that was already composited.
     _hold(page)
     try:
         return _grab(page, directory, name, width, height, motion=motion)
