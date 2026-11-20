@@ -269,11 +269,13 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
 
     stale = picture(2)
     fresh = picture(5)
-    calls: list[bool] = []
+    calls: list[tuple] = []
     sent = {"n": 0}
 
     class Page:
         def call(self, method, params=None, timeout=20):
+            if method == "Emulation.clearDeviceMetricsOverride":
+                calls.append(("clear",))
             return {}
 
         def next_event(self, method, timeout):
@@ -284,8 +286,8 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
 
     monkeypatch.setattr(
         driver,
-        "_window",
-        lambda page, width, height=900, reset=False: calls.append(bool(reset)),
+        "_fit_window",
+        lambda page, width, height: calls.append(("bounds", width)),
     )
     paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
     driver._PAUSED = False
@@ -298,7 +300,8 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
         driver._LAST = last
         driver._SEEN = seen
     assert data == fresh
-    assert True in calls
+    assert ("clear",) in calls
+    assert ("bounds", 1100) in calls
 
 
 def test_the_result_picture_does_not_wait_on_the_renderer(tmp_path, monkeypatch):

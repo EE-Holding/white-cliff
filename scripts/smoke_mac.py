@@ -730,7 +730,12 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             or chosen == _LAST
         ):
             # The screen-size override can leave the previous picture in place.
-            _window(page, width, 900, reset=True)
+            # Drop it, and move the real window while the cast is listening.
+            try:
+                page.call("Emulation.clearDeviceMetricsOverride")
+            except PageError:
+                pass
+            _fit_window(page, width, 900)
             later_deadline = time.time() + 2.5
             while time.time() < later_deadline:
                 try:
@@ -904,7 +909,9 @@ def _intel_photo(
                             if not data
                             else "repeated a previous screencast frame"
                         )
-                        raise PageError(f"{name} is not a live window picture: it {why}")
+                        raise PageError(
+                            f"{name} is not a live window picture: it {why} ({got}px) {_BOUNDS}"
+                        )
                     # One copy, after the window has had its chance to resize.
                     # Copying the main window sticks the next layout near 906px.
                     alt = _copied_png(fresh, wanted)
