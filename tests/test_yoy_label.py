@@ -155,6 +155,57 @@ def _cases():
     return pairs
 
 
+def _detail(card: str) -> str:
+    marker = 'class="detail"'
+    start = card.find(marker)
+    if start < 0:
+        return ""
+    open_at = card.rfind("<div", 0, start)
+    if open_at < 0:
+        return ""
+    depth = 0
+    index = open_at
+    while index < len(card):
+        if card.startswith("<div", index):
+            depth += 1
+            index = card.find(">", index)
+            index = len(card) if index < 0 else index + 1
+            continue
+        if card.startswith("</div>", index):
+            depth -= 1
+            index += len("</div>")
+            if depth == 0:
+                return card[open_at:index]
+            continue
+        index += 1
+    return ""
+
+
+def _label_with_figure(page: str, label: str) -> str:
+    """The element inside Explain that carries both the cleared label and its figure."""
+    for card in _CARD.findall(page):
+        detail = _detail(card)
+        for paragraph in re.findall(r"<p\b[^>]*>.*?</p>", detail, re.S):
+            figure = _FIGURE.search(paragraph)
+            if figure is None or label not in _plain(paragraph):
+                continue
+            if _bare(figure.group(1)):
+                return paragraph
+    return ""
+
+
+def test_the_cleared_label_and_the_figure_share_an_explain_element():
+    """EN and DE, on screen and in print, the label and the figure are one element inside Explain."""
+    for accession, prior in ((NVIDIA, NVIDIA_PRIOR), (WALMART, None), (JOHNSON, None)):
+        for language in ("en", "de"):
+            label = STRINGS["LBL.yoy"][0 if language == "en" else 1]
+            page = _page(accession, language, prior)
+            for surface, body in (("screen", page), ("print", _print_page(page))):
+                element = _label_with_figure(body, label)
+                assert element, f"{accession} {language} {surface}"
+                assert "https://www.sec.gov/" in element
+
+
 def test_no_bare_percent_outside_explain_on_screen_or_in_print():
     """A bare percent or a signed change outside Explain fails, in English and German."""
     assert STRINGS["LBL.yoy"] == (
@@ -173,3 +224,36 @@ def test_no_bare_percent_outside_explain_on_screen_or_in_print():
                         name = _plain(label.group(1)) if label else accession
                         leaks.append(f"{accession} {language} {surface} {name}: {found}")
     assert leaks == []
+
+
+def test_a_parked_figure_without_explain_is_shown_with_its_label():
+    """A card with no Explain panel still shows the parked figure, beside the cleared label."""
+    from white_cliff.present import _rows
+    from white_cliff.wording import Additions
+
+    filing = (
+        '<p>Revenue was <data>100 USD millions</data> '
+        '<a class="source-chip" href="https://www.sec.gov/Archives/edgar/data/1/x.htm#fact=factrev">source</a></p>'
+        '<p>Year over year <data>10.5 percent</data> '
+        '<a class="source-chip" href="https://www.sec.gov/Archives/edgar/data/1/x.htm#calc=calcyoy">source</a></p>'
+    )
+    additions = Additions(
+        {},
+        {},
+        "",
+        "",
+        frozenset({"calcyoy"}),
+        {},
+        {},
+        {"calcyoy": "factrev"},
+    )
+    for language, label in (("en", STRINGS["LBL.yoy"][0]), ("de", STRINGS["LBL.yoy"][1])):
+        with using(language):
+            rendered = _rows(filing, additions)
+        assert 'class="detail"' not in rendered
+        paragraph = re.search(
+            rf"<p>{re.escape(label)} <a class=\"figure\" href=\"[^\"]*calc=calcyoy[^\"]*\">([^<]*)</a></p>",
+            rendered,
+        )
+        assert paragraph is not None, rendered
+        assert _bare(paragraph.group(1))

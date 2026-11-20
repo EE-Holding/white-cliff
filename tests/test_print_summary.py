@@ -565,16 +565,24 @@ def _folded(text: str) -> str:
     return "".join(char.casefold() for char in text if char.isalnum())
 
 
-def test_a_sec_url_is_not_split_across_printed_pages(tmp_path):
+def test_a_sec_url_is_not_split_across_printed_pages():
+    """Each source URL is one unbreakable line. No browser and no PDF reader."""
     _filing, page = _page()
-    driver = _driver()
-    texts = [_folded(text) for text in driver._pdf_page_texts(_chrome_pdf(page, tmp_path))]
+    css = _print_css(page)
+    rule = re.search(r"\.sources li \{[^}]*\}", css)
+    assert rule is not None
+    assert "break-inside: avoid" in rule.group(0)
+    assert "page-break-inside: avoid" in rule.group(0)
     block = re.search(r'<section class="sources">(.*?)</section>', page, re.S)
     assert block is not None
-    urls = [html.unescape(item) for item in re.findall(r"<li>(.*?)</li>", block.group(1), re.S)]
-    assert urls
-    for url in urls:
-        assert any(_folded(url) in text for text in texts)
+    items = re.findall(r"<li>(.*?)</li>", block.group(1), re.S)
+    assert items
+    for item in items:
+        assert "<" not in item
+        url = html.unescape(item).strip()
+        assert url.startswith("https://www.sec.gov/")
+        assert " " not in url
+        assert "\n" not in url
 
 
 def test_the_printed_disclaimer_is_at_least_body_text(tmp_path):
@@ -636,3 +644,195 @@ def test_a_card_is_not_split_across_printed_pages():
     assert all(row.count("<article") == 1 for row in card_rows)
     assert len(card_rows) == tbody.group(1).count("<article")
     assert "table.print-sheet > tbody > tr { break-inside: avoid; page-break-inside: avoid; }" in css
+
+
+def test_print_css_hides_a_collapsed_explain():
+    _filing, page = _page()
+    css = _print_css(page)
+    rule = re.search(r"\.detail:not\(\.open\)\s*\{[^}]*\}", css)
+    assert rule is not None
+    assert "display: none" in rule.group(0)
+
+
+def _rect_heights(data: bytes) -> set[int]:
+    heights: set[int] = set()
+    for match in re.finditer(rb"stream\r?\n", data):
+        start = match.end()
+        end = data.find(b"endstream", start)
+        raw = data[start:end].strip(b"\r\n")
+        try:
+            blob = zlib.decompress(raw)
+        except zlib.error:
+            blob = raw
+        for row in re.finditer(rb"([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) re", blob):
+            width, height = float(row.group(3)), float(row.group(4))
+            if width > 400 and 100 < height < 4000:
+                heights.add(round(height))
+    return heights
+
+
+def test_a_collapsed_explain_adds_no_print_box(tmp_path):
+    """A closed Explain is not a tall invisible box on the printed page."""
+    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if chrome is None:
+        pytest.skip("chrome is not installed")
+    _filing, page = _page()
+    style = re.search(r"<style>(.*)</style>", page, re.S).group(1)
+    filler = "<p>" + ("Closed explanation. " * 40) + "</p>" * 30
+    card = (
+        '<article class="card"><h3 class="label">Revenue</h3>'
+        '<p class="big"><a class="figure" href="https://www.sec.gov/">$1 million</a></p>'
+        '<button type="button" class="explain">Explain</button>'
+        '<div class="detail" aria-hidden="true"><div class="detail-inner">FILL</div></div>'
+        "</article>"
+    )
+
+    def paint(name: str, body: str) -> bytes:
+        html_path = tmp_path / f"{name}.html"
+        pdf_path = tmp_path / f"{name}.pdf"
+        html_path.write_text(
+            f'<!DOCTYPE html><html><head><style>{style}</style></head><body class="result">{body}</body></html>',
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "timeout",
+                "40",
+                chrome,
+                "--headless=new",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--no-pdf-header-footer",
+                f"--print-to-pdf={pdf_path}",
+                html_path.as_uri(),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert pdf_path.is_file() and pdf_path.stat().st_size > 1000
+        return pdf_path.read_bytes()
+
+    full = _rect_heights(paint("full", card.replace("FILL", filler)))
+    empty = _rect_heights(paint("empty", card.replace("FILL", "")))
+    assert not any(height > 800 for height in full - empty)
+
+
+_CHECK_HEADINGS = [STRINGS[key][0] for key in STRINGS if key.startswith("U10.h.")]
+
+
+def _cmap(blob: bytes | None) -> dict[int, str]:
+    mapping: dict[int, str] = {}
+    if not blob:
+        return mapping
+    for row in re.finditer(
+        rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+        blob,
+    ):
+        left, right, dest = (int(row.group(index), 16) for index in (1, 2, 3))
+        for offset, src in enumerate(range(left, right + 1)):
+            mapping[src] = chr(dest + offset)
+    for row in re.finditer(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blob):
+        mapping.setdefault(int(row.group(1), 16), chr(int(row.group(2), 16)))
+    return mapping
+
+
+def _font_maps(dictionary: bytes, objects: dict) -> dict[str, dict[int, str]]:
+    found = re.search(rb"/Font\s*<<([^>]*)>>", dictionary, re.S)
+    if found is None:
+        resource = re.search(rb"/Resources\s+(\d+)\s+\d+\s+R", dictionary)
+        if resource and int(resource.group(1)) in objects:
+            return _font_maps(objects[int(resource.group(1))][0], objects)
+        parent = re.search(rb"/Parent\s+(\d+)\s+\d+\s+R", dictionary)
+        if parent and int(parent.group(1)) in objects:
+            return _font_maps(objects[int(parent.group(1))][0], objects)
+        return {}
+    maps: dict[str, dict[int, str]] = {}
+    for name, number in re.findall(rb"/([A-Za-z0-9]+)\s+(\d+)\s+\d+\s+R", found.group(1)):
+        font, _stream = objects[int(number)]
+        link = re.search(rb"/ToUnicode\s+(\d+)\s+\d+\s+R", font)
+        blob = objects[int(link.group(1))][1] if link else None
+        maps[name.decode()] = _cmap(blob)
+    return maps
+
+
+def _pdf_lines(data: bytes) -> list[list[str]]:
+    """Lines on each page, decoded with that page's own font map."""
+    objects = _driver()._pdf_objects(data)
+    pages: list[tuple[int, list[str]]] = []
+    for number, (dictionary, _stream) in objects.items():
+        if re.search(rb"/Type\s*/Page(?!s)", dictionary) is None:
+            continue
+        array = re.search(rb"/Contents\s*\[([^\]]*)\]", dictionary)
+        if array is not None:
+            contents = [int(item) for item in re.findall(rb"(\d+)\s+\d+\s+R", array.group(1))]
+        else:
+            single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
+            contents = [int(single.group(1))] if single else []
+        fonts = _font_maps(dictionary, objects)
+        blob = b"\n".join(objects[item][1] or b"" for item in contents)
+        current: dict[int, str] = {}
+        rows: dict[float, str] = {}
+        line_y = 0.0
+        for match in re.finditer(
+            rb"/([A-Za-z0-9]+)\s+[\d.]+\s+Tf|1 0 0 -1 [\d.]+ ([\d.]+) Tm|<([0-9A-Fa-f]+)>\s*Tj",
+            blob,
+        ):
+            if match.group(1):
+                current = fonts.get(match.group(1).decode(), {})
+                continue
+            if match.group(2):
+                line_y = float(match.group(2))
+                continue
+            raw = bytes.fromhex(match.group(3).decode())
+            text = "".join(
+                current.get(int.from_bytes(raw[index : index + 2], "big"), "")
+                for index in range(0, len(raw) - 1, 2)
+            )
+            rows[line_y] = rows.get(line_y, "") + text
+        pages.append((number, [rows[key] for key in sorted(rows)]))
+    return [lines for _number, lines in sorted(pages)]
+
+
+def _plain_line(text: str) -> str:
+    for src, dst in (("ﬁ", "fi"), ("ﬂ", "fl"), ("ﬀ", "ff"), ("ﬃ", "ffi"), ("ﬄ", "ffl")):
+        text = text.replace(src, dst)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def test_a_long_filing_keeps_each_check_together_and_does_not_orphan_explain(tmp_path):
+    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if chrome is None:
+        pytest.skip("chrome is not installed")
+    filing = load_directory(PINNED / "0000104169-26-000055")
+    explained = explain_filing(filing)
+    page = result_page(
+        explained,
+        form=filing.form,
+        period=filing.period_end or "",
+        filed="2026-01-01",
+        url=filing.url,
+        company=filing.filer,
+        focus=filing.focus,
+        fiscal_year_end=filing.fiscal_year_end,
+    )
+    pages = _pdf_lines(_chrome_pdf(page, tmp_path))
+    assert len(pages) >= 8
+    for lines in pages:
+        content: list[str] = []
+        passed_header = False
+        for line in lines:
+            if not passed_header:
+                if "investment advice" in line:
+                    passed_header = True
+                continue
+            content.append(_plain_line(line))
+        assert content
+        assert content[0].casefold() != "explain"
+    joined = [_plain_line(" ".join(lines)) for lines in pages]
+    for heading in _CHECK_HEADINGS:
+        homes = [index for index, text in enumerate(joined) if heading in text]
+        assert homes, heading
+        for index in homes:
+            after = joined[index][joined[index].find(heading) :]
+            assert "Check:" in after[:500]

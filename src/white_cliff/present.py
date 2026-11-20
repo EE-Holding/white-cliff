@@ -468,6 +468,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "  article.card { break-inside: avoid; page-break-inside: avoid; }\n"
         "  section.check { break-inside: avoid; page-break-inside: avoid; }\n"
         "  button.explain { break-before: avoid; page-break-before: avoid; }\n"
+        "  .detail:not(.open) { display: none; }\n"
         "}\n"
         "</style>\n"
         f"{_print_sheet(inner, disclaimer) if result else _column(inner)}"
@@ -1149,6 +1150,8 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
             end = detail.rfind("</div></div>")
             if end >= 0:
                 detail = detail[:end] + extra + detail[end:]
+            else:
+                detail += extra
         caption, face = _leading_caption(face)
         label_id = "lab-" + re.sub(r"[^a-z0-9]+", "-", identifier.lower())
         article = (
