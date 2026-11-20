@@ -16,11 +16,11 @@ Die Datei ist nicht signiert. Ein Mac mit einem Apple-Chip verwendet White-Cliff
 
 1. Die Mac-Datei im Bild entpacken.
 
-![Zeichnung, keine Bildschirmaufnahme: die Dateinamen.](how-to-files.png)
+![Zeichnung, keine Bildschirmaufnahme: die Dateinamen.](../docs/how-to-files.png)
 
 2. White Cliff doppelklicken.
 
-![Zeichnung, keine Bildschirmaufnahme: das Symbol White Cliff.](how-to-mac-icon.png)
+![Zeichnung, keine Bildschirmaufnahme: das Symbol White Cliff.](../docs/how-to-mac-icon.png)
 
 3. Auf Fertig klicken, und nicht auf In den Papierkorb legen klicken.
 
@@ -34,15 +34,15 @@ Die Datei ist nicht signiert. Ein Mac mit einem Apple-Chip verwendet White-Cliff
 
 ![Zeichnung, keine Bildschirmaufnahme: Datenschutz & Sicherheit, Dennoch öffnen ist markiert.](how-to-de-mac-settings.png)
 
-6. Der Browser zeigt eine private Seite auf diesem Computer.
+6. Der Browser zeigt eine Seite, die nur auf diesem Computer läuft.
 
-![Bildschirmaufnahme vom Mac-Lauf: die private Seite.](how-to-de-app.png)
+![Bildschirmaufnahme vom Mac-Lauf: eine Seite, die nur auf diesem Computer läuft.](how-to-de-app.png)
 
 ## Windows
 
 1. Die Windows-Datei im Bild doppelklicken.
 
-![Zeichnung, keine Bildschirmaufnahme: die Windows-Datei.](how-to-windows-file.png)
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Datei.](../docs/how-to-windows-file.png)
 
 2. Auf Weitere Informationen klicken.
 
@@ -52,6 +52,6 @@ Die Datei ist nicht signiert. Ein Mac mit einem Apple-Chip verwendet White-Cliff
 
 ![Zeichnung, keine Bildschirmaufnahme: die Windows-Meldung, Trotzdem ausführen ist markiert.](how-to-de-windows-run.png)
 
-4. Der Browser zeigt eine private Seite auf diesem Computer.
+4. Der Browser zeigt eine Seite, die nur auf diesem Computer läuft.
 
-![Bildschirmaufnahme vom Mac-Lauf: die private Seite.](how-to-de-app.png)
+![Bildschirmaufnahme vom Mac-Lauf: eine Seite, die nur auf diesem Computer läuft.](how-to-de-app.png)

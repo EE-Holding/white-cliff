@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GUIDES = (
     (ROOT / "docs" / "how-to-open.md", "how-to-open-en.png"),
-    (ROOT / "docs" / "how-to-open-de.md", "how-to-open-de.png"),
+    (ROOT / "guides" / "how-to-open-de.md", "how-to-open-de.png"),
 )
 
 STYLE = """

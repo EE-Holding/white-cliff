@@ -30,9 +30,9 @@ The download is not signed. A Mac with an Apple chip uses White-Cliff-Mac-Apple-
 
 ![Drawing, not a screenshot: Privacy & Security, with Open Anyway marked.](how-to-mac-settings.png)
 
-6. The browser shows a private page on this computer.
+6. The browser shows a page that runs only on this computer.
 
-![Screenshot from the Mac build: the private page.](how-to-app.png)
+![Screenshot from the Mac build: a page that runs only on this computer.](how-to-app.png)
 
 ## Windows
 
@@ -48,6 +48,6 @@ The download is not signed. A Mac with an Apple chip uses White-Cliff-Mac-Apple-
 
 ![Drawing, not a screenshot: the Windows message, with Run anyway marked.](how-to-windows-run.png)
 
-4. The browser shows a private page on this computer.
+4. The browser shows a page that runs only on this computer.
 
-![Screenshot from the Mac build: the private page.](how-to-app.png)
+![Screenshot from the Mac build: a page that runs only on this computer.](how-to-app.png)

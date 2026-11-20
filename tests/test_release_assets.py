@@ -32,11 +32,8 @@ def _load(name: str, path: Path):
 
 
 def _guide_images() -> list[str]:
-    names: set[str] = set()
-    for guide in ("how-to-open.md", "how-to-open-de.md"):
-        text = (ROOT / "docs" / guide).read_text(encoding="utf-8")
-        names.update(re.findall(r"\((how-to-[^)]+\.png)\)", text))
-    return sorted(names)
+    text = (ROOT / "docs" / "how-to-open.md").read_text(encoding="utf-8")
+    return sorted(set(re.findall(r"\((how-to-[^)]+\.png)\)", text)))
 
 
 def _zip(path: Path, note: bytes, german: bytes | None = None) -> None:
@@ -49,6 +46,7 @@ def _zip(path: Path, note: bytes, german: bytes | None = None) -> None:
             archive.writestr("WhiteCliff-Windows/White Cliff.exe", b"windows-program")
         for picture in _guide_images():
             archive.writestr(picture, picture.encode("ascii"))
+        archive.writestr("how-to-de-mac-warning.png", b"de-picture")
 
 
 def test_the_five_jobs_publish_plain_names_and_checksums():
@@ -64,7 +62,7 @@ def test_the_five_jobs_publish_plain_names_and_checksums():
     for name in ASSETS:
         assert name in text
     assert text.count("SHA256SUMS") >= 3
-    assert text.count("how-to-open-de.md") >= 3
+    assert "how-to-open-de.md" not in text
     assert "how-to-open-en.png" in text
     assert "how-to-open-de.png" in text
     lowered = text.lower()
@@ -108,17 +106,22 @@ def _picture_steps(text: str) -> list[tuple[str, str]]:
 def test_each_open_step_has_one_picture():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     download = readme.split("## Download", 1)[1].split("## For developers", 1)[0]
-    english = (ROOT / "docs" / "how-to-open.md").read_text(encoding="utf-8")
-    german = (ROOT / "docs" / "how-to-open-de.md").read_text(encoding="utf-8")
-    for text, drawing_mark, shot_mark in (
-        (english, "Drawing, not a screenshot", "Screenshot"),
-        (german, "Zeichnung, keine Bildschirmaufnahme", "Bildschirmaufnahme"),
+    english_path = ROOT / "docs" / "how-to-open.md"
+    german_path = ROOT / "guides" / "how-to-open-de.md"
+    assert german_path.is_file()
+    english = english_path.read_text(encoding="utf-8")
+    assert "private page" not in english
+    assert "a page that runs only on this computer" in english
+    for text_path, drawing_mark, shot_mark, public in (
+        (english_path, "Drawing, not a screenshot", "Screenshot", True),
+        (german_path, "Zeichnung, keine Bildschirmaufnahme", "Bildschirmaufnahme", False),
     ):
+        text = text_path.read_text(encoding="utf-8")
         steps = _picture_steps(text)
         assert len(steps) >= 8
         for sentence, image in steps:
             name = re.search(r"\(([^)]+)\)", image).group(1)
-            path = ROOT / "docs" / name
+            path = (text_path.parent / name).resolve()
             assert path.is_file(), name
             note = _png_text(path.read_bytes()).get("Source", "")
             if drawing_mark in image:
@@ -126,10 +129,14 @@ def test_each_open_step_has_one_picture():
             else:
                 assert shot_mark in image
                 assert note == "screenshot"
-            assert name in download or Path(name).name in download
+            if public:
+                assert path.name in download
+            elif path.parent == german_path.parent:
+                assert path.name not in readme
         assert sum(1 for _sentence, image in steps if shot_mark in image and drawing_mark not in image) >= 1
     for sentence, _image in _picture_steps(english):
         assert sentence in download
+    assert "how-to-open-de.md" not in readme
 
 
 def test_the_note_names_the_files_and_the_warning_buttons():
@@ -154,14 +161,17 @@ def test_the_note_names_the_files_and_the_warning_buttons():
     for old in ASSETS:
         assert old not in docs
     assert re.search(r"(?m)^1\. ", docs)
-    for jargon in ("Gatekeeper", "SmartScreen", "safe", "trusted"):
+    for jargon in ("Gatekeeper", "SmartScreen", "safe", "trusted", "verified"):
         assert jargon not in docs
 
 
 def test_the_german_guide_needs_native_review_and_is_not_certified():
-    docs = (ROOT / "docs" / "how-to-open-de.md").read_text(encoding="utf-8")
-    bundled = (ROOT / "src" / "white_cliff" / "data" / "how-to-open-de.md").read_text(encoding="utf-8")
-    assert docs == bundled
+    path = ROOT / "guides" / "how-to-open-de.md"
+    assert path.is_file()
+    assert not (ROOT / "docs" / "how-to-open-de.md").exists()
+    assert not (ROOT / "src" / "white_cliff" / "data" / "how-to-open-de.md").exists()
+    assert not list((ROOT / "docs").glob("how-to-de-*"))
+    docs = path.read_text(encoding="utf-8")
     assert docs.startswith(
         "This tool explains the numbers in a public company filing. "
         "It does not recommend buying, selling or holding any security, "
@@ -200,7 +210,7 @@ def test_the_assembler_writes_the_release_files_and_does_not_publish(tmp_path: P
         assert banned not in lowered
     assembler = _load("assemble_release", ROOT / "scripts" / "assemble_release.py")
     note = (ROOT / "docs" / "how-to-open.md").read_bytes()
-    german = (ROOT / "docs" / "how-to-open-de.md").read_bytes()
+    german = (ROOT / "guides" / "how-to-open-de.md").read_bytes()
     downloaded = tmp_path / "ci"
     for name in ASSETS:
         archive = downloaded / name.replace(".zip", "") / name
@@ -216,35 +226,38 @@ def test_the_assembler_writes_the_release_files_and_does_not_publish(tmp_path: P
         template=ROOT / "docs" / "release-notes.md",
     )
     images = _guide_images()
-    assert sorted(path.name for path in dest.iterdir()) == sorted(
-        list(RELEASE_ASSETS) + ["how-to-open-de.md", *images]
-    )
+    names = sorted(path.name for path in dest.iterdir())
+    assert "how-to-open-de.md" not in names
+    assert "how-to-de-mac-warning.png" not in names
+    assert names == sorted(list(RELEASE_ASSETS) + images)
     lines = (dest / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
     assert [line.split()[-1] for line in lines] == [
         "White-Cliff-Mac-Apple-silicon.zip",
         "White-Cliff-Mac-Intel.zip",
         "White-Cliff-Windows.exe",
         "how-to-open.md",
-        "how-to-open-de.md",
         *images,
     ]
     for line in lines:
         digest, name = line.split()
         assert hashlib.sha256((dest / name).read_bytes()).hexdigest() == digest
     assert (dest / "how-to-open.md").read_bytes() == note
-    assert (dest / "how-to-open-de.md").read_bytes() == german
     assert (dest / "White-Cliff-Windows.exe").read_bytes() == b"windows-program"
     notes = (ROOT / "docs" / "release-notes.md").read_text(encoding="utf-8")
+    bundled = (ROOT / "src" / "white_cliff" / "data" / "release-notes.md").read_text(encoding="utf-8")
+    assert notes == bundled
     assert notes.startswith(
         "This tool explains the numbers in a public company filing. "
         "It does not recommend buying, selling or holding any security, "
         "and it is not investment advice."
     )
+    assert "\n# White Cliff\n" in notes
+    assert "{version}" not in notes
+    assert "How it was checked" not in notes
+    assert "how-to-open-de" not in notes
     for name in RELEASE_ASSETS:
         if name != "how-to-open.md":
             assert name in notes
-    assert "needs a native review" in notes
-    assert "not a certified translation" in notes
 
 
 def test_release_workflow_cannot_create_or_publish():
@@ -461,15 +474,25 @@ def test_the_readme_puts_download_ahead_of_the_developer_commands():
     assert 0 < download < developers < install < command
     assert developers < install
     assert developers < command
-    assert "https://github.com/EE-Holding/white-cliff/releases/latest" in readme
+    link = readme.find("https://github.com/EE-Holding/white-cliff/releases/latest")
+    assert link > len(readme.split("\n\n", 1)[0])
     assert "docs/how-to-open.md" in readme
+    assert "how-to-open-de" not in readme
     assert "Dieses Werkzeug" not in readme
+    assert "## What every output carries" in readme
+    assert "What the output guarantees" not in readme
+    assert "Every figure points back to the filing." in readme
+    assert "and nothing else" not in readme
+    assert "private page" not in readme
+    assert "a page that runs only on this computer" in readme
 
 
 def test_the_rendered_guide_uses_large_type():
     render = _load("render_guides", ROOT / "scripts" / "render_guides.py")
     page = render.html_page((ROOT / "docs" / "how-to-open.md").read_text(encoding="utf-8"))
-    german = render.html_page((ROOT / "docs" / "how-to-open-de.md").read_text(encoding="utf-8"))
+    german_path = ROOT / "guides" / "how-to-open-de.md"
+    assert german_path.is_file()
+    german = render.html_page(german_path.read_text(encoding="utf-8"))
     assert "font-size: 32px" in page
     assert "Open Anyway" in page
     assert "needs a native review" in german
@@ -498,6 +521,34 @@ def test_a_checksum_mismatch_is_not_assembled(tmp_path: Path):
         assert "WhiteCliff-Windows.zip" in str(exc)
     else:
         raise AssertionError("a wrong checksum was accepted")
+
+
+def test_public_pages_keep_counts_and_contacts_off_the_page(tmp_path: Path):
+    phrase = "and " + "nothing else"
+    email = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+    public = (
+        ROOT / "README.md",
+        ROOT / "docs" / "how-to-open.md",
+        ROOT / "docs" / "release-notes.md",
+        ROOT / "src" / "white_cliff" / "data" / "how-to-open.md",
+        ROOT / "src" / "white_cliff" / "data" / "release-notes.md",
+        ROOT / "src" / "white_cliff" / "sitebuild.py",
+        ROOT / ".github" / "workflows" / "release.yml",
+    )
+    for path in public:
+        text = path.read_text(encoding="utf-8")
+        assert phrase not in text, path.name
+        assert email.search(text) is None, path.name
+        assert "download_count" not in text, path.name
+        assert "Mac Apple silicon:" not in text, path.name
+    smoke = (ROOT / "scripts" / "smoke_mac.py").read_text(encoding="utf-8")
+    assert phrase not in smoke
+    from white_cliff.sitebuild import build_site
+
+    output = build_site(tmp_path / "site")
+    names = {path.name for path in output.iterdir() if path.is_file()}
+    assert "how-to-open-de.md" not in names
+    assert not any(name.startswith("how-to-de-") for name in names)
 
 
 def test_download_counts_sum_each_platform_and_keep_the_token(tmp_path, monkeypatch, capsys):

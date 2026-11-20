@@ -34,7 +34,6 @@ jobs:
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
-          cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
           cp docs/how-to-*.png "$stage/"
           ditto -c -k --keepParent "$stage" "$stage.zip"
       - name: Show the old certificate failure
@@ -81,7 +80,6 @@ jobs:
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
-          cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
           cp docs/how-to-*.png "$stage/"
           ditto -c -k --keepParent "$stage" "$stage.zip"
       - name: Show the old certificate failure
@@ -149,14 +147,12 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           cp docs/how-to-open.md how-to-open.md
-          cp docs/how-to-open-de.md how-to-open-de.md
           cp docs/how-to-*.png .
           files=(
             White-Cliff-Mac-Apple-silicon.zip
             White-Cliff-Mac-Intel.zip
             White-Cliff-Windows.exe
             how-to-open.md
-            how-to-open-de.md
           )
           while IFS= read -r picture; do
             files+=("$picture")

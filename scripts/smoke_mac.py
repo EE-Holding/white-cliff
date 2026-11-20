@@ -1276,7 +1276,7 @@ def _same_line(text: str) -> str:
 
 
 def _disclaimer_text(text: str) -> str:
-    """The disclaimer compared byte for byte, with whitespace collapsed and nothing else changed."""
+    """The disclaimer compared byte for byte, with whitespace collapsed."""
     return " ".join(text.split())
 
 

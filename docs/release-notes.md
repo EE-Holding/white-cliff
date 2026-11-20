@@ -1,6 +1,6 @@
 This tool explains the numbers in a public company filing. It does not recommend buying, selling or holding any security, and it is not investment advice.
 
-# White Cliff {version}
+# White Cliff
 
 {date}
 
@@ -11,7 +11,6 @@ This tool explains the numbers in a public company filing. It does not recommend
 - White-Cliff-Windows.exe for Windows
 - SHA256SUMS.txt lists one long number for each download
 - how-to-open.md says which button to press when the computer warns that the file is not signed
-- The German guide is inside the Mac download. It needs a native review. It is not a certified translation.
 
 ## Check the download
 
