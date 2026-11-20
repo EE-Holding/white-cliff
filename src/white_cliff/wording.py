@@ -429,9 +429,19 @@ def _parts_html(template_id: str, parts: list[tuple], class_name: str = "") -> s
             body.append(html.escape(part[1]))
             continue
         if part[0] == "percent":
-            display, current_href, prior_href, current_shown, prior_shown = part[1:6]
-            notes.append(_percent_note(display, current_href, prior_href, current_shown, prior_shown, len(notes)))
-            body.append(notes[-1][0])
+            fields = {
+                "display": part[1],
+                "current_href": part[2],
+                "prior_href": part[3],
+                "current_shown": part[4],
+                "prior_shown": part[5],
+                "period": part[6],
+                "period_prior": part[7],
+                "label": part[8],
+            }
+            link, note = _percent_note(fields, "line")
+            notes.append(note)
+            body.append(link)
             continue
         display, href = part[1], part[2]
         if not href.startswith("https://www.sec.gov/"):
@@ -442,31 +452,175 @@ def _parts_html(template_id: str, parts: list[tuple], class_name: str = "") -> s
             f'<a{link_class} href="{html.escape(href, quote=True)}">{html.escape(display)}</a>'
         )
     class_attr = f' class="{class_name}"' if class_name else ""
-    note_html = "".join(note[1] for note in notes)
+    note_html = "".join(notes)
     return f'<p{class_attr} data-template="{template_id}">{"".join(body)}</p>\n' + note_html
 
 
-def _percent_note(
-    display: str,
-    current_href: str,
-    prior_href: str,
-    current_shown: str,
-    prior_shown: str,
-    index: int,
-) -> tuple[str, str]:
-    """The percent opens one note that links this figure and the earlier figure."""
-    for href in (current_href, prior_href):
-        if not href.startswith("https://www.sec.gov/"):
-            raise ValueError("number without a filing link")
-    digest = hashlib.sha256(f"{index}|{current_href}|{prior_href}|{display}".encode()).hexdigest()[:16]
-    note_id = "pct-" + digest
-    link = f'<a class="pct" href="#{note_id}">{html.escape(display)}</a>'
-    note = (
-        f'<p class="pct-note" id="{note_id}">'
-        f'<a href="{html.escape(current_href, quote=True)}">{html.escape(current_shown)}</a>'
-        f'<a href="{html.escape(prior_href, quote=True)}">{html.escape(prior_shown)}</a>'
-        f"</p>\n"
+_NOTED_PERCENTS: set[tuple[str, str, str, str]] = set()
+_REMOVED_PERCENTS: set[tuple[str, str, str, str]] = set()
+
+
+def take_percent_note_counts() -> tuple[int, int]:
+    """Unique two-figure percents that carry a full note, and those left out."""
+    noted = len(_NOTED_PERCENTS)
+    removed = len(_REMOVED_PERCENTS - _NOTED_PERCENTS)
+    _NOTED_PERCENTS.clear()
+    _REMOVED_PERCENTS.clear()
+    return noted, removed
+
+
+def _percent_key(label: str, current: Cell, prior: Cell, display: str) -> tuple[str, str, str, str]:
+    return (label, current.period_end or "", prior.period_end or "", display)
+
+
+def _mark_noted_percent(label: str, current: Cell, prior: Cell, display: str) -> None:
+    key = _percent_key(label, current, prior, display)
+    _NOTED_PERCENTS.add(key)
+    _REMOVED_PERCENTS.discard(key)
+
+
+def _mark_removed_percent(label: str, current: Cell, prior: Cell, display: str) -> None:
+    key = _percent_key(label, current, prior, display)
+    if key not in _NOTED_PERCENTS:
+        _REMOVED_PERCENTS.add(key)
+
+
+def _percent_fields(label: str, current: Cell, prior: Cell, display: str) -> dict[str, str] | None:
+    """Both filing inputs, or nothing. A partial note is not returned."""
+    if (
+        not label
+        or not display
+        or current.fact is None
+        or prior.fact is None
+        or not current.period_end
+        or not prior.period_end
+    ):
+        return None
+    try:
+        period = long_date(current.period_end)
+        period_prior = long_date(prior.period_end)
+    except (ValueError, IndexError):
+        return None
+    if not period or not period_prior:
+        return None
+    current_href = fact_href(current.fact)
+    prior_href = fact_href(prior.fact)
+    if not current_href.startswith("https://www.sec.gov/"):
+        return None
+    if not prior_href.startswith("https://www.sec.gov/"):
+        return None
+    if current_href == prior_href:
+        return None
+    current_shown = show_measure(current.fact.value, current.fact.unit)
+    prior_shown = show_measure(prior.fact.value, prior.fact.unit)
+    if not current_shown or not prior_shown:
+        return None
+    return {
+        "display": display,
+        "current_href": current_href,
+        "prior_href": prior_href,
+        "current_shown": current_shown,
+        "prior_shown": prior_shown,
+        "period": period,
+        "period_prior": period_prior,
+        "label": label,
+    }
+
+
+def _percent_sentence(fields: dict[str, str]) -> str:
+    """The cleared formula. Each amount is its own filing link."""
+    current_link = (
+        f'<a href="{html.escape(fields["current_href"], quote=True)}">'
+        f"{html.escape(fields['current_shown'])}</a>"
     )
+    prior_link = (
+        f'<a href="{html.escape(fields["prior_href"], quote=True)}">'
+        f"{html.escape(fields['prior_shown'])}</a>"
+    )
+    period = html.escape(fields["period"])
+    period_prior = html.escape(fields["period_prior"])
+    label = html.escape(fields["label"])
+    if german():
+        return (
+            "Berechnet als Veränderung von "
+            f"{period_prior} zu {period}, geteilt durch den Wert für {period_prior}, aus "
+            f"{label} von {current_link} für {period} und "
+            f"{label} von {prior_link} für {period_prior}."
+        )
+    return (
+        "It is calculated as the change from "
+        f"{period_prior} to {period}, divided by the {period_prior} figure, using "
+        f"{label} of {current_link} for {period} and "
+        f"{label} of {prior_link} for {period_prior}."
+    )
+
+
+def _fact_cell(fact: Fact) -> Cell:
+    return Cell(
+        True,
+        value=fact.value,
+        unit=fact.unit,
+        period_end=fact.period.end or "",
+        period_start=fact.period.start,
+        kind=fact.period.kind,
+        fact=fact,
+    )
+
+
+def _growth_part(label: str, current: Fact, prior: Fact, pct: Decimal, display: str | None = None) -> tuple:
+    """A full two-input percent, or no percent when either filing input is missing."""
+    shown = display if display is not None else show_measure(abs(pct), "percent")
+    part = _percent_tuple(label, _fact_cell(current), _fact_cell(prior), shown)
+    if part is None:
+        return ("text", "")
+    return part
+
+
+def _growth_slot(label: str, current: Fact, prior: Fact, pct: Decimal, number: str) -> tuple[str, str]:
+    """The number linked to the note, plus the note. Both empty when an input is missing."""
+    current_cell = _fact_cell(current)
+    prior_cell = _fact_cell(prior)
+    display = show_measure(abs(pct), "percent")
+    fields = _percent_fields(label, current_cell, prior_cell, display)
+    if fields is None:
+        _mark_removed_percent(label, current_cell, prior_cell, display)
+        return "", ""
+    _mark_noted_percent(label, current_cell, prior_cell, display)
+    link, note = _percent_note(fields, "check")
+    href = re.search(r'href="(#[^"]+)"', link)
+    if href is None:
+        return "", ""
+    shown = f'<a class="pct" href="{href.group(1)}">{html.escape(number)}</a>'
+    return shown, note
+
+
+def _percent_tuple(label: str, current: Cell, prior: Cell, display: str) -> tuple | None:
+    fields = _percent_fields(label, current, prior, display)
+    if fields is None:
+        _mark_removed_percent(label, current, prior, display)
+        return None
+    _mark_noted_percent(label, current, prior, display)
+    return (
+        "percent",
+        fields["display"],
+        fields["current_href"],
+        fields["prior_href"],
+        fields["current_shown"],
+        fields["prior_shown"],
+        fields["period"],
+        fields["period_prior"],
+        fields["label"],
+    )
+
+
+def _percent_note(fields: dict[str, str], surface: str) -> tuple[str, str]:
+    """The percent opens one note that names, dates, and links both inputs."""
+    digest = hashlib.sha256(
+        f"{surface}|{fields['current_href']}|{fields['prior_href']}|{fields['display']}".encode()
+    ).hexdigest()[:16]
+    note_id = "pct-" + digest
+    link = f'<a class="pct" href="#{note_id}">{html.escape(fields["display"])}</a>'
+    note = f'<p class="pct-note" id="{note_id}">{_percent_sentence(fields)}</p>\n'
     return link, note
 
 
@@ -671,9 +825,12 @@ def _change_parts(figure: str, current: Cell, prior: Cell, measure: str) -> list
             _link_fact(current.fact),
             ("text", "."),
         ]]
+    part = _percent_tuple(figure, current, prior, show_measure(abs(pct), "percent"))
+    if part is None:
+        return []
     return [[
         ("text", f"It {direction} "),
-        ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
+        part,
         ("text", " from "),
         _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
         ("text", "."),
@@ -753,9 +910,12 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             ("text", f". Eine prozentuale Veränderung wird nicht angezeigt, weil {reason}."),
         ]]
     verb = "stieg" if _direction(current.value, prior.value) == "rose" else "sank"
+    part = _percent_tuple(figure, current, prior, show_measure(abs(pct), "percent"))
+    if part is None:
+        return []
     return [[
         ("text", f"Der Wert der Position „{figure}“ {verb} um "),
-        ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
+        part,
         ("text", " gegenüber dem "),
         earlier,
         ("text", "."),
@@ -844,9 +1004,12 @@ def _change_parts_de(figure: str, current: Cell, prior: Cell, measure: str) -> l
             _link_fact(current.fact),
             ("text", "."),
         ]]
+    part = _percent_tuple(figure, current, prior, show_measure(abs(pct), "percent"))
+    if part is None:
+        return []
     return [[
         ("text", f"It {direction} "),
-        ("link", show_measure(abs(pct), "percent"), fact_href(current.fact)),
+        part,
         ("text", " from "),
         _period_link(period_phrase(prior.kind, prior.period_start, prior.period_end), prior.fact),
         ("text", "."),
@@ -1072,8 +1235,8 @@ def _chart(
     return f'<ul class="chart" role="img" aria-label="{label_text}">{"".join(items)}</ul>\n'
 
 
-def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[str, str] | None:
-    """One S1 clause. The percent links this figure and the period phrase links the earlier one."""
+def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str, label: str) -> tuple[str, str, str] | None:
+    """One S1 clause. A percent change carries the note for both inputs."""
     if not phrase or measure not in {"money", "shares", "per_share", "net_debt"}:
         return None
     if (
@@ -1085,31 +1248,38 @@ def _s1_clause(current: Cell, prior: Cell, measure: str, phrase: str) -> tuple[s
         or prior.basis in {"currency", "length"}
     ):
         return None
+    pct = percent_change(current.value, prior.value)
+    if not (_displays_match(current, prior) or measure == "net_debt" or pct is None or pct == 0):
+        display = show_measure(abs(pct), "percent")
+        fields = _percent_fields(label, current, prior, display)
+        if fields is None:
+            _mark_removed_percent(label, current, prior, display)
+            return None
+        _mark_noted_percent(label, current, prior, display)
+        link, note = _percent_note(fields, "face")
+        period = _anchor("per", phrase, fields["prior_href"])
+        direction = _direction(current.value, prior.value)
+        if german():
+            verb = "stieg" if direction == "rose" else "sank"
+            return "change", f"{verb} um {link} gegenüber {period}", note
+        return "change", f"{direction} {link} from {period}", note
     period = _anchor("per", phrase, fact_href(prior.fact))
     if _displays_match(current, prior):
         if german():
-            return "unchanged", "blieb unverändert gegenüber " + period
-        return "unchanged", "was unchanged from " + period
-    pct = percent_change(current.value, prior.value)
-    if measure == "net_debt" or pct is None or pct == 0:
-        diff = show_measure(abs(current.value - prior.value), current.unit)
-        linked = _anchor("pct", diff, fact_href(current.fact))
-        if german():
-            word = "höher" if current.value >= prior.value else "niedriger"
-            if phrase.startswith("den "):
-                named = _anchor("per", phrase, fact_href(prior.fact))
-                return "amount", f"war um {linked} {word} als in {named}"
-            bare = phrase[4:] if phrase.startswith("dem ") else phrase
-            named = _anchor("per", bare, fact_href(prior.fact))
-            return "amount", f"war um {linked} {word} als im {named}"
-        word = "higher" if current.value >= prior.value else "lower"
-        return "amount", f"was {linked} {word} than {period}"
-    direction = _direction(current.value, prior.value)
-    percent = _anchor("pct", show_measure(abs(pct), "percent"), fact_href(current.fact))
+            return "unchanged", "blieb unverändert gegenüber " + period, ""
+        return "unchanged", "was unchanged from " + period, ""
+    diff = show_measure(abs(current.value - prior.value), current.unit)
+    linked = _anchor("pct", diff, fact_href(current.fact))
     if german():
-        verb = "stieg" if direction == "rose" else "sank"
-        return "change", f"{verb} um {percent} gegenüber {period}"
-    return "change", f"{direction} {percent} from {period}"
+        word = "höher" if current.value >= prior.value else "niedriger"
+        if phrase.startswith("den "):
+            named = _anchor("per", phrase, fact_href(prior.fact))
+            return "amount", f"war um {linked} {word} als in {named}", ""
+        bare = phrase[4:] if phrase.startswith("dem ") else phrase
+        named = _anchor("per", bare, fact_href(prior.fact))
+        return "amount", f"war um {linked} {word} als im {named}", ""
+    word = "higher" if current.value >= prior.value else "lower"
+    return "amount", f"was {linked} {word} than {period}", ""
 
 
 def _anchor(class_name: str, display: str, href: str) -> str:
@@ -1187,7 +1357,7 @@ def _short_line(label, current, last, year, measure, form, chunks: list[str]) ->
     """S1 on a card that shows an H1 head with its date. Both zeros stay on C3."""
     if measure == "margin":
         return _margin_short(current, last, year, form)
-    clauses: list[tuple[str, str]] = []
+    clauses: list[tuple[str, str, str]] = []
     dated = False
     for column, cell in (("c1", last), ("c2", year)):
         if cell is None:
@@ -1195,19 +1365,20 @@ def _short_line(label, current, last, year, measure, form, chunks: list[str]) ->
         if cell.available and cell.fact is not None and column_header(cell.kind, cell.period_start, cell.period_end):
             dated = True
         head = EN["prior_quarter"] if column == "c1" else _right_head(cell, current.fact, form)
-        clause = _s1_clause(current, cell, measure, _phrase_for(head))
+        clause = _s1_clause(current, cell, measure, _phrase_for(head), label)
         if clause is not None:
             clauses.append(clause)
-    if dated and clauses and not all(kind == "unchanged" for kind, _html in clauses):
-        body = " und ".join(html_clause for _kind, html_clause in clauses) if german() else " and ".join(
-            html_clause for _kind, html_clause in clauses
+    if dated and clauses and not all(kind == "unchanged" for kind, _html, _note in clauses):
+        body = " und ".join(html_clause for _kind, html_clause, _note in clauses) if german() else " and ".join(
+            html_clause for _kind, html_clause, _note in clauses
         )
+        notes = "".join(note for _kind, _html, note in clauses)
         lead = "Der Wert " if german() else "It "
-        return f'<div class="cmp-slot"><p class="cmp" data-template="S1">{lead}{body}.</p></div>\n'
+        return f'<div class="cmp-slot"><p class="cmp" data-template="S1">{lead}{body}.</p>\n{notes}</div>\n'
     if dated and len(clauses) == 1 and clauses[0][0] == "unchanged":
         lead = "Der Wert " if german() else "It "
         return f'<div class="cmp-slot"><p class="cmp" data-template="S1">{lead}{clauses[0][1]}.</p></div>\n'
-    if dated and len(clauses) > 1 and all(kind == "unchanged" for kind, _html in clauses):
+    if dated and len(clauses) > 1 and all(kind == "unchanged" for kind, _html, _note in clauses):
         copied = _retitled(chunks, "C3")
         if copied:
             return copied
@@ -1243,7 +1414,7 @@ def _emit_lines(chunks: list[str], label: str, lines: list[list[tuple]]) -> None
         chunks.append(_parts_html(template_id, line, "change-line"))
 
 
-def _percent_clause(current: Cell, prior: Cell, measure: str) -> tuple[str, list[tuple]] | None:
+def _percent_clause(current: Cell, prior: Cell, measure: str, label: str) -> tuple[str, list[tuple]] | None:
     """One rose, fell, or unchanged clause. None when the column is not a percent change."""
     if measure not in {"money", "shares", "per_share"}:
         return None
@@ -1266,36 +1437,25 @@ def _percent_clause(current: Cell, prior: Cell, measure: str) -> tuple[str, list
         if pct == 0 or _direction(current.value, prior.value) == "was unchanged":
             return "unchanged", [("text", "blieb unverändert gegenüber dem " + phrase)]
         verb = "stieg" if _direction(current.value, prior.value) == "rose" else "sank"
-        return "change", [
-            ("text", f"{verb} um "),
-            (
-                "percent",
-                show_measure(abs(pct), "percent"),
-                fact_href(current.fact),
-                fact_href(prior.fact),
-                show_measure(current.fact.value, current.fact.unit),
-                show_measure(prior.fact.value, prior.fact.unit),
-            ),
-            ("text", " gegenüber dem " + phrase),
-        ]
-    if current.value == prior.value:
-        return "unchanged", [("text", "was unchanged from " + phrase)]
-    pct = percent_change(current.value, prior.value)
-    if pct is None:
-        return None
-    if pct == 0 or _direction(current.value, prior.value) == "was unchanged":
-        return "unchanged", [("text", "was unchanged from " + phrase)]
+        lead = f"{verb} um "
+        trail = " gegenüber dem " + phrase
+    else:
+        if current.value == prior.value:
+            return "unchanged", [("text", "was unchanged from " + phrase)]
+        pct = percent_change(current.value, prior.value)
+        if pct is None:
+            return None
+        if pct == 0 or _direction(current.value, prior.value) == "was unchanged":
+            return "unchanged", [("text", "was unchanged from " + phrase)]
+        lead = f"{_direction(current.value, prior.value)} "
+        trail = " from " + phrase
+    part = _percent_tuple(label, current, prior, show_measure(abs(pct), "percent"))
+    if part is None:
+        return ("omit", [])
     return "change", [
-        ("text", f"{_direction(current.value, prior.value)} "),
-        (
-            "percent",
-            show_measure(abs(pct), "percent"),
-            fact_href(current.fact),
-            fact_href(prior.fact),
-            show_measure(current.fact.value, current.fact.unit),
-            show_measure(prior.fact.value, prior.fact.unit),
-        ),
-        ("text", " from " + phrase),
+        ("text", lead),
+        part,
+        ("text", trail),
     ]
 
 
@@ -1326,11 +1486,11 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
                 )
                 chunks.append(_parts_html("C6", [("text", text)], "change-line"))
             continue
-        clause = _percent_clause(current, column, measure)
-        if clause is not None:
-            held.append((column, clause[0], clause[1]))
-        else:
+        clause = _percent_clause(current, column, measure, label)
+        if clause is None:
             _emit_lines(chunks, label, _change_parts(label, current, column, measure))
+        elif clause[0] != "omit":
+            held.append((column, clause[0], clause[1]))
         if column.revised_from is not None and column.fact is not None and current.fact is not None:
             when = long_date(filed) if filed else "the filing date"
             if german():
@@ -1437,7 +1597,13 @@ def _explain_amount(role: str, fact: Fact, inputs: list[tuple[str, Fact]]) -> tu
         if current.value is not None and prior.value is not None:
             pct = percent_change(current.value, prior.value)
             if pct is not None:
-                return ("link", show_measure(pct, "percent"), fact_href(current))
+                return _growth_part(
+                    label_for("revenue", current),
+                    current,
+                    prior,
+                    pct,
+                    show_measure(pct, "percent"),
+                )
     return _link_fact(fact)
 
 
@@ -1679,7 +1845,7 @@ def _check_numbers_de(result: CheckResult) -> str:
             template = template.split(" (")[0] + "."
         return _period_lead(ocf) + paragraph(fill(template, slots))
     if result.check_id == "C2" and len(facts) >= 4:
-        ar_now, ar_then, rev_now, _rev_then = facts[:4]
+        ar_now, ar_then, rev_now, rev_then = facts[:4]
         template = choose(
             STRINGS["C2.numbers"][1],
             {
@@ -1687,16 +1853,30 @@ def _check_numbers_de(result: CheckResult) -> str:
                 "stieg|sank": "stieg" if result.numbers["g_rev"] > 0 else "sank",
             },
         )
+        g_ar, ar_note = _growth_slot(
+            "Forderungen aus Lieferungen und Leistungen",
+            ar_now,
+            ar_then,
+            result.numbers["g_ar"],
+            _pct_num(result.numbers["g_ar"]),
+        )
+        g_rev, rev_note = _growth_slot(
+            "Umsatz",
+            rev_now,
+            rev_then,
+            result.numbers["g_rev"],
+            _pct_num(result.numbers["g_rev"]),
+        )
         return paragraph(fill(template, {
             "fy_prior": _date_link(ar_then),
             "fy": _date_link(ar_now),
-            "g_AR": _linked(_pct_num(result.numbers["g_ar"]), fact_href(ar_now)),
-            "g_Rev": _linked(_pct_num(result.numbers["g_rev"]), fact_href(rev_now)),
+            "g_AR": g_ar,
+            "g_Rev": g_rev,
             "days_t": _linked(german_number(result.numbers["days_now"], 1), fact_href(ar_now)),
             "days_p": _linked(german_number(result.numbers["days_then"], 1), fact_href(ar_then)),
-        }))
+        })) + ar_note + rev_note
     if result.check_id == "C3" and len(facts) >= 4:
-        inv_now, inv_then, cost_now, _cost_then = facts[:4]
+        inv_now, inv_then, cost_now, cost_then = facts[:4]
         revenue = result.labels.get("cost") == "revenue"
         template = choose(
             STRINGS["C3.numbers"][1],
@@ -1710,12 +1890,26 @@ def _check_numbers_de(result: CheckResult) -> str:
                 ),
             },
         )
+        g_inv, inv_note = _growth_slot(
+            "Vorräte",
+            inv_now,
+            inv_then,
+            result.numbers["g_inv"],
+            _pct_num(result.numbers["g_inv"]),
+        )
+        g_cost, cost_note = _growth_slot(
+            "Umsatz" if revenue else "Umsatzkosten",
+            cost_now,
+            cost_then,
+            result.numbers["g_cost"],
+            _pct_num(result.numbers["g_cost"]),
+        )
         return paragraph(fill(template, {
             "fy_prior": _date_link(inv_then),
             "fy": _date_link(inv_now),
-            "g_Inv": _linked(_pct_num(result.numbers["g_inv"]), fact_href(inv_now)),
-            "g_Cost": _linked(_pct_num(result.numbers["g_cost"]), fact_href(cost_now)),
-        }))
+            "g_Inv": g_inv,
+            "g_Cost": g_cost,
+        })) + inv_note + cost_note
     if result.check_id == "C4" and result.items:
         operating = facts[-1]
         lines = []
@@ -1740,11 +1934,18 @@ def _check_numbers_de(result: CheckResult) -> str:
         gap = result.numbers["gap"]
         first, second = STRINGS["C6.numbers"][1].split(". ", 1)
         first = choose(first, {"stieg|sank": "stieg" if growth > 0 else "sank"})
+        growth_link, growth_note = _growth_slot(
+            "verwässerte Aktienzahl",
+            now,
+            earlier,
+            growth,
+            _pct_num(growth),
+        )
         body = paragraph(fill(first + ".", {
             "period_prior": _period_html(earlier),
             "period": _period_html(now),
-            "growth": _linked(_pct_num(growth), fact_href(now)),
-        }))
+            "growth": growth_link,
+        })) + growth_note
         if gap >= 0:
             body += paragraph(fill(second, {
                 "period": _period_html(now),
@@ -1819,7 +2020,7 @@ def _check_numbers(result: CheckResult) -> str:
             else:
                 lines.append(_parts_html("NUMBERS", [
                     ("text", f"Accounts receivable {_rose(result.numbers['g_ar'])} "),
-                    ("link", show_measure(abs(result.numbers["g_ar"]), "percent"), fact_href(ar_now)),
+                    _growth_part("Accounts receivable", ar_now, ar_then, result.numbers["g_ar"]),
                     ("text", " from "),
                     _period_link(period_phrase("instant", None, ar_then.period.end or ""), ar_then),
                     ("text", " to "),
@@ -1831,7 +2032,7 @@ def _check_numbers(result: CheckResult) -> str:
             else:
                 lines.append(_parts_html("NUMBERS", [
                     ("text", f"Revenue {_rose(result.numbers['g_rev'])} "),
-                    ("link", show_measure(abs(result.numbers["g_rev"]), "percent"), fact_href(rev_now)),
+                    _growth_part("Revenue", rev_now, rev_then, result.numbers["g_rev"]),
                     ("text", "."),
                 ]))
             lines.append(_parts_html("NUMBERS", [
@@ -1844,13 +2045,13 @@ def _check_numbers(result: CheckResult) -> str:
             return "".join(lines)
         return _parts_html("NUMBERS", [
             ("text", f"Accounts receivable {_rose(result.numbers['g_ar'])} "),
-            ("link", show_measure(abs(result.numbers["g_ar"]), "percent"), fact_href(ar_now)),
+            _growth_part("Accounts receivable", ar_now, ar_then, result.numbers["g_ar"]),
             ("text", " from "),
             _period_link(period_phrase("instant", None, ar_then.period.end or ""), ar_then),
             ("text", " to "),
             _period_link(period_phrase("instant", None, ar_now.period.end or ""), ar_now),
             ("text", f", while revenue {_rose(result.numbers['g_rev'])} "),
-            ("link", show_measure(abs(result.numbers["g_rev"]), "percent"), fact_href(rev_now)),
+            _growth_part("Revenue", rev_now, rev_then, result.numbers["g_rev"]),
             ("text", ". Receivables equalled "),
             ("link", f"{result.numbers['days_now']:.1f} days", fact_href(ar_now)),
             ("text", " of sales, compared with "),
@@ -1867,7 +2068,7 @@ def _check_numbers(result: CheckResult) -> str:
             else:
                 lines.append(_parts_html("NUMBERS", [
                     ("text", f"Inventory {_rose(result.numbers['g_inv'])} "),
-                    ("link", show_measure(abs(result.numbers["g_inv"]), "percent"), fact_href(inv_now)),
+                    _growth_part("Inventory", inv_now, inv_then, result.numbers["g_inv"]),
                     ("text", " from "),
                     _period_link(period_phrase("instant", None, inv_then.period.end or ""), inv_then),
                     ("text", " to "),
@@ -1880,19 +2081,19 @@ def _check_numbers(result: CheckResult) -> str:
             else:
                 lines.append(_parts_html("NUMBERS", [
                     ("text", f"{cost_name} {_rose(result.numbers['g_cost'])} "),
-                    ("link", show_measure(abs(result.numbers["g_cost"]), "percent"), fact_href(cost_now)),
+                    _growth_part(cost_name, cost_now, _cost_then, result.numbers["g_cost"]),
                     ("text", "."),
                 ]))
             return "".join(lines)
         return _parts_html("NUMBERS", [
             ("text", f"Inventory {_rose(result.numbers['g_inv'])} "),
-            ("link", show_measure(abs(result.numbers["g_inv"]), "percent"), fact_href(inv_now)),
+            _growth_part("Inventory", inv_now, inv_then, result.numbers["g_inv"]),
             ("text", " from "),
             _period_link(period_phrase("instant", None, inv_then.period.end or ""), inv_then),
             ("text", " to "),
             _period_link(period_phrase("instant", None, inv_now.period.end or ""), inv_now),
             ("text", f", while {cost_label} {_rose(result.numbers['g_cost'])} "),
-            ("link", show_measure(abs(result.numbers["g_cost"]), "percent"), fact_href(cost_now)),
+            _growth_part(cost_label[:1].upper() + cost_label[1:], cost_now, _cost_then, result.numbers["g_cost"]),
             ("text", "."),
         ])
     if result.check_id == "C4" and result.items:
@@ -1930,7 +2131,7 @@ def _check_numbers(result: CheckResult) -> str:
             return "".join(lines)
         share_parts: list[tuple] = [
             ("text", f"The diluted share count {_rose(growth)} "),
-            ("link", show_measure(abs(growth), "percent"), fact_href(now)),
+            _growth_part("Diluted share count", now, earlier, growth),
             ("text", " from "),
             _period_link(period_phrase(earlier.period.kind, earlier.period.start, earlier.period.end or ""), earlier),
             ("text", " to "),

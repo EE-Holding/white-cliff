@@ -165,4 +165,31 @@ def test_summary_opens_with_the_disclaimer_and_lists_wrong_rows():
     assert "Dieser Bericht kann noch nicht erklärt werden." in text
     assert "AAPL" in text
     assert "0000320193-26-000026" in text
+    assert "Percents with both inputs: 0" in text
+    assert "Percents removed: 0" in text
+    assert "Percents linked to one input: 0" in text
     assert "@" not in text
+
+
+def test_the_harness_checks_both_inputs_of_every_percent():
+    harness = _harness()
+    full = (
+        '<p>It rose <a class="pct" href="#pct-abc">10.0 percent</a> from the prior quarter.</p>'
+        '<p class="pct-note" id="pct-abc">It is calculated as the change from '
+        "April 26, 2026 to July 26, 2026, divided by the April 26, 2026 figure, using "
+        'Revenue of <a href="https://www.sec.gov/Archives/edgar/data/1/a.htm">110 USD</a> '
+        "for July 26, 2026 and Revenue of "
+        '<a href="https://www.sec.gov/Archives/edgar/data/1/b.htm">100 USD</a> '
+        "for April 26, 2026.</p>"
+    )
+    assert harness.check_percent_notes(full) == {"noted": 1, "single": 0}
+    lone = 'It rose <a class="pct" href="https://www.sec.gov/Archives/edgar/data/1/a.htm">10.0 percent</a>'
+    assert harness.check_percent_notes(lone) == {"noted": 0, "single": 1}
+    one_link = (
+        '<a class="pct" href="#pct-one">10.0 percent</a>'
+        '<p class="pct-note" id="pct-one">It is calculated as the change from '
+        "April 26, 2026 to July 26, 2026, divided by the April 26, 2026 figure, using "
+        'Revenue of <a href="https://www.sec.gov/Archives/edgar/data/1/a.htm">110 USD</a> '
+        "for July 26, 2026 and Revenue of 100 USD for April 26, 2026.</p>"
+    )
+    assert harness.check_percent_notes(one_link)["single"] == 1

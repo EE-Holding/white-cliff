@@ -123,6 +123,52 @@ def test_print_css_and_the_print_button_call_the_local_dialog():
     assert "button.print { min-height: 64px;" in page
 
 
+def test_the_percent_note_is_on_the_screen_and_in_the_print():
+    filing, page = _page()
+    css = _print_css(page)
+    assert ".pct-note { display: block !important; }" in css
+    assert ".pct-note { display: none" not in page
+    face = re.search(r'<div class="cmp-slot">(.*?)</div>', page, flags=re.S)
+    assert face is not None
+    note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', face.group(1), flags=re.S)
+    assert note is not None
+    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html.unescape(note.group(1)))).strip()
+    assert plain.startswith("It is calculated as the change from ")
+    assert ", divided by the " in plain
+    assert " figure, using " in plain
+    links = re.findall(r'href="(https://www\.sec\.gov/[^"]+)"', note.group(1))
+    assert len(links) == 2
+    assert len(set(html.unescape(item) for item in links)) == 2
+    printed = _printed(page).text()
+    assert "It is calculated as the change from " in printed
+    assert "divided by the " in printed
+    from white_cliff.i18n import using
+
+    with using("de"):
+        german = result_page(
+            explain_filing(filing),
+            form=filing.form,
+            period=filing.period_end or "",
+            filed="2026-11-01",
+            url=filing.url,
+            company=filing.filer,
+            focus=filing.focus,
+            fiscal_year_end=filing.fiscal_year_end,
+        )
+    german_face = re.search(r'<div class="cmp-slot">(.*?)</div>', german, flags=re.S)
+    assert german_face is not None
+    german_note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', german_face.group(1), flags=re.S)
+    assert german_note is not None
+    german_plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html.unescape(german_note.group(1)))).strip()
+    assert german_plain.startswith("Berechnet als Veränderung von ")
+    assert ", geteilt durch den Wert für " in german_plain
+    assert ", aus " in german_plain
+    german_links = re.findall(r'href="(https://www\.sec\.gov/[^"]+)"', german_note.group(1))
+    assert len(german_links) == 2
+    assert len(set(html.unescape(item) for item in german_links)) == 2
+    assert "Berechnet als Veränderung von " in _printed(german).text()
+
+
 def test_the_disclaimer_is_the_first_printed_text_above_any_number():
     _filing, page = _page()
     printed = _printed(page).text()

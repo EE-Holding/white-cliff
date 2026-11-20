@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -106,6 +107,56 @@ def classify_value(
     return Verdict("WRONG", "", format_decimal(closest))
 
 
+def _note_formula(plain: str) -> bool:
+    text = re.sub(r"\s+", " ", plain).strip()
+    if text.startswith("It is calculated as the change from ") and ", divided by the " in text and " figure, using " in text:
+        return text.endswith(".")
+    if text.startswith("Berechnet als Veränderung von ") and ", geteilt durch den Wert für " in text and ", aus " in text:
+        return text.endswith(".")
+    return False
+
+
+def check_percent_notes(page: str) -> dict[str, int]:
+    """Every change percent must open a note that links both filing inputs."""
+    noted = 0
+    single = 0
+    seen: set[str] = set()
+    for match in re.finditer(r'<a class="pct" href="([^"]+)">([^<]*)</a>', page):
+        href = html.unescape(match.group(1))
+        text = html.unescape(match.group(2))
+        folded = text.casefold()
+        if "percent" not in folded and "prozent" not in folded:
+            continue
+        if "percentage point" in folded or "prozentpunkt" in folded:
+            continue
+        if not href.startswith("#pct-"):
+            start = page.rfind("<p", 0, match.start())
+            if start < 0:
+                start = max(0, match.start() - 400)
+            end = page.find("</p>", match.end())
+            window = page[start : end if end >= 0 else match.end()]
+            words = re.sub(r"<[^>]+>", " ", window).casefold()
+            if not any(token in words for token in ("rose", "fell", "stieg", "sank", "stiegen", "sanken")):
+                continue
+            single += 1
+            continue
+        note_id = href[1:]
+        if note_id in seen:
+            continue
+        seen.add(note_id)
+        note = re.search(rf'<p class="pct-note" id="{re.escape(note_id)}">(.*?)</p>', page, re.S)
+        if note is None:
+            single += 1
+            continue
+        links = [html.unescape(item) for item in re.findall(r'href="(https://www\.sec\.gov/[^"]*)"', note.group(1))]
+        plain = re.sub(r"<[^>]+>", "", html.unescape(note.group(1)))
+        if len(links) >= 2 and len(set(links)) >= 2 and _note_formula(plain):
+            noted += 1
+        else:
+            single += 1
+    return {"noted": noted, "single": single}
+
+
 def shown_ids(markdown: str) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -150,6 +201,9 @@ def render_summary(report: dict) -> str:
         f"Numbers WRONG: {report['wrong']}",
         f"Numbers NOT_COMPARABLE: {report['not_comparable']}",
         f"Review list: {report['review']}",
+        f"Percents with both inputs: {report.get('percents_noted', 0)}",
+        f"Percents removed: {report.get('percents_removed', 0)}",
+        f"Percents linked to one input: {report.get('percents_single', 0)}",
         "",
         "## WRONG",
         "",
@@ -430,6 +484,25 @@ def explain_one(client: EdgarClient, item: dict[str, str], index: dict) -> dict:
     record["not_comparable"] = counts["NOT_COMPARABLE"]
     record["review"] = review
     record["wrong_rows"] = wrong
+    from white_cliff.present import result_page
+    from white_cliff.wording import take_percent_note_counts
+
+    take_percent_note_counts()
+    page = result_page(
+        explained,
+        form=filing.form,
+        period=filing.period_end or "",
+        filed=item["filing_date"],
+        url=filing.url,
+        company=filing.filer,
+        focus=filing.focus,
+        fiscal_year_end=filing.fiscal_year_end,
+    )
+    checked = check_percent_notes(page)
+    noted, removed = take_percent_note_counts()
+    record["percents_noted"] = noted
+    record["percents_removed"] = removed
+    record["percents_single"] = checked["single"]
     return record
 
 
@@ -456,6 +529,9 @@ def _aggregate(scope: list[dict], results: list[dict]) -> dict:
         "not_comparable": 0,
         "review": 0,
         "wrong_rows": [],
+        "percents_noted": 0,
+        "percents_removed": 0,
+        "percents_single": 0,
     }
     for item in scope:
         row = by_accession.get(item["accession"])
@@ -473,6 +549,9 @@ def _aggregate(scope: list[dict], results: list[dict]) -> dict:
         report["wrong"] += int(row.get("wrong") or 0)
         report["not_comparable"] += int(row.get("not_comparable") or 0)
         report["review"] += int(row.get("review") or 0)
+        report["percents_noted"] += int(row.get("percents_noted") or 0)
+        report["percents_removed"] += int(row.get("percents_removed") or 0)
+        report["percents_single"] += int(row.get("percents_single") or 0)
         for wrong in row.get("wrong_rows") or []:
             report["wrong_rows"].append(
                 {

@@ -41,7 +41,8 @@ def _html(current, last, year, measure="money", role="revenue", form=""):
 def _short(html_text: str) -> str:
     match = re.search(r'<div class="cmp-slot">(.*?)</div>', html_text, flags=re.S)
     assert match is not None
-    return re.sub(r"[ \t\n\r\f\v]+", " ", re.sub(r"<[^>]+>", "", match.group(1))).strip()
+    slot = re.sub(r'<p class="pct-note".*?</p>', "", match.group(1), flags=re.S)
+    return re.sub(r"[ \t\n\r\f\v]+", " ", re.sub(r"<[^>]+>", "", slot)).strip()
 
 
 def _widths(html_text: str) -> list[Decimal]:
@@ -60,12 +61,22 @@ def test_two_changes_use_the_short_line_and_keep_the_dated_sentence():
         "It rose 10.0 percent from the quarter ended April 26, 2026, "
         "and rose 120.0 percent from the year ended July 27, 2025."
     ) in re.sub(r"<[^>]+>", "", html_text)
-    percents = re.findall(r'<a class="pct" href="([^"]+)">([^<]+)</a>', html_text.split('class="chart"', 1)[0])
+    face = html_text.split('class="chart"', 1)[0]
+    percents = re.findall(r'<a class="pct" href="([^"]+)">([^<]+)</a>', face)
     periods = re.findall(r'<a class="per" href="([^"]+)">([^<]+)</a>', html_text)
     assert [text for _href, text in percents] == ["10.0 percent", "120.0 percent"]
     assert [text for _href, text in periods] == ["the prior quarter", "the prior year"]
-    assert all(href.startswith("https://www.sec.gov/") for href, _text in percents + periods)
-    assert percents[0][0] != periods[0][0]
+    assert all(href.startswith("#pct-") for href, _text in percents)
+    assert all(href.startswith("https://www.sec.gov/") for href, _text in periods)
+    for href, _text in percents:
+        note = re.search(rf'<p class="pct-note" id="{href[1:]}">(.*?)</p>', face, flags=re.S)
+        assert note is not None
+        assert "It is calculated as the change from " in note.group(1)
+        assert ", divided by the " in note.group(1)
+        assert " figure, using " in note.group(1)
+        links = re.findall(r'href="(https://www\.sec\.gov/[^"]+)"', note.group(1))
+        assert len(links) == 2
+        assert len(set(links)) == 2
 
 
 def test_one_unchanged_comparison_names_the_period_by_its_head():

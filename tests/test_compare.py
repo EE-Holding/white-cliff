@@ -606,5 +606,79 @@ def test_every_percent_link_resolves_to_both_of_its_inputs():
                 assert hrefs[0] == figure.group(1)
                 assert hrefs[1] in priors
                 assert all(href.startswith("https://www.sec.gov/") for href in hrefs)
+                plain_note = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", note.group(1))).strip()
+                assert plain_note.startswith("It is calculated as the change from ")
+                assert ", divided by the " in plain_note
+                assert " figure, using " in plain_note
+                assert plain_note.endswith(".")
                 checked += 1
     assert checked >= 2
+
+
+def test_a_change_percent_states_the_formula_and_links_both_amounts():
+    from white_cliff.i18n import using
+    from white_cliff.wording import label_for, long_date, show_measure, take_percent_note_counts
+    from tests.test_cards import _column, _html, _quarter
+
+    take_percent_note_counts()
+    current = _quarter("110", "notenow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "notelast")
+    html_text = _html(current, _column(last), None)
+    label = label_for("revenue", current)
+    period = long_date(current.period.end or "")
+    period_prior = long_date(last.period.end or "")
+    current_amount = show_measure(current.value, current.unit)
+    prior_amount = show_measure(last.value, last.unit)
+    expected = (
+        "It is calculated as the change from "
+        f"{period_prior} to {period}, divided by the {period_prior} figure, using "
+        f"{label} of {current_amount} for {period} and "
+        f"{label} of {prior_amount} for {period_prior}."
+    )
+    note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', html_text, flags=re.S)
+    assert note is not None
+    assert re.sub(r"<[^>]+>", "", note.group(1)) == expected
+    links = re.findall(r'<a href="([^"]+)">([^<]+)</a>', note.group(1))
+    assert [text for _href, text in links] == [current_amount, prior_amount]
+    assert links[0][0].startswith("https://www.sec.gov/")
+    assert links[1][0].startswith("https://www.sec.gov/")
+    assert links[0][0] != links[1][0]
+    noted, removed = take_percent_note_counts()
+    assert noted == 1
+    assert removed == 0
+    with using("de"):
+        take_percent_note_counts()
+        german = _html(current, _column(last), None)
+        label_de = label_for("revenue", current)
+        period_de = long_date(current.period.end or "")
+        prior_de = long_date(last.period.end or "")
+        current_de = show_measure(current.value, current.unit)
+        prior_de_amount = show_measure(last.value, last.unit)
+        expected_de = (
+            "Berechnet als Veränderung von "
+            f"{prior_de} zu {period_de}, geteilt durch den Wert für {prior_de}, aus "
+            f"{label_de} von {current_de} für {period_de} und "
+            f"{label_de} von {prior_de_amount} für {prior_de}."
+        )
+        note_de = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', german, flags=re.S)
+        assert note_de is not None
+        assert re.sub(r"<[^>]+>", "", note_de.group(1)) == expected_de
+        take_percent_note_counts()
+
+
+def test_a_percent_without_two_filing_links_is_removed():
+    from dataclasses import replace
+
+    from white_cliff.wording import take_percent_note_counts
+    from tests.test_cards import _column, _html, _quarter
+
+    take_percent_note_counts()
+    current = _quarter("110", "dropnow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "droplast")
+    shared = replace(last, id=current.id, source=current.source)
+    html_text = _html(current, _column(shared), None)
+    assert "10.0 percent" not in re.sub(r"<[^>]+>", " ", html_text)
+    assert "pct-note" not in html_text
+    noted, removed = take_percent_note_counts()
+    assert noted == 0
+    assert removed >= 1

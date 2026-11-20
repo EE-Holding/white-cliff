@@ -106,11 +106,15 @@ def test_a_falling_explain_figure_keeps_its_sign():
     current = make_fact("95", fact_id="factfallyoycur", end="2026-07-26", start="2026-04-27")
     prior = make_fact("100", fact_id="factfallyoyold", end="2025-07-27", start="2025-04-28")
     inputs = [("revenue", current), ("prior revenue", prior)]
-    _kind, english, _href = _explain_amount("yoy_change", current, inputs)
-    assert english.startswith("\u22125.0")
+    part = _explain_amount("yoy_change", current, inputs)
+    assert part[0] == "percent"
+    assert part[1].startswith("\u22125.0")
+    assert part[2].startswith("https://www.sec.gov/")
+    assert part[3].startswith("https://www.sec.gov/")
+    assert part[2] != part[3]
     with using("de"):
-        _kind, german, _href = _explain_amount("yoy_change", current, inputs)
-    assert german.replace("\u00a0", " ").startswith("\u22125,0")
+        german = _explain_amount("yoy_change", current, inputs)
+    assert german[1].replace("\u00a0", " ").startswith("\u22125,0")
     assert show_measure(Decimal("-5.0"), "percent") == "\u22125.0 percent"
 
 
