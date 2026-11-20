@@ -38,6 +38,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Render the open guides
+        run: python3 scripts/render_guides.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: how-to-open-guides
+          path: |
+            how-to-open-en.png
+            how-to-open-de.png
+          retention-days: 7
+          if-no-files-found: error
       - name: Install
         run: python -m pip install . pyinstaller
       - name: Build
@@ -49,6 +60,7 @@ jobs:
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
+          cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
           ditto -c -k --keepParent "$stage" "$stage.zip"
           shasum -a 256 "$stage.zip" > SHA256SUMS
       - name: Show the old certificate failure
@@ -102,6 +114,7 @@ jobs:
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
+          cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
           ditto -c -k --keepParent "$stage" "$stage.zip"
           shasum -a 256 "$stage.zip" > SHA256SUMS
       - name: Show the old certificate failure
@@ -154,6 +167,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "dist/White Cliff.exe" (Join-Path $stage "White Cliff.exe")
           Copy-Item "docs/how-to-open.md" (Join-Path $stage "how-to-open.md")
+          Copy-Item "docs/how-to-open-de.md" (Join-Path $stage "how-to-open-de.md")
           Compress-Archive -Path $stage -DestinationPath "WhiteCliff-Windows.zip"
           $hash = (Get-FileHash "WhiteCliff-Windows.zip" -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "SHA256SUMS" -Value "$hash  WhiteCliff-Windows.zip" -Encoding ascii

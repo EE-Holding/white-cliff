@@ -49,12 +49,12 @@ def _check(archive: Path) -> str:
     return digest
 
 
-def _note(archive: Path) -> bytes:
+def _named(archive: Path, filename: str) -> bytes:
     with zipfile.ZipFile(archive) as zipped:
         for name in zipped.namelist():
-            if name.endswith("how-to-open.md"):
+            if Path(name).name == filename:
                 return zipped.read(name)
-    raise AssembleError("how-to-open.md was not in the zip")
+    raise AssembleError(f"{filename} was not in the zip")
 
 
 def assemble(downloaded: Path, dest: Path, *, version: str, date: str, template: Path) -> None:
@@ -74,7 +74,8 @@ def assemble(downloaded: Path, dest: Path, *, version: str, date: str, template:
     (dest / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
     if first is None:
         raise AssembleError("no files were copied")
-    (dest / "how-to-open.md").write_bytes(_note(first))
+    (dest / "how-to-open.md").write_bytes(_named(first, "how-to-open.md"))
+    (dest / "how-to-open-de.md").write_bytes(_named(first, "how-to-open-de.md"))
     text = template.read_text(encoding="utf-8")
     text = text.replace("{version}", version).replace("{date}", date)
     (dest / "release-notes.md").write_text(text, encoding="utf-8")

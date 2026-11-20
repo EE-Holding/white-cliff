@@ -11,6 +11,7 @@ This tool explains the numbers in a public company filing. It does not recommend
 - WhiteCliff-Windows.zip for Windows
 - SHA256SUMS lists a SHA-256 checksum for each zip
 - how-to-open.md says which button to press when the computer warns that the file is not signed
+- how-to-open-de.md is the German guide. It needs a native review. It is not a certified translation.
 
 ## Check the download
 
