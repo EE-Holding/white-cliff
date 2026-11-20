@@ -391,8 +391,9 @@ def test_a_wider_result_picture_comes_from_a_new_window(tmp_path, monkeypatch):
             return {}
 
         def next_event(self, method, timeout):
-            if "paint" not in order:
+            if "paint" not in order or getattr(self, "sent", False):
                 raise driver.PageError(method)
+            self.sent = True
             raw = __import__("base64").b64encode(fresh).decode("ascii")
             return {"method": method, "params": {"data": raw, "sessionId": 1}}
 

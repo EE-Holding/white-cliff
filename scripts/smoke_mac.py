@@ -985,23 +985,29 @@ def _page_url(page: DevTools) -> str:
     return href
 
 
-def _painted_frame(page: DevTools, seconds: float, previous: bytes = b"") -> bytes:
+def _painted_frame(page: DevTools, seconds: float, previous: bytes = b"") -> tuple[bytes, str]:
     """The newest screencast frame that has ink and is not the frame from before a scroll."""
     best = b""
+    saw = blank = empty = 0
     deadline = time.time() + seconds
     while time.time() < deadline:
         try:
             event = page.next_event("Page.screencastFrame", 0.3)
         except (PageError, TimeoutError):
             if best:
-                return best
+                break
             continue
         _ack_frame(page, event)
         data = _frame_png(event)
-        if not data or data == previous or _blank(data):
+        saw += 1
+        if not data:
+            empty += 1
+            continue
+        if data == previous or _blank(data):
+            blank += 1
             continue
         best = data
-    return best
+    return best, f"frames {saw} blank {blank} empty {empty}"
 
 
 def _born_shot(
@@ -1070,7 +1076,8 @@ def _born_shot(
             fail("the page did not paint")
         mark("paint-ready")
         _paint(shot)
-        before = _painted_frame(shot, 1.5)
+        before, note = _painted_frame(shot, 4.0)
+        mark(note)
         if not before:
             fail("the page did not paint")
         mark("painted")
@@ -1080,7 +1087,8 @@ def _born_shot(
                 height = crop
             mark("prepare")
             _paint(shot)
-            data = _painted_frame(shot, 1.5, previous=before)
+            data, note = _painted_frame(shot, 1.5, previous=before)
+            mark(note)
             if not data:
                 fail("the picture did not change")
         else:
@@ -1097,7 +1105,8 @@ def _born_shot(
             _eval(shot, "window.scrollBy(0, 160)")
             mark("scroll")
             _paint(shot)
-            scrolled = _painted_frame(shot, 1.5, previous=data)
+            scrolled, note = _painted_frame(shot, 1.5, previous=data)
+            mark(note)
             if not scrolled:
                 fail(str(exc))
             mark(f"frame {_png_width(scrolled)}")
