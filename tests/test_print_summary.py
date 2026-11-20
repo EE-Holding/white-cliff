@@ -609,6 +609,18 @@ def test_the_printed_disclaimer_is_at_least_body_text(tmp_path):
     assert disclaimer >= body
 
 
+def test_a_printed_page_does_not_start_with_an_orphaned_explain(tmp_path):
+    _filing, page = _page()
+    driver = _driver()
+    disclaimer = _folded(DISCLAIMER)
+    texts = driver._pdf_page_texts(_chrome_pdf(page, tmp_path))
+    assert len(texts) >= 2
+    for text in texts:
+        folded = _folded(text)
+        rest = folded[len(disclaimer) :] if folded.startswith(disclaimer) else folded
+        assert not rest.startswith("explain")
+
+
 def test_a_card_is_not_split_across_printed_pages():
     _filing, page = _page()
     css = _print_css(page)
