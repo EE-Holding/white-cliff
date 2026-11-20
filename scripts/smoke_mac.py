@@ -1087,8 +1087,16 @@ def _born_shot(
                 height = crop
             mark("prepare")
             _paint(shot)
-            data, note = _painted_frame(shot, 1.5, previous=before)
+            data, note = _painted_frame(shot, 4.0, previous=before)
             mark(note)
+            if not data:
+                # The cast can go quiet when the scroll does not change the bitmap.
+                # A further scroll has to produce a new frame, or the picture is not live.
+                _eval(shot, "window.scrollBy(0, 120)")
+                mark("scroll")
+                _paint(shot)
+                data, note = _painted_frame(shot, 2.0, previous=before)
+                mark(note)
             if not data:
                 fail("the picture did not change")
         else:
