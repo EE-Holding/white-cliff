@@ -1331,13 +1331,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5) as response:
                 tabs = json.loads(response.read().decode("utf-8"))
-            pages = [
-                tab
-                for tab in tabs
-                if tab.get("webSocketDebuggerUrl") and tab.get("type", "page") == "page"
-            ]
-            if pages:
-                info = pages[0]
+            if tabs:
+                info = tabs[0]
                 break
         except (OSError, json.JSONDecodeError):
             time.sleep(0.1)
