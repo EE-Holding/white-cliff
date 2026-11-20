@@ -700,6 +700,85 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
     return chosen
 
 
+def _frame_after_resize(page: DevTools, width: int) -> bytes:
+    """A frame painted after the window is already this wide.
+
+    The cast starts after the resize. A frame already queued is the previous
+    picture, and pausing first leaves the Intel cast with nothing to send.
+    """
+    page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+    prior = b""
+    try:
+        try:
+            queued = page.next_event("Page.screencastFrame", 0.2)
+        except (PageError, TimeoutError):
+            queued = None
+        _ack_frame(page, queued)
+        seen = _frame_png(queued)
+        if (
+            seen
+            and _png_width(seen) == width
+            and seen not in _SEEN
+            and seen != _LAST
+        ):
+            prior = seen
+        # The bounds are already this width. Apply them again while the cast is
+        # listening, then paint, and prefer a frame that arrives after that.
+        _window(page, width, 900)
+        try:
+            _eval(
+                page,
+                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
+        deadline = time.time() + 2.5
+        while time.time() < deadline:
+            try:
+                event = page.next_event("Page.screencastFrame", 0.4)
+            except (PageError, TimeoutError):
+                continue
+            _ack_frame(page, event)
+            fresh = _frame_png(event)
+            if (
+                fresh
+                and _png_width(fresh) == width
+                and fresh not in _SEEN
+                and fresh != _LAST
+            ):
+                return fresh
+        return prior
+    finally:
+        try:
+            page.call("Page.stopScreencast")
+        except (PageError, TimeoutError, OSError):
+            pass
+
+
+def _commit_live_frame(
+    directory: Path, name: str, data: bytes, wanted: int, height: int
+) -> Path:
+    """Save one live frame. A missing or repeated frame fails, and is not copied."""
+    global _LAST
+    got = _png_width(data)
+    stale = bool(data) and (data == _LAST or data in _SEEN)
+    if not data or stale:
+        why = "had no screencast frame" if not data else "repeated a previous screencast frame"
+        raise PageError(f"{name} is not a live window picture: it {why}")
+    if len(data) < 1000 or got != wanted:
+        raise PageError(f"{name} is {got}px wide, wanted {wanted}")
+    height_px = min(int(height or 900), 900)
+    limit = height or height_px
+    png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
+    saved = _crop_png(data, limit) if png_height > limit else data
+    _LAST = data
+    _SEEN.add(data)
+    path = directory / name
+    path.write_bytes(saved)
+    print(f"screenshot {path}", flush=True)
+    return path
+
+
 def _png_width(data: bytes) -> int:
     return int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
 
@@ -2074,6 +2153,25 @@ def _grab_steps(
             )
         except (PageError, TimeoutError, OSError):
             pass
+        if motion:
+            try:
+                _motion(page, motion)
+            except PageError:
+                pass
+        _activate()
+        wanted = int(width or 0)
+        if wanted <= 0:
+            try:
+                wanted = int(_css_width(page) or 1100)
+            except (PageError, TimeoutError, OSError, TypeError, ValueError):
+                wanted = 1100
+        _window(page, wanted, int(height or 900))
+        data = _frame_after_resize(page, wanted)
+        _hold(page)
+        try:
+            return _commit_live_frame(directory, name, data, wanted, int(height or 0))
+        finally:
+            _release(page)
     _hold(page)
     try:
         return _grab(page, directory, name, width, height, motion=motion)

@@ -253,6 +253,76 @@ def test_a_missing_or_stale_screencast_is_not_a_live_photo(tmp_path, monkeypatch
         driver._SEEN = seen
 
 
+def test_the_narrow_loading_picture_is_painted_after_the_resize(tmp_path, monkeypatch):
+    """The 420 loading shot waits for a frame from after the window is that wide."""
+    driver = _driver()
+
+    def picture(seed: int, width: int) -> bytes:
+        rows = []
+        for y in range(8):
+            row = bytearray(width * 3)
+            for x in range(width * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(width, 20, 2, 8, rows)
+
+    old = picture(3, 1280)
+    fresh = picture(9, 420)
+    order: list[str] = []
+    sent = {"old": False, "fresh": False}
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            order.append(method)
+            return {}
+
+        def next_event(self, method, timeout):
+            if method != "Page.screencastFrame":
+                raise driver.PageError(method)
+            if "paint" not in order:
+                if "Page.startScreencast" in order and not sent["old"]:
+                    sent["old"] = True
+                    raw = __import__("base64").b64encode(old).decode("ascii")
+                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
+                raise driver.PageError(method)
+            if not sent["fresh"]:
+                sent["fresh"] = True
+                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 2}}
+            raise driver.PageError(method)
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_activate", lambda: order.append("activate"))
+    monkeypatch.setattr(driver, "_css_width", lambda page: 420)
+    monkeypatch.setattr(
+        driver,
+        "_window",
+        lambda page, width, height=2200, reset=False: order.append(f"window {width}"),
+    )
+    monkeypatch.setattr(
+        driver,
+        "_eval",
+        lambda page, expression: order.append("paint" if "requestAnimationFrame" in expression else "stamp"),
+    )
+    monkeypatch.setattr(driver, "_hold", lambda page: order.append("hold"))
+    monkeypatch.setattr(driver, "_release", lambda page: order.append("release"))
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    driver._PAUSED = False
+    try:
+        path = driver._grab_steps(Page(), tmp_path, "smoke-x86_64-15-de-loading-420.png", 420, 1800)
+        assert path.read_bytes() == fresh
+        assert path.read_bytes() != old
+        assert order.index("window 420") < order.index("Page.startScreencast")
+        assert order.index("paint") < order.index("hold")
+        assert "Page.captureScreenshot" not in order
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+
+
 def test_the_settled_pair_is_not_exempt(tmp_path):
     """The 1100 result is not allowed to be a copy of the first result picture."""
     driver = _driver()
