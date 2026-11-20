@@ -612,7 +612,8 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             timeout=8,
         )
         chosen = base64.b64decode(result["data"])
-    if not chosen or (_LAST and chosen == _LAST):
+    narrow = bool(width and chosen and _png_width(chosen) != width)
+    if not chosen or (_LAST and chosen == _LAST) or narrow:
         painted = _copied_png(page, width or _png_width(chosen) or 1100)
         if painted and painted != chosen and (not width or _png_width(painted) == width):
             chosen = painted
@@ -1670,6 +1671,25 @@ def _grab_steps(
     motion: str = "",
 ) -> Path:
     """Freeze the steps, then photograph them."""
+    if _intel():
+        # The typed ticker lives on the control, not in the markup a copied
+        # document would keep. Write it down, and let it paint, before pausing.
+        try:
+            _eval(
+                page,
+                """(() => {
+                  document.querySelectorAll("input, textarea").forEach((node) => {
+                    node.setAttribute("value", node.value);
+                  });
+                  return true;
+                })()""",
+            )
+            _eval(
+                page,
+                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
     _hold(page)
     try:
         return _grab(page, directory, name, width, height, motion=motion)
