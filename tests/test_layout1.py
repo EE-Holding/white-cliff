@@ -319,6 +319,41 @@ def test_printed_content_starts_48px_in(tmp_path):
     assert all(46 <= item <= 52 for item in starts)
 
 
+def test_print_shows_every_section_note(tmp_path):
+    import subprocess
+
+    from tests.test_print_summary import _pdf_lines, _print_chrome
+
+    page = _page("en")
+    tag = re.search(r'<p\b[^>]*data-template="SECTION"[^>]*>', page)
+    assert tag is not None and " hidden" in f" {tag.group(0)} "
+    printed = _style().split("@media print", 1)[1]
+    assert 'p[data-template="SECTION"][hidden]' in printed
+    assert "display: block !important" in printed
+    html_path = tmp_path / "result.html"
+    pdf_path = tmp_path / "result.pdf"
+    html_path.write_text(page, encoding="utf-8")
+    subprocess.run(
+        [
+            "timeout",
+            "40",
+            _print_chrome(),
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    text = " ".join(" ".join(line.split()) for lines in _pdf_lines(pdf_path.read_bytes()) for line in lines)
+    assert "This section shows Revenue" in text
+    assert "This section shows Operating cash flow" in text
+
+
 def test_a_collapsed_section_note_does_not_hold_a_row(tmp_path):
     from tests.test_desktop_app import _chrome_binary, _chrome_page, _eval
 

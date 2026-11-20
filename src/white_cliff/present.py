@@ -464,6 +464,8 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "  table.print-sheet { display: table; width: 100%; margin: 0; }\n"
         "  table.print-sheet > tbody { display: table-row-group; }\n"
         "  table.print-sheet > thead > tr, table.print-sheet > tbody > tr { display: table-row; }\n"
+        '  table.print-sheet > tbody > tr:has(p[data-template="SECTION"][hidden]) { display: table-row; }\n'
+        '  p[data-template="SECTION"][hidden] { display: block !important; }\n'
         "  table.print-sheet > tbody > tr { break-inside: avoid; page-break-inside: avoid; }\n"
         "  table.print-sheet > tbody > tr > td { padding-left: 48px; padding-right: 48px; }\n"
         "  table.print-sheet td { display: table-cell; }\n"
