@@ -254,6 +254,45 @@ def test_a_missing_or_stale_screencast_is_not_a_live_photo(tmp_path, monkeypatch
         driver._SEEN = seen
 
 
+def test_the_result_picture_does_not_wait_on_the_renderer(tmp_path, monkeypatch):
+    """Waiting for a paint holds the renderer, so a resized window repeats the last frame."""
+    driver = _driver()
+    waited: list[bool] = []
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if "requestAnimationFrame" in expression:
+                waited.append(bool(params.get("awaitPromise")))
+            return {}
+
+        def next_event(self, method, timeout):
+            rows = []
+            for y in range(8):
+                row = bytearray(1100 * 3)
+                for x in range(1100 * 3):
+                    row[x] = (4 * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+                rows.append(bytes(row))
+            raw = __import__("base64").b64encode(driver._png_bytes(1100, 20, 2, 8, rows)).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_activate", lambda: None)
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._PAUSED = False
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        driver._intel_photo(Page(), tmp_path, "result.png", 1100, 400, keep_scroll=False, reveal=False)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert waited
+    assert waited == [False] * len(waited)
+
+
 def test_the_filing_request_waits_until_the_loading_shot_releases():
     """The second sec.gov page stays unanswered until the shot releases it."""
     driver = _driver()
@@ -304,6 +343,8 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
             if method == "Emulation.setEmulatedMedia":
                 features = params.get("features") or [{}]
                 order.append("media " + str(features[0].get("value")))
+            if method == "Emulation.setDeviceMetricsOverride":
+                order.append(f"viewport {params.get('width')}")
             if "requestAnimationFrame" in expression:
                 order.append("paint")
             if "document.readyState" in expression:
@@ -363,6 +404,7 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
         assert order.index("hold") < order.index("Page.startScreencast")
         assert order.index("Page.startScreencast") < order.index("Page.navigate")
         assert order.index("media no-preference") < order.index("Page.navigate")
+        assert order.index("viewport 420") < order.index("Page.startScreencast")
         assert order.index("ready") < order.index("requestSubmit")
         assert order.index("createTarget 420x900") < order.index("Page.startScreencast")
         assert "resize" not in order
@@ -377,6 +419,7 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
             tmp_path, "smoke-x86_64-5-reduced.png", 1100, "http://127.0.0.1:9/", "NVDA", reduced=True
         )
         assert order.index("media reduce") < order.index("Page.navigate")
+        assert "viewport 1100" not in order
     finally:
         driver._PAUSED = paused
         driver._LAST = last

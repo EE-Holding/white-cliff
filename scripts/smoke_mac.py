@@ -682,6 +682,22 @@ def _copied_png(page: DevTools, width: int) -> bytes:
         _activate()
 
 
+def _paint(page: DevTools) -> None:
+    """Ask for a frame without waiting. Waiting holds the renderer, so the cast repeats the last picture."""
+    try:
+        page.call(
+            "Runtime.evaluate",
+            {
+                "expression": "requestAnimationFrame(() => requestAnimationFrame(() => {}))",
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+            1,
+        )
+    except (PageError, TimeoutError, OSError):
+        pass
+
+
 def _live_frame(page: DevTools, width: int = 0) -> bytes:
     """One frame of this window.
 
@@ -698,13 +714,7 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             event = None
         # An idle page does not paint, so the cast stays silent. Ask for one frame.
         if event is None and not _PAUSED:
-            try:
-                _eval(
-                    page,
-                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                )
-            except (PageError, TimeoutError, OSError):
-                pass
+            _paint(page)
             try:
                 event = page.next_event("Page.screencastFrame", 4)
             except (PageError, TimeoutError):
@@ -870,10 +880,7 @@ def _intel_photo(
                     if not keep_scroll:
                         _eval(fresh, "window.scrollTo(0, 0)")
                     _settled(fresh)
-                    _eval(
-                        fresh,
-                        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                    )
+                    _paint(fresh)
                 except (PageError, TimeoutError, OSError):
                     pass
             # The layout can already say 1100 while the pictured window is still
@@ -2340,6 +2347,21 @@ def _loading_shot(
         mark("Page.enable")
         page.call("Runtime.enable")
         mark("Runtime.enable")
+        if width < 500:
+            # Mac will not open a browser window narrower than 500. The viewport still can be.
+            try:
+                page.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
+            mark(f"Emulation.setDeviceMetricsOverride {width}x900")
         page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
         mark("Page.startScreencast")
         # The main window asks for motion before it loads. A new window does too,
