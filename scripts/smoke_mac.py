@@ -527,11 +527,15 @@ def _live_frame(page: DevTools) -> bytes:
     show the previous scroll. The next frame replaces it when it is as wide.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+    chosen = b""
     try:
-        event = page.next_event("Page.screencastFrame", 5)
+        try:
+            event = page.next_event("Page.screencastFrame", 5)
+        except (PageError, TimeoutError):
+            event = None
         _ack_frame(page, event)
         chosen = _frame_png(event)
-        if not _PAUSED:
+        if chosen and not _PAUSED:
             try:
                 later = page.next_event("Page.screencastFrame", 0.6)
                 _ack_frame(page, later)
@@ -545,6 +549,13 @@ def _live_frame(page: DevTools) -> bytes:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
+    if not chosen:
+        result = page.call(
+            "Page.captureScreenshot",
+            {"format": "png", "optimizeForSpeed": True},
+            timeout=8,
+        )
+        chosen = base64.b64decode(result["data"])
     if not chosen:
         raise PageError("the window had no frame")
     return chosen
