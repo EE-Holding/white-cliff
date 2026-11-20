@@ -1333,6 +1333,62 @@ def _state(page: DevTools) -> dict:
     return json.loads(raw or "{}")
 
 
+def _replace_narrow_window(page: DevTools, port: int) -> DevTools:
+    """Open a window at 1100px when this target cannot emulate a viewport.
+
+    Intel headless rejects the metrics override and has no browser window to
+    resize, so the first target stays near 777px on a wider screen.
+    """
+    if not _intel() or _BROWSER is None:
+        return page
+    try:
+        inner = int(_eval(page, "window.innerWidth") or 0)
+    except (PageError, TypeError, ValueError):
+        inner = 0
+    if inner == 1100:
+        return page
+    try:
+        created = _BROWSER.call(
+            "Target.createTarget",
+            {
+                "url": "about:blank",
+                "left": 0,
+                "top": 0,
+                "width": 1100,
+                "height": 900,
+                "newWindow": True,
+            },
+        )
+        target_id = str(created.get("targetId") or "")
+    except (PageError, TypeError, ValueError):
+        return page
+    if not target_id:
+        return page
+    info = None
+    deadline = time.time() + 5
+    while time.time() < deadline and info is None:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5) as response:
+                tabs = json.loads(response.read().decode("utf-8"))
+            for tab in tabs:
+                if tab.get("id") == target_id and tab.get("webSocketDebuggerUrl"):
+                    info = tab
+                    break
+        except (OSError, json.JSONDecodeError):
+            pass
+        if info is None:
+            time.sleep(0.05)
+    if not info:
+        return page
+    global _TARGET_ID
+    _TARGET_ID = target_id
+    fresh = DevTools(info["webSocketDebuggerUrl"])
+    page.close()
+    fresh.call("Page.enable")
+    fresh.call("Runtime.enable")
+    return fresh
+
+
 def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     binary = chrome_binary()
     if binary is None:
@@ -1387,8 +1443,13 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5) as response:
                 tabs = json.loads(response.read().decode("utf-8"))
-            if tabs:
-                info = tabs[0]
+            pages = [
+                tab
+                for tab in tabs
+                if tab.get("webSocketDebuggerUrl") and tab.get("type", "page") == "page"
+            ]
+            if pages:
+                info = pages[0]
                 break
         except (OSError, json.JSONDecodeError):
             time.sleep(0.1)
@@ -1415,6 +1476,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     page.call("Page.enable")
     page.call("Runtime.enable")
     _window(page)
+    page = _replace_narrow_window(page, port)
     page.call("Page.navigate", {"url": url})
     try:
         _motion(page, "no-preference")
