@@ -800,6 +800,24 @@ def _plain_line(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _require_readable_pages(pages: list[list[str]]) -> None:
+    """An unreadable page fails by its page number, not by a later missing heading."""
+    for index, lines in enumerate(pages, start=1):
+        text = _plain_line(" ".join(lines))
+        if sum(char.isalpha() for char in text) < 40 or "This tool explains" not in text:
+            raise AssertionError(f"page {index} could not be read")
+
+
+def test_an_unreadable_printed_page_fails_with_a_clear_reason():
+    readable = [
+        "This tool explains the numbers in a public company filing. It does not recommend buying.",
+    ]
+    with pytest.raises(AssertionError, match=r"^page 2 could not be read$"):
+        _require_readable_pages([readable, ["??"]])
+    with pytest.raises(AssertionError, match=r"^page 1 could not be read$"):
+        _require_readable_pages([[]])
+
+
 def test_a_long_filing_keeps_each_check_together_and_does_not_orphan_explain(tmp_path):
     chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if chrome is None:
@@ -818,6 +836,7 @@ def test_a_long_filing_keeps_each_check_together_and_does_not_orphan_explain(tmp
     )
     pages = _pdf_lines(_chrome_pdf(page, tmp_path))
     assert len(pages) >= 8
+    _require_readable_pages(pages)
     for lines in pages:
         content: list[str] = []
         passed_header = False

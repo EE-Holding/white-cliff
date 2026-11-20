@@ -410,9 +410,7 @@ def test_german_pages_do_not_reuse_english_template_words():
     yoy = result.find("Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum")
     assert yoy > 0
     assert ">Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum</h3>" not in result
-    window = re.sub(r"<[^>]+>", "", result[yoy : yoy + 4000])
-    at = window.find(" bei ")
-    stated = window[at : at + 24]
+    stated = re.sub(r"<[^>]+>", "", result[yoy : yoy + 2500])[:160]
     assert "105,9" in stated and "Prozent" in stated
     assert "96.221" not in stated
     english = result_page(

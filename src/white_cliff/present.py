@@ -309,12 +309,15 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         ".label { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: #3a3a3c; }\n"
         ".caption { margin: 0; font-size: 18px; line-height: 27px; font-weight: 400; color: #555559; }\n"
         ".big { margin: 6px 0 0; }\n"
-        ".big a, a.figure { color: #1d1d1f; font-size: 44px; line-height: 52px; font-weight: 700; "
+        ".big a { color: #1d1d1f; font-size: 44px; line-height: 52px; font-weight: 700; "
         "letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; "
         "text-decoration: underline; text-decoration-color: #c7c7cc; text-decoration-thickness: 2px; "
         "text-underline-offset: 7px; }\n"
-        ".detail a.figure { font-size: 20px; line-height: 30px; font-weight: 600; "
-        "letter-spacing: 0; text-underline-offset: 3px; }\n"
+        "a.figure { color: #1d1d1f; font-size: 20px; line-height: 30px; font-weight: 600; "
+        "letter-spacing: 0; font-variant-numeric: tabular-nums; white-space: nowrap; "
+        "text-decoration: underline; text-decoration-color: #c7c7cc; text-underline-offset: 3px; }\n"
+        ".big a.figure { font-size: 44px; line-height: 52px; font-weight: 700; "
+        "letter-spacing: -0.02em; text-underline-offset: 7px; }\n"
         ".cmp { margin: 12px 0 0; font-size: 18px; line-height: 27px; color: #3a3a3c; font-weight: 400; }\n"
         ".cmp a.pct, .change-line a.pct { color: #0a4b8f; font-weight: 700; text-decoration: underline; "
         "text-underline-offset: 3px; white-space: nowrap; }\n"
@@ -414,7 +417,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "  h1 { font-size: 34px; line-height: 40px; }\n"
         "  .hero { margin-bottom: 28px; }\n"
         "  .card { padding: 22px 20px 12px; border-radius: 22px; }\n"
-        "  .big a, a.figure { font-size: 36px; line-height: 44px; }\n"
+        "  .big a, .big a.figure { font-size: 36px; line-height: 44px; }\n"
         "  form.search, form.pick { padding: 20px; }\n"
         "  .search-row { flex-direction: column; }\n"
         "  .search-row button { width: 100%; }\n"
@@ -1145,14 +1148,9 @@ def _rows(explained_html: str, additions=None, store=None) -> str:
             parked_lines.append(
                 f'<p>{yoy_label} <a class="figure" href="{parked_href}">{escaped}</a></p>'
             )
-        if parked_lines:
-            extra = "".join(parked_lines)
-            end = detail.rfind("</div></div>")
-            if end >= 0:
-                detail = detail[:end] + extra + detail[end:]
-            else:
-                detail += extra
         caption, face = _leading_caption(face)
+        if parked_lines:
+            face += "".join(parked_lines)
         label_id = "lab-" + re.sub(r"[^a-z0-9]+", "-", identifier.lower())
         article = (
             f'<article class="card" style="--c:{index}" aria-labelledby="{label_id}">'

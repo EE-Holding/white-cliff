@@ -117,8 +117,20 @@ def _print_page(page: str) -> str:
     return shown
 
 
+def _without_labelled_yoy(shown: str) -> str:
+    """A percent beside the cleared label is not a bare percent."""
+    for label in STRINGS["LBL.yoy"]:
+        shown = re.sub(
+            rf"<p\b[^>]*>\s*{re.escape(label)}\s*<a class=\"figure\"[^>]*>.*?</a>\s*</p>",
+            "",
+            shown,
+            flags=re.S,
+        )
+    return shown
+
+
 def _bare_outside(card: str) -> list[str]:
-    shown = _outside_explain(card)
+    shown = _without_labelled_yoy(_outside_explain(card))
     found = [_plain(item) for item in _FIGURE.findall(shown) if _bare(item)]
     for match in _LEAF.finditer(shown):
         text = match.group(2)
@@ -182,10 +194,12 @@ def _detail(card: str) -> str:
 
 
 def _label_with_figure(page: str, label: str) -> str:
-    """The element inside Explain that carries both the cleared label and its figure."""
+    """The card-face element that carries both the cleared label and its figure."""
     for card in _CARD.findall(page):
-        detail = _detail(card)
-        for paragraph in re.findall(r"<p\b[^>]*>.*?</p>", detail, re.S):
+        shown = _drop_div(card, "detail")
+        for paragraph in re.findall(r"<p\b[^>]*>.*?</p>", shown, re.S):
+            if 'class="big"' in paragraph:
+                continue
             figure = _FIGURE.search(paragraph)
             if figure is None or label not in _plain(paragraph):
                 continue
@@ -194,8 +208,8 @@ def _label_with_figure(page: str, label: str) -> str:
     return ""
 
 
-def test_the_cleared_label_and_the_figure_share_an_explain_element():
-    """EN and DE, on screen and in print, the label and the figure are one element inside Explain."""
+def test_the_cleared_label_and_the_figure_share_one_element():
+    """EN and DE, on screen and in print, the label and the figure are one element on the card face."""
     for accession, prior in ((NVIDIA, NVIDIA_PRIOR), (WALMART, None), (JOHNSON, None)):
         for language in ("en", "de"):
             label = STRINGS["LBL.yoy"][0 if language == "en" else 1]
@@ -204,6 +218,19 @@ def test_the_cleared_label_and_the_figure_share_an_explain_element():
                 element = _label_with_figure(body, label)
                 assert element, f"{accession} {language} {surface}"
                 assert "https://www.sec.gov/" in element
+                assert 'class="big"' not in element
+
+
+def test_a_figure_outside_explain_is_body_text_not_a_headline():
+    page = _page(NVIDIA, "en", NVIDIA_PRIOR)
+    style = re.search(r"<style>(.*)</style>", page, re.S).group(1)
+    assert ".big a, a.figure" not in style
+    body = re.search(r"(?:^|\n)a\.figure \{[^}]*\}", style)
+    assert body is not None
+    assert "font-size: 20px" in body.group(0)
+    assert "font-size: 44px" not in body.group(0)
+    headline = re.search(r"(?:^|\n)\.big a \{[^}]*\}", style)
+    assert headline is not None and "font-size: 44px" in headline.group(0)
 
 
 def test_no_bare_percent_outside_explain_on_screen_or_in_print():
@@ -257,3 +284,39 @@ def test_a_parked_figure_without_explain_is_shown_with_its_label():
         )
         assert paragraph is not None, rendered
         assert _bare(paragraph.group(1))
+
+
+def test_a_parked_figure_with_explain_stays_on_the_card_face():
+    """Print hides a closed Explain, so the labelled figure cannot live in that panel."""
+    from white_cliff.present import _rows
+    from white_cliff.wording import Additions
+
+    filing = (
+        '<p>Revenue was <data>100 USD millions</data> '
+        '<a class="source-chip" href="https://www.sec.gov/Archives/edgar/data/1/x.htm#fact=factrev">source</a></p>'
+        '<p>Year over year <data>10.5 percent</data> '
+        '<a class="source-chip" href="https://www.sec.gov/Archives/edgar/data/1/x.htm#calc=calcyoy">source</a></p>'
+    )
+    additions = Additions(
+        {},
+        {
+            "factrev": (
+                '<div class="face"></div>\n'
+                '<div id="explain-factrev" class="detail" aria-hidden="true">'
+                '<div class="detail-inner"><p>Inside.</p></div></div>\n'
+            )
+        },
+        "",
+        "",
+        frozenset({"calcyoy"}),
+        {},
+        {},
+        {"calcyoy": "factrev"},
+    )
+    rendered = _rows(filing, additions)
+    detail = _detail(f'<article class="card">{rendered}</article>')
+    label = STRINGS["LBL.yoy"][0]
+    assert label not in detail
+    face = rendered.split('class="detail"', 1)[0]
+    assert label in face
+    assert "calc=calcyoy" in face
