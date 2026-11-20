@@ -541,6 +541,7 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
 
 
 _LAST = b""
+_SEEN: set[bytes] = set()
 
 
 def _copied_png(page: DevTools, width: int) -> bytes:
@@ -586,26 +587,50 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
     chosen = b""
     try:
         try:
-            event = page.next_event("Page.screencastFrame", 5)
+            event = page.next_event("Page.screencastFrame", 0.6)
         except (PageError, TimeoutError):
             event = None
+        # An idle page does not paint, so the cast stays silent. One frame asks for one.
+        if event is None and not _PAUSED:
+            try:
+                _eval(
+                    page,
+                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                )
+            except (PageError, TimeoutError, OSError):
+                pass
+            try:
+                event = page.next_event("Page.screencastFrame", 4)
+            except (PageError, TimeoutError):
+                event = None
         _ack_frame(page, event)
         chosen = _frame_png(event)
         # The first frame is often the previous picture. A later one carries the
         # scroll and the new page. While paused, the renderer cannot paint another.
         if chosen and not _PAUSED:
+            nudged = False
             later_deadline = time.time() + 1.5
             while time.time() < later_deadline:
                 try:
                     later = page.next_event("Page.screencastFrame", 0.4)
                 except (PageError, TimeoutError):
-                    break
+                    if nudged or (chosen not in _SEEN and chosen != _LAST):
+                        break
+                    nudged = True
+                    try:
+                        _eval(
+                            page,
+                            "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                        )
+                    except (PageError, TimeoutError, OSError):
+                        break
+                    continue
                 _ack_frame(page, later)
                 fresh = _frame_png(later)
                 if not fresh or _png_width(fresh) < _png_width(chosen):
                     continue
                 chosen = fresh
-                if (not _LAST or fresh != _LAST) and (not width or _png_width(fresh) == width):
+                if fresh not in _SEEN and fresh != _LAST and (not width or _png_width(fresh) == width):
                     break
     finally:
         try:
@@ -666,7 +691,7 @@ def _intel_photo(
             while True:
                 data = _live_frame(fresh, wanted)
                 got = _png_width(data)
-                stale = bool(data) and bool(_LAST) and data == _LAST
+                stale = bool(data) and (data == _LAST or data in _SEEN)
                 if len(data) >= 1000 and got == wanted and not stale:
                     break
                 if _PAUSED or not data or time.time() >= deadline:
@@ -677,7 +702,8 @@ def _intel_photo(
                         len(alt) >= 1000
                         and _png_width(alt) == wanted
                         and alt != data
-                        and (not _LAST or alt != _LAST)
+                        and alt not in _SEEN
+                        and alt != _LAST
                     ):
                         data = alt
                         break
@@ -691,6 +717,7 @@ def _intel_photo(
             png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
             saved = _crop_png(data, limit) if png_height > limit else data
             _LAST = data
+            _SEEN.add(data)
             path = directory / name
             path.write_bytes(saved)
             print(f"screenshot {path}", flush=True)
@@ -1436,8 +1463,9 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS, _LAST
+    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS, _LAST, _SEEN
     _LAST = b""
+    _SEEN = set()
     _DEBUG_PORT = port
     _SCREEN_LEFT = None
     _BROWSER = None
