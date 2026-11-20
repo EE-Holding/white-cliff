@@ -6,6 +6,16 @@ from pathlib import Path
 import pytest
 
 from white_cliff.disclaimer import DISCLAIMER, OutputRefused, ensure_safe_output
+from white_cliff.lexicon import STRINGS
+
+# Cleared §1 lines, hard-coded. white-cliff-v1-wording.md §1 and white-cliff-v1-wording-de.md.
+CLEARED_DISCLAIMER_EN = "This tool explains the numbers in a public company filing. It does not recommend buying, selling or holding any security, and it is not investment advice."
+CLEARED_DISCLAIMER_DE = "Dieses Werkzeug erklärt die Zahlen im Bericht eines börsennotierten Unternehmens. Es empfiehlt weder den Kauf noch den Verkauf noch das Halten eines Wertpapiers und ist keine Anlageberatung."
+
+
+def test_disclaimer_constants_match_the_cleared_lines_byte_for_byte():
+    assert DISCLAIMER == CLEARED_DISCLAIMER_EN
+    assert STRINGS["§1.DISCLAIMER"] == (CLEARED_DISCLAIMER_EN, CLEARED_DISCLAIMER_DE)
 from white_cliff.pipeline import explain_filing, load_directory
 from white_cliff.sitebuild import build_site
 
