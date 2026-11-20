@@ -756,6 +756,15 @@ def _intel_photo(
                 if len(data) >= 1000 and got == wanted and not stale:
                     break
                 if _PAUSED or not data or time.time() >= deadline:
+                    # A copied document is not the live window. A missing or repeated
+                    # frame must fail here instead of passing as that copy.
+                    if not data or stale:
+                        why = (
+                            "had no screencast frame"
+                            if not data
+                            else "repeated a previous screencast frame"
+                        )
+                        raise PageError(f"{name} is not a live window picture: it {why}")
                     # One copy, after the window has had its chance to resize.
                     # Copying the main window sticks the next layout near 906px.
                     alt = _copied_png(fresh, wanted)

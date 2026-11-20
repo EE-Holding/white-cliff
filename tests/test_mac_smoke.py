@@ -214,6 +214,45 @@ def test_intel_photo_shows_the_card_beside_the_first(tmp_path, monkeypatch):
     assert _ink(driver, data, 700, 40)
 
 
+def test_a_missing_or_stale_screencast_is_not_a_live_photo(tmp_path, monkeypatch):
+    """A copied document must not stand in for a frame the window did not paint."""
+    driver = _driver()
+    page = object()
+    def picture(seed: int) -> bytes:
+        rows = [
+            bytes((seed + x + y * 3) % 256 for x in range(1100 * 3))
+            for y in range(40)
+        ]
+        return driver._png_bytes(1100, 40, 2, 8, rows)
+
+    copy = picture(1)
+    stale = picture(90)
+    monkeypatch.setattr(driver, "_copied_png", lambda page, width: copy)
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    try:
+        driver._PAUSED = True
+        driver._LAST = b""
+        driver._SEEN = set()
+        monkeypatch.setattr(driver, "_live_frame", lambda page, width=0: b"")
+        with pytest.raises(driver.PageError, match="no screencast frame"):
+            driver._intel_photo(
+                page, tmp_path, "missing.png", 1100, 400, keep_scroll=False, reveal=False
+            )
+        assert not (tmp_path / "missing.png").exists()
+        driver._LAST = stale
+        driver._SEEN = {stale}
+        monkeypatch.setattr(driver, "_live_frame", lambda page, width=0: stale)
+        with pytest.raises(driver.PageError, match="previous screencast frame"):
+            driver._intel_photo(
+                page, tmp_path, "stale.png", 1100, 400, keep_scroll=False, reveal=False
+            )
+        assert not (tmp_path / "stale.png").exists()
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+
+
 def test_the_settled_pair_is_not_exempt(tmp_path):
     """The 1100 result is not allowed to be a copy of the first result picture."""
     driver = _driver()
