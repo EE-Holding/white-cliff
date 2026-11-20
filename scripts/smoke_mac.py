@@ -551,12 +551,16 @@ def _png_width(data: bytes) -> int:
     return int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
 
 
+_METRIC_ERROR = ""
+
+
 def _metrics(page: DevTools, width: int, height: int) -> None:
     """Set the layout width without naming a screen. A named screen is rejected after the first picture."""
+    global _METRIC_ERROR
     try:
         page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError:
-        pass
+    except PageError as exc:
+        _METRIC_ERROR = str(exc)[:180]
     try:
         page.call(
             "Emulation.setDeviceMetricsOverride",
@@ -567,8 +571,9 @@ def _metrics(page: DevTools, width: int, height: int) -> None:
                 "mobile": False,
             },
         )
-    except PageError:
-        pass
+        _METRIC_ERROR = ""
+    except PageError as exc:
+        _METRIC_ERROR = str(exc)[:180]
 
 
 def _layout_png(page: DevTools, width: int, height: int) -> bytes:
@@ -602,10 +607,14 @@ def _intel_photo(
     height_px = min(int(height or 900), 900)
     last: Exception | None = None
     for attempt in range(2):
-        fresh = DevTools(page.ws_url)
+        # A second connection sees the 800px window and ignores the override
+        # already set on this page. Use that page, except while it is paused.
+        own = bool(_PAUSED)
+        fresh = DevTools(page.ws_url) if own else page
         try:
-            fresh.call("Page.enable")
-            fresh.call("Runtime.enable")
+            if own:
+                fresh.call("Page.enable")
+                fresh.call("Runtime.enable")
             if not _PAUSED:
                 _window(fresh, wanted, height_px)
                 if motion:
@@ -640,8 +649,9 @@ def _intel_photo(
                 if _PAUSED or time.time() >= deadline:
                     screen = 0 if _PAUSED else _screen_width(fresh)
                     layout = _css_width(fresh)
+                    detail = f", metrics {_METRIC_ERROR}" if _METRIC_ERROR else ""
                     raise PageError(
-                        f"{name} is {got}px wide, wanted {wanted}, screen {screen}, layout {layout}"
+                        f"{name} is {got}px wide, wanted {wanted}, screen {screen}, layout {layout}{detail}"
                     )
                 time.sleep(0.25)
             if height:
@@ -655,7 +665,8 @@ def _intel_photo(
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
         finally:
-            fresh.close()
+            if own:
+                fresh.close()
     raise PageError(last)
 
 
