@@ -6,6 +6,7 @@ import re
 import signal
 import struct
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -253,8 +254,32 @@ def test_a_missing_or_stale_screencast_is_not_a_live_photo(tmp_path, monkeypatch
         driver._SEEN = seen
 
 
-def test_the_narrow_loading_picture_is_painted_after_the_resize(tmp_path, monkeypatch):
-    """The 420 loading shot waits for a frame from after the window is that wide."""
+def test_the_filing_request_waits_until_the_loading_shot_releases():
+    """The second sec.gov page stays unanswered until the shot releases it."""
+    driver = _driver()
+    hold = driver._SecHold()
+    hold.arm()
+    hold.wait("www.sec.gov")
+    hold.wait("data.sec.gov")
+    started = []
+
+    def second():
+        started.append(time.monotonic())
+        hold.wait("www.sec.gov")
+        started.append("done")
+
+    thread = threading.Thread(target=second)
+    thread.start()
+    thread.join(0.2)
+    assert thread.is_alive()
+    assert started == [started[0]]
+    hold.release()
+    thread.join(1)
+    assert started[-1] == "done"
+
+
+def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatch):
+    """A loading shot is a new window at that size, cast before it navigates."""
     driver = _driver()
 
     def picture(seed: int, width: int) -> bytes:
@@ -293,32 +318,32 @@ def test_the_narrow_loading_picture_is_painted_after_the_resize(tmp_path, monkey
                 return {"method": method, "params": {"data": raw, "sessionId": 2}}
             raise driver.PageError(method)
 
-    monkeypatch.setattr(driver, "_intel", lambda: True)
-    monkeypatch.setattr(driver, "_activate", lambda: order.append("activate"))
-    monkeypatch.setattr(driver, "_css_width", lambda page: 420)
-    monkeypatch.setattr(
-        driver,
-        "_window",
-        lambda page, width, height=2200, reset=False: order.append(f"window {width}"),
-    )
-    monkeypatch.setattr(
-        driver,
-        "_eval",
-        lambda page, expression: order.append("paint" if "requestAnimationFrame" in expression else "stamp"),
-    )
-    monkeypatch.setattr(driver, "_hold", lambda page: order.append("hold"))
-    monkeypatch.setattr(driver, "_release", lambda page: order.append("release"))
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: order.append(f"createTarget {width}x{height}") or Page())
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied")))
+    monkeypatch.setattr(driver, "_wait_node", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_fill", lambda *args, **kwargs: order.append("fill"))
+    monkeypatch.setattr(driver, "_click", lambda *args, **kwargs: order.append("click"))
+    monkeypatch.setattr(driver, "_loading", lambda page: True)
+    monkeypatch.setattr(driver, "_spinning", lambda page: True)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: order.append("close"))
+    monkeypatch.setattr(driver._sec_hold, "arm", lambda: order.append("hold"))
+    monkeypatch.setattr(driver._sec_hold, "release", lambda: order.append("release"))
     paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
     driver._LAST = b""
     driver._SEEN = set()
-    driver._PAUSED = False
     try:
-        path = driver._grab_steps(Page(), tmp_path, "smoke-x86_64-15-de-loading-420.png", 420, 1800)
+        path = driver._loading_shot(
+            tmp_path, "smoke-x86_64-15-de-loading-420.png", 420, "http://127.0.0.1:9/", "NVDA"
+        )
         assert path.read_bytes() == fresh
         assert path.read_bytes() != old
-        assert order.index("window 420") < order.index("Page.startScreencast")
-        assert order.index("paint") < order.index("hold")
+        assert order.index("hold") < order.index("Page.startScreencast")
+        assert order.index("Page.startScreencast") < order.index("Page.navigate")
+        assert order.index("createTarget 420x900") < order.index("Page.startScreencast")
+        assert "resize" not in order
         assert "Page.captureScreenshot" not in order
+        assert order.index("release") > order.index("Page.navigate")
     finally:
         driver._PAUSED = paused
         driver._LAST = last
@@ -361,6 +386,7 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     if driver.chrome_binary() is None:
         pytest.skip("chrome is not installed")
     transport = _Transport()
+    transport.hold = driver._sec_hold.wait_url
     app = _app(monkeypatch, tmp_path, transport)
     server = make_server(app)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

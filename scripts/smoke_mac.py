@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import select
 import shutil
 import signal
 import socket
@@ -15,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -27,6 +29,46 @@ from white_cliff.lexicon import STRINGS
 TEST_NAME = "White Cliff Test"
 GERMAN_DISCLAIMER = STRINGS["§1.DISCLAIMER"][1]
 ARCH = platform.machine()
+_SEC_HOSTS = frozenset({"www.sec.gov", "data.sec.gov", "efts.sec.gov"})
+
+
+class _SecHold:
+    """The smoke stub. The filing download waits until the shot releases it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._release = threading.Event()
+        self._release.set()
+        self._armed = False
+        self._www = 0
+
+    def arm(self) -> None:
+        with self._lock:
+            self._www = 0
+            self._armed = True
+            self._release.clear()
+
+    def release(self) -> None:
+        with self._lock:
+            self._armed = False
+        self._release.set()
+
+    def wait(self, host: str) -> None:
+        with self._lock:
+            armed = self._armed
+            if host == "www.sec.gov":
+                self._www += 1
+                hold = armed and self._www >= 2
+            else:
+                hold = False
+        if hold:
+            self._release.wait()
+
+    def wait_url(self, url: str) -> None:
+        self.wait(urllib.parse.urlsplit(url).hostname or "")
+
+
+_sec_hold = _SecHold()
 
 
 def test_email() -> str:
@@ -2008,8 +2050,9 @@ def drive(
         _wait_node(page, "#query", 20)
         _shot(page, out_dir, f"smoke-{ARCH}-2-search.png")
         _fill(page, "#query", query)
+        _loading_shot(out_dir, f"smoke-{ARCH}-4-loading.png", 1100, url, query)
         _click(page, 'form[action="/explain"] button')
-        _wait_result(page, out_dir, heading, suffix, loading=True)
+        _wait_result(page, out_dir, heading, suffix, loading=False)
         loading_shot = out_dir / f"smoke-{ARCH}-4-loading.png"
         result_shot = out_dir / f"smoke-{ARCH}-3-nvda.png"
         if loading_shot.read_bytes() == result_shot.read_bytes():
@@ -2048,18 +2091,10 @@ def drive(
         if _eval(page, "window.matchMedia('(prefers-reduced-motion: reduce)').matches") is not True:
             raise PageError("reduced motion was not emulated")
         _fill(page, "#query", query)
+        _loading_shot(
+            out_dir, f"smoke-{ARCH}-5-reduced.png", 1100, url, query, reduced=True
+        )
         _click(page, 'form[action="/explain"] button')
-        reduced_deadline = time.time() + 60
-        while time.time() < reduced_deadline:
-            try:
-                if _reduced_steps(page):
-                    _grab_steps(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
-                    break
-            except PageError:
-                _release(page)
-            time.sleep(0.02)
-        else:
-            raise PageError("the reduced-motion steps were not shown")
         _wait_result(page, out_dir, heading, suffix, loading=False, capture=False)
         _german_shots(page, out_dir, url, query, heading)
         if english:
@@ -2133,6 +2168,188 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
         raise PageError(f"the German share card was not on the page: {labels}")
     _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
     _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
+
+
+def _fresh_target(width: int, height: int) -> DevTools:
+    """A new window created at this size. Nothing resizes it afterwards."""
+    if _BROWSER is None or not _DEBUG_PORT:
+        raise PageError("the browser has no debugging socket")
+    created = _BROWSER.call(
+        "Target.createTarget",
+        {
+            "url": "about:blank",
+            "left": 0,
+            "top": 0,
+            "width": int(width),
+            "height": int(height),
+            "newWindow": True,
+        },
+        timeout=8,
+    )
+    target_id = str(created.get("targetId") or "")
+    if not target_id:
+        raise PageError("the loading window was not created")
+    info = None
+    deadline = time.time() + 4
+    while time.time() < deadline and info is None:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{_DEBUG_PORT}/json/list", timeout=0.5
+            ) as response:
+                tabs = json.loads(response.read().decode("utf-8"))
+            for tab in tabs:
+                if tab.get("id") == target_id and tab.get("webSocketDebuggerUrl"):
+                    info = tab
+                    break
+        except (OSError, json.JSONDecodeError):
+            pass
+        if info is None:
+            time.sleep(0.05)
+    if not info:
+        raise PageError("the loading window did not open a debugging socket")
+    page = DevTools(info["webSocketDebuggerUrl"])
+    page.target_id = target_id
+    return page
+
+
+def _close_loading_target(page: DevTools) -> None:
+    try:
+        page.call("Page.stopScreencast")
+    except (PageError, TimeoutError, OSError):
+        pass
+    target_id = str(getattr(page, "target_id", "") or "")
+    try:
+        page.close()
+    except (PageError, TimeoutError, OSError):
+        pass
+    if _BROWSER is not None and target_id:
+        try:
+            _BROWSER.call("Target.closeTarget", {"targetId": target_id}, timeout=2)
+        except (PageError, TimeoutError, OSError):
+            pass
+
+
+def _newest_queued_frame(page: DevTools) -> bytes:
+    """The latest frame already read. Earlier ones are from before the steps."""
+    kept = b""
+    events = getattr(page, "_events", None)
+    if not events:
+        return b""
+    index = 0
+    while index < len(events):
+        event = events[index]
+        if event.get("method") != "Page.screencastFrame":
+            index += 1
+            continue
+        events.pop(index)
+        _ack_frame(page, event)
+        data = _frame_png(event)
+        if data:
+            kept = data
+    return kept
+
+
+def _loading_shot(
+    directory: Path,
+    name: str,
+    width: int,
+    url: str,
+    query: str,
+    *,
+    german: bool = False,
+    reduced: bool = False,
+) -> Path:
+    """One loading picture from a window born at this width.
+
+    The cast starts before navigation. The filing download stays held until
+    the frame is in hand, so the steps cannot be replaced by the result.
+    """
+    trace: list[str] = []
+    started = time.monotonic()
+
+    def mark(step: str) -> None:
+        trace.append(f"{int((time.monotonic() - started) * 1000)} {step}")
+
+    def fail(message: str) -> None:
+        detail = "\n".join(trace)
+        raise PageError(f"{message}\n{detail}" if detail else message) from None
+
+    page = None
+    _sec_hold.arm()
+    mark("hold")
+    try:
+        page = _fresh_target(width, 900)
+        mark(f"Target.createTarget {width}x900")
+        page.call("Page.enable")
+        mark("Page.enable")
+        page.call("Runtime.enable")
+        mark("Runtime.enable")
+        page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+        mark("Page.startScreencast")
+        if reduced:
+            _motion(page, "reduce")
+            mark("Emulation.setEmulatedMedia")
+        page.call("Page.navigate", {"url": url})
+        mark("Page.navigate")
+        _wait_node(page, "#query", 30)
+        if german and _eval(page, "document.documentElement.lang") != "de":
+            _press(page, 'button[lang="de"]')
+            _wait_node(page, "#query", 20)
+        _fill(page, "#query", query)
+        _click(page, 'form[action="/explain"] button')
+        mark("click")
+        deadline = time.time() + 90
+        ready = False
+        while time.time() < deadline:
+            try:
+                ready = _reduced_steps(page) if reduced else _loading(page)
+            except PageError:
+                ready = False
+            if ready and not reduced:
+                try:
+                    ready = _spinning(page)
+                except PageError:
+                    ready = False
+            if ready:
+                break
+            time.sleep(0.05)
+        if not ready:
+            fail("the loading steps were not shown")
+        mark("steps")
+        kept = _newest_queued_frame(page)
+        try:
+            page.call(
+                "Runtime.evaluate",
+                {
+                    "expression": "requestAnimationFrame(() => {})",
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                1,
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
+        mark("paint")
+        data = b""
+        frame_deadline = time.time() + 4
+        while time.time() < frame_deadline and not data:
+            try:
+                event = page.next_event("Page.screencastFrame", 0.4)
+            except (PageError, TimeoutError):
+                continue
+            _ack_frame(page, event)
+            data = _frame_png(event)
+        if not data:
+            data = kept
+        mark(f"frame {_png_width(data)}")
+        try:
+            return _commit_live_frame(directory, name, data, width, 900)
+        except PageError as exc:
+            fail(str(exc))
+    finally:
+        _sec_hold.release()
+        if page is not None:
+            _close_loading_target(page)
 
 
 def _grab_steps(
@@ -2311,16 +2528,18 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
     _click(page, 'form[action="/identity"] button')
     _wait_node(page, "#query", 20)
     _fill(page, "#query", query)
-    _fit(page, 1280, 1800)
+    _loading_shot(
+        out_dir, f"smoke-{ARCH}-14-de-loading-1280.png", 1280, url, query, german=True
+    )
     _click(page, 'form[action="/explain"] button')
-    _loading_at(page, out_dir, f"smoke-{ARCH}-14-de-loading-1280.png", 1280, 1800)
     _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
     page.call("Page.navigate", {"url": url})
     _wait_text(page, "Unternehmensname oder Tickersymbol")
     _fill(page, "#query", query)
-    _fit(page, 420, 1800)
+    _loading_shot(
+        out_dir, f"smoke-{ARCH}-15-de-loading-420.png", 420, url, query, german=True
+    )
     _click(page, 'form[action="/explain"] button')
-    _loading_at(page, out_dir, f"smoke-{ARCH}-15-de-loading-420.png", 420, 1800)
     _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
 
 
@@ -2391,6 +2610,86 @@ def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
     return _start(binary)
 
 
+def _proxy_tunnel(left: socket.socket, right: socket.socket) -> None:
+    pair = [left, right]
+    try:
+        while True:
+            readable, _, _ = select.select(pair, [], [], 60)
+            if not readable:
+                return
+            for sock in readable:
+                other = right if sock is left else left
+                chunk = sock.recv(65536)
+                if not chunk:
+                    return
+                other.sendall(chunk)
+    except OSError:
+        return
+    finally:
+        for sock in pair:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def _proxy_client(client: socket.socket) -> None:
+    client.settimeout(30)
+    upstream = None
+    try:
+        data = b""
+        while b"\r\n\r\n" not in data and len(data) < 8192:
+            chunk = client.recv(4096)
+            if not chunk:
+                return
+            data += chunk
+        line = data.split(b"\r\n", 1)[0].decode("latin1", "replace")
+        parts = line.split(" ")
+        if len(parts) < 2 or parts[0].upper() != "CONNECT":
+            client.sendall(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n")
+            return
+        host, _, port_text = parts[1].partition(":")
+        if host not in _SEC_HOSTS:
+            client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            return
+        _sec_hold.wait(host)
+        upstream = socket.create_connection((host, int(port_text or "443")), timeout=30)
+        client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        client.settimeout(None)
+        upstream.settimeout(None)
+        _proxy_tunnel(client, upstream)
+        upstream = None
+        client = None
+    except (OSError, ValueError, TimeoutError):
+        return
+    finally:
+        for sock in (client, upstream):
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+
+def _proxy_serve(sock: socket.socket) -> None:
+    while True:
+        try:
+            client, _addr = sock.accept()
+        except OSError:
+            return
+        threading.Thread(target=_proxy_client, args=(client,), daemon=True).start()
+
+
+def _start_sec_proxy() -> int:
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(32)
+    port = sock.getsockname()[1]
+    threading.Thread(target=_proxy_serve, args=(sock,), daemon=True).start()
+    return port
+
+
 def _start(binary: str, home: Path | None = None) -> tuple[subprocess.Popen, str, object]:
     binary = str(Path(binary).resolve())
     if home is None:
@@ -2414,6 +2713,10 @@ def _start(binary: str, home: Path | None = None) -> tuple[subprocess.Popen, str
     env["USERPROFILE"] = str(home)
     env["URL_FILE"] = str(url_file)
     env["BROWSER"] = str(recorder)
+    proxy_port = _start_sec_proxy()
+    env["https_proxy"] = f"http://127.0.0.1:{proxy_port}"
+    env["http_proxy"] = env["https_proxy"]
+    env["no_proxy"] = "127.0.0.1,localhost"
     log = open(home / "app.log", "wb")
     port_file = home / "Library" / "Application Support" / "White Cliff" / "instance.port"
     proc = subprocess.Popen(

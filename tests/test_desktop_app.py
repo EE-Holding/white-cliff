@@ -93,6 +93,9 @@ class _Transport:
         self.status = 200
 
     def __call__(self, url, user_agent):
+        hold = getattr(self, "hold", None)
+        if hold is not None:
+            hold(url)
         host = url.split("/", 3)[2]
         assert host in {"www.sec.gov", "data.sec.gov"}
         self.calls.append((url, user_agent))
