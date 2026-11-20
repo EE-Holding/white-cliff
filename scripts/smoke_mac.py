@@ -636,32 +636,32 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
                 event = None
         _ack_frame(page, event)
         chosen = _frame_png(event)
-        # The first frame is often the previous picture. A later one carries the
-        # scroll and the new page. While paused, the renderer cannot paint another.
-        if chosen and not _PAUSED:
-            nudged = False
-            later_deadline = time.time() + 1.5
+        # The resize paint is missed when it happens before the cast starts.
+        # Resize again while the cast is listening. While paused, do not.
+        if not _PAUSED and width and (
+            not chosen
+            or _png_width(chosen) != width
+            or chosen in _SEEN
+            or chosen == _LAST
+        ):
+            _window(page, width, 900)
+            later_deadline = time.time() + 2.5
             while time.time() < later_deadline:
                 try:
                     later = page.next_event("Page.screencastFrame", 0.4)
                 except (PageError, TimeoutError):
-                    if nudged or (chosen not in _SEEN and chosen != _LAST):
-                        break
-                    nudged = True
-                    try:
-                        _eval(
-                            page,
-                            "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                        )
-                    except (PageError, TimeoutError, OSError):
-                        break
                     continue
                 _ack_frame(page, later)
                 fresh = _frame_png(later)
-                if not fresh or _png_width(fresh) < _png_width(chosen):
+                if not fresh:
                     continue
-                chosen = fresh
-                if fresh not in _SEEN and fresh != _LAST and (not width or _png_width(fresh) == width):
+                if not chosen or _png_width(fresh) >= _png_width(chosen):
+                    chosen = fresh
+                if (
+                    _png_width(chosen) == width
+                    and chosen not in _SEEN
+                    and chosen != _LAST
+                ):
                     break
     finally:
         try:
