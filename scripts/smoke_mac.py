@@ -85,7 +85,10 @@ class DevTools:
         self._send(0x81, payload)
         deadline = time.time() + timeout
         while time.time() < deadline:
-            message = self._read(deadline)
+            try:
+                message = self._read(deadline)
+            except TimeoutError:
+                break
             if message is None:
                 break
             data = json.loads(message)
