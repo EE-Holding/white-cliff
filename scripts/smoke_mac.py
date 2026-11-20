@@ -666,7 +666,7 @@ def _intel_photo(
                     pass
             # The layout can already say 1100 while the pictured window is still
             # the 800px headless screen. Wait for a frame of the requested width.
-            deadline = time.time() + (0 if _PAUSED else 8)
+            deadline = time.time() + (0 if _PAUSED else 2)
             data = b""
             got = 0
             while True:
@@ -675,6 +675,10 @@ def _intel_photo(
                 if len(data) >= 1000 and got == wanted:
                     break
                 if _PAUSED or time.time() >= deadline:
+                    alt = _copied_png(fresh, wanted)
+                    if len(alt) >= 1000 and _png_width(alt) == wanted:
+                        data = alt
+                        break
                     screen = 0 if _PAUSED else _screen_width(fresh)
                     raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
                 _window(fresh, wanted, height_px)
