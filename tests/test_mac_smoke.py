@@ -278,6 +278,8 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
                 calls.append(("clear",))
             if method == "Emulation.setDeviceMetricsOverride":
                 calls.append(("metrics", (params or {}).get("width")))
+            if method == "Page.startScreencast":
+                calls.append(("cast",))
             return {}
 
         def next_event(self, method, timeout):
@@ -305,6 +307,7 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
     assert ("clear",) in calls
     assert ("metrics", 1100) in calls
     assert ("bounds", 1100) in calls
+    assert ("cast",) in calls[calls.index(("metrics", 1100)) :]
 
 
 def test_the_result_picture_does_not_wait_on_the_renderer(tmp_path, monkeypatch):

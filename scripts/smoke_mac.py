@@ -729,8 +729,12 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             or chosen in _SEEN
             or chosen == _LAST
         ):
-            # The screen-size override can leave the previous picture in place.
-            # Drop it, and move the real window while the cast is listening.
+            # The open cast keeps sending the previous bitmap after the window moves.
+            # Stop it, set the viewport, and listen again.
+            try:
+                page.call("Page.stopScreencast")
+            except PageError:
+                pass
             try:
                 page.call("Emulation.clearDeviceMetricsOverride")
             except PageError:
@@ -749,6 +753,7 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             except PageError:
                 pass
             _fit_window(page, width, 900)
+            page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
             later_deadline = time.time() + 2.5
             while time.time() < later_deadline:
                 try:
