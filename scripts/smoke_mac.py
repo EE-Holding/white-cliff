@@ -589,10 +589,14 @@ def _intel_photo(
     height_px = min(int(height or 900), 900)
     last: Exception | None = None
     for attempt in range(2):
-        fresh = DevTools(page.ws_url)
+        # A new connection keeps the search page picture after the result is on
+        # this page. Use this connection, and a new one only while it is paused.
+        own = bool(_PAUSED)
+        fresh = DevTools(page.ws_url) if own else page
         try:
-            fresh.call("Page.enable")
-            fresh.call("Runtime.enable")
+            if own:
+                fresh.call("Page.enable")
+                fresh.call("Runtime.enable")
             if not _PAUSED:
                 _window(fresh, wanted, height_px)
                 try:
@@ -633,7 +637,8 @@ def _intel_photo(
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
         finally:
-            fresh.close()
+            if own:
+                fresh.close()
     raise PageError(last)
 
 
