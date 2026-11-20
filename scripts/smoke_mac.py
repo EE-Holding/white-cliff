@@ -541,6 +541,7 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
 
 
 _SAVED = b""
+_BEGIN = ""
 
 
 def _begin_png(page: DevTools) -> bytes:
@@ -549,16 +550,19 @@ def _begin_png(page: DevTools) -> bytes:
     A screencast can keep returning the previous picture after the page has
     changed. This asks the headless renderer to paint now.
     """
+    global _BEGIN
     try:
         result = page.call(
             "HeadlessExperimental.beginFrame",
             {"screenshot": {"format": "png", "optimizeForSpeed": True}},
             timeout=8,
         )
-    except (PageError, TimeoutError, OSError):
+    except (PageError, TimeoutError, OSError) as exc:
+        _BEGIN = str(exc)[:180]
         return b""
     encoded = result.get("screenshotData") if isinstance(result, dict) else ""
     if not isinstance(encoded, str) or not encoded:
+        _BEGIN = "no screenshot " + str(result)[:140]
         return b""
     try:
         return base64.b64decode(encoded)
@@ -619,19 +623,23 @@ def _live_frame(page: DevTools, ignore: bytes = b"") -> bytes:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
+    if chosen and _PAUSED and chosen in unwanted:
+        chosen = b""
     if (not chosen or chosen in unwanted) and not _PAUSED:
         painted = _begin_png(page)
         if painted and painted not in unwanted:
             chosen = painted
-    if chosen and _PAUSED and chosen in unwanted:
-        chosen = b""
-    if not chosen and not _PAUSED:
+    if (not chosen or chosen in unwanted) and not _PAUSED:
         result = page.call(
             "Page.captureScreenshot",
             {"format": "png", "captureBeyondViewport": True, "optimizeForSpeed": True},
             timeout=8,
         )
-        chosen = base64.b64decode(result["data"])
+        painted = base64.b64decode(result["data"])
+        if painted and painted not in unwanted:
+            chosen = painted
+        elif not chosen:
+            chosen = painted
     if not chosen:
         raise PageError("the window had no frame")
     return chosen
@@ -690,10 +698,15 @@ def _intel_photo(
                 if data in {_SAVED, rejected} or got != wanted:
                     rejected = data
                 if _PAUSED or time.time() >= deadline:
-                    if len(data) >= 1000 and got == wanted:
+                    if len(data) >= 1000 and got == wanted and data not in {_SAVED, rejected}:
                         break
+                    if len(data) >= 1000 and got == wanted and not _SAVED:
+                        break
+                    if len(data) >= 1000 and got == wanted:
+                        raise PageError(f"{name} repeated the previous picture ({_BEGIN or 'unchanged'})")
                     screen = 0 if _PAUSED else _screen_width(fresh)
-                    raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
+                    detail = f", {_BEGIN}" if _BEGIN else ""
+                    raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}{detail}")
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
             _SAVED = data
