@@ -21,7 +21,14 @@ SECRET_PATTERNS = (
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
     re.compile(r"(?i)(?:api[_-]?key|secret|password)\s*=\s*['\"][^'\"]{8,}['\"]"),
 )
-SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".white-cliff-cache"}
+SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".white-cliff-cache",
+    ".full-index-cache",
+}
 
 
 class _Clock:
