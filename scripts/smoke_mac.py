@@ -1134,10 +1134,13 @@ def _shot(
     height: int = 2200,
     *,
     full: bool = False,
+    prepare=None,
 ) -> Path:
     if _intel():
         # The open window's cast stays at the size it first painted. A new window does not.
-        return _born_shot(directory, name, width, height, _page_url(page), reduced=full)
+        return _born_shot(
+            directory, name, width, height, _page_url(page), reduced=full, prepare=prepare
+        )
     last: Exception | None = None
     asked = height
     for _ in range(2):
@@ -2347,7 +2350,13 @@ def drive(
             _print_preview(page, out_dir, shot=print_shot)
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
-        _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
+        _shot(
+            page,
+            out_dir,
+            f"smoke-{ARCH}-8-result-1100.png",
+            full=True,
+            prepare=lambda shot: _eval(shot, "window.scrollBy(0, 24)"),
+        )
         _fit(page, 640, 1600)
         _layout(page, columns=1, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600, full=True)
