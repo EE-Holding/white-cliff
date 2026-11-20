@@ -729,7 +729,8 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             or chosen in _SEEN
             or chosen == _LAST
         ):
-            _window(page, width, 900)
+            # The screen-size override can leave the previous picture in place.
+            _window(page, width, 900, reset=True)
             later_deadline = time.time() + 2.5
             while time.time() < later_deadline:
                 try:
@@ -1850,6 +1851,24 @@ def _loading(page: DevTools) -> bool:
     return raw is True
 
 
+def _column_shown(page: DevTools) -> bool:
+    """The German column fades in. A frame during that fade is the empty top of the page."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const column = document.querySelector(".column");
+          if (!column) return true;
+          const opacity = parseFloat(getComputedStyle(column).opacity || "1");
+          const running = typeof column.getAnimations === "function"
+            && column.getAnimations().some((item) => item.playState === "running");
+          return opacity > 0.98 && !running;
+        })()
+        """,
+    )
+    return raw is True
+
+
 def _steps_visible(page: DevTools) -> bool:
     """The steps panel is open. The first step is enough; the filing reply is still held."""
     raw = _eval(
@@ -2389,6 +2408,11 @@ def _loading_shot(
             if ready and not reduced:
                 try:
                     ready = _spinning(page)
+                except PageError:
+                    ready = False
+            if ready:
+                try:
+                    ready = _column_shown(page)
                 except PageError:
                     ready = False
             if ready:

@@ -254,6 +254,53 @@ def test_a_missing_or_stale_screencast_is_not_a_live_photo(tmp_path, monkeypatch
         driver._SEEN = seen
 
 
+def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
+    """The Intel override can leave the old picture in place. Clearing it reaches the next size."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(8):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 20, 2, 8, rows)
+
+    stale = picture(2)
+    fresh = picture(5)
+    calls: list[bool] = []
+    sent = {"n": 0}
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            return {}
+
+        def next_event(self, method, timeout):
+            sent["n"] += 1
+            payload = stale if sent["n"] == 1 else fresh
+            raw = __import__("base64").b64encode(payload).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": sent["n"]}}
+
+    monkeypatch.setattr(
+        driver,
+        "_window",
+        lambda page, width, height=900, reset=False: calls.append(bool(reset)),
+    )
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._PAUSED = False
+    driver._LAST = b""
+    driver._SEEN = {stale}
+    try:
+        data = driver._live_frame(Page(), 1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert data == fresh
+    assert True in calls
+
+
 def test_the_result_picture_does_not_wait_on_the_renderer(tmp_path, monkeypatch):
     """Waiting for a paint holds the renderer, so a resized window repeats the last frame."""
     driver = _driver()
@@ -356,6 +403,9 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
             if "steps.hidden" in expression:
                 order.append("view")
                 return {"result": {"value": "hidden=true active=0 arc=missing reduce=false"}}
+            if "column" in expression and "opacity" in expression:
+                order.append("opaque")
+                return {"result": {"value": True}}
             return {}
 
         def next_event(self, method, timeout):
@@ -406,6 +456,7 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
         assert order.index("media no-preference") < order.index("Page.navigate")
         assert order.index("viewport 420") < order.index("Page.startScreencast")
         assert order.index("ready") < order.index("requestSubmit")
+        assert order.index("opaque") < order.index("paint")
         assert order.index("createTarget 420x900") < order.index("Page.startScreencast")
         assert "resize" not in order
         assert "Page.captureScreenshot" not in order
