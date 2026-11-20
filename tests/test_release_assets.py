@@ -80,7 +80,7 @@ def test_the_assembler_writes_the_release_files_and_does_not_publish(tmp_path: P
         dest,
         version="1",
         date="23 November 2026",
-        template=ROOT / "docs" / "release-notes-template.md",
+        template=ROOT / "release-notes-template.md",
     )
     assert tuple(sorted(path.name for path in dest.iterdir())) == tuple(sorted(RELEASE_NAMES))
     lines = (dest / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
@@ -111,7 +111,7 @@ def test_a_checksum_mismatch_is_not_assembled(tmp_path: Path):
             tmp_path / "release",
             version="1",
             date="23 November 2026",
-            template=ROOT / "docs" / "release-notes-template.md",
+            template=ROOT / "release-notes-template.md",
         )
     except assembler.AssembleError as exc:
         assert "WhiteCliff-Windows.zip" in str(exc)

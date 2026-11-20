@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--date", required=True)
     args = parser.parse_args(argv)
-    template = Path(__file__).resolve().parents[1] / "docs" / "release-notes-template.md"
+    template = Path(__file__).resolve().parents[1] / "release-notes-template.md"
     try:
         with tempfile.TemporaryDirectory() as tmp:
             downloaded = Path(tmp)
