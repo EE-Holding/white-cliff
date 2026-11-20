@@ -540,6 +540,25 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
         pass
 
 
+_LAST = b""
+
+
+def _viewport_png(page: DevTools) -> bytes:
+    """The visible window. A screencast can repeat the previous picture."""
+    try:
+        result = page.call(
+            "Page.captureScreenshot",
+            {"format": "png", "optimizeForSpeed": True},
+            timeout=5,
+        )
+    except (PageError, TimeoutError, OSError):
+        return b""
+    try:
+        return base64.b64decode(result.get("data") or "")
+    except (ValueError, AttributeError):
+        return b""
+
+
 def _live_frame(page: DevTools) -> bytes:
     """One frame of this window.
 
@@ -577,6 +596,10 @@ def _live_frame(page: DevTools) -> bytes:
             timeout=8,
         )
         chosen = base64.b64decode(result["data"])
+    if chosen and _LAST and chosen == _LAST:
+        painted = _viewport_png(page)
+        if painted and painted != chosen:
+            chosen = painted
     if not chosen and _PAUSED:
         # The resized window can have no screencast frame while it is paused.
         # The visible viewport is enough; the whole document is thousands of pixels.
@@ -656,6 +679,8 @@ def _intel_photo(
             png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
             if png_height > limit:
                 data = _crop_png(data, limit)
+            global _LAST
+            _LAST = data
             path = directory / name
             path.write_bytes(data)
             print(f"screenshot {path}", flush=True)
@@ -1401,7 +1426,8 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS
+    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS, _LAST
+    _LAST = b""
     _DEBUG_PORT = port
     _SCREEN_LEFT = None
     _BROWSER = None
