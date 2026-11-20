@@ -519,16 +519,26 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
         pass
 
 
-def _live_frame(page: DevTools) -> bytes:
+def _live_frame(page: DevTools, *, another: bool = True) -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
     the next layout at the 906px display. The first screencast frame can still
     show the previous scroll. The next frame replaces it when it is as wide.
+    While the debugger is paused the renderer cannot paint a later frame, so
+    the first one is the picture that was just forced.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
     chosen = b""
     try:
+        if not _PAUSED:
+            try:
+                _eval(
+                    page,
+                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                )
+            except (PageError, TimeoutError, OSError):
+                pass
         try:
             event = page.next_event("Page.screencastFrame", 5)
         except (PageError, TimeoutError):
@@ -536,26 +546,38 @@ def _live_frame(page: DevTools) -> bytes:
         _ack_frame(page, event)
         chosen = _frame_png(event)
         if chosen and not _PAUSED:
-            try:
-                later = page.next_event("Page.screencastFrame", 0.6)
+            deadline = time.time() + 1.2
+            while time.time() < deadline:
+                try:
+                    later = page.next_event(
+                        "Page.screencastFrame", max(0.05, min(0.4, deadline - time.time()))
+                    )
+                except (PageError, TimeoutError):
+                    break
                 _ack_frame(page, later)
                 fresh = _frame_png(later)
-                if fresh and (not chosen or _png_width(fresh) >= _png_width(chosen)):
+                if fresh and _png_width(fresh) >= _png_width(chosen):
                     chosen = fresh
-            except (PageError, TimeoutError):
-                pass
     finally:
         try:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    if not chosen:
+    if not chosen and not _PAUSED:
         result = page.call(
             "Page.captureScreenshot",
             {"format": "png", "captureBeyondViewport": True, "optimizeForSpeed": True},
             timeout=8,
         )
         chosen = base64.b64decode(result["data"])
+    if not chosen and _PAUSED and another:
+        fresh = DevTools(page.ws_url)
+        try:
+            fresh.call("Page.enable")
+            fresh.call("Runtime.enable")
+            return _live_frame(fresh, another=False)
+        finally:
+            fresh.close()
     if not chosen:
         raise PageError("the window had no frame")
     return chosen
@@ -582,14 +604,10 @@ def _intel_photo(
     height_px = min(int(height or 900), 900)
     last: Exception | None = None
     for attempt in range(2):
-        # A new connection keeps the search page picture after the result is on
-        # this page. Use this connection, and a new one only while it is paused.
-        own = bool(_PAUSED)
-        fresh = DevTools(page.ws_url) if own else page
+        # A second connection keeps photographing the search page after this
+        # page has moved on, including while the debugger is paused.
+        fresh = page
         try:
-            if own:
-                fresh.call("Page.enable")
-                fresh.call("Runtime.enable")
             if not _PAUSED:
                 _window(fresh, wanted, height_px)
                 try:
@@ -629,9 +647,6 @@ def _intel_photo(
             return path
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
-        finally:
-            if own:
-                fresh.close()
     raise PageError(last)
 
 
@@ -1247,6 +1262,45 @@ def _reduced_steps(page: DevTools) -> bool:
 _PAUSED = False
 
 
+def _paint(page: DevTools) -> None:
+    """One frame of the steps before the debugger freezes the renderer.
+
+    A paused page cannot composite. Without this, the picture stays on the
+    empty search field, or the resized window has no frame at all.
+    """
+    try:
+        _eval(
+            page,
+            "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+        )
+    except (PageError, TimeoutError, OSError):
+        pass
+
+
+def _grab_paused(
+    page: DevTools,
+    directory: Path,
+    name: str,
+    width: int = 0,
+    height: int = 0,
+    motion: str = "",
+) -> Path:
+    """Paint the steps, freeze them, then photograph that same page."""
+    last: Exception | None = None
+    attempts = 3 if _intel() else 1
+    for _ in range(attempts):
+        if _intel():
+            _paint(page)
+        _hold(page)
+        try:
+            return _grab(page, directory, name, width, height, motion=motion)
+        except (PageError, TimeoutError, OSError) as exc:
+            last = exc
+        finally:
+            _release(page)
+    raise PageError(last)
+
+
 def _hold(page: DevTools) -> None:
     """Stop the page while the picture is taken, so the result cannot replace the steps."""
     global _PAUSED
@@ -1516,11 +1570,7 @@ def drive(
         while time.time() < reduced_deadline:
             try:
                 if _reduced_steps(page):
-                    _hold(page)
-                    try:
-                        _grab(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
-                    finally:
-                        _release(page)
+                    _grab_paused(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
                     break
             except PageError:
                 _release(page)
@@ -1617,11 +1667,7 @@ def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: in
         if loading:
             if not _spinning(page):
                 raise PageError("the loading picture is the reduced-motion ring")
-            _hold(page)
-            try:
-                _grab(page, out_dir, name, width, height)
-            finally:
-                _release(page)
+            _grab_paused(page, out_dir, name, width, height)
             return
         time.sleep(0.02)
     raise PageError("the German loading steps were not shown")
@@ -1770,11 +1816,7 @@ def _wait_result(
                 if _loading(page):
                     if not _spinning(page):
                         raise PageError("the loading picture is the reduced-motion ring")
-                    _hold(page)
-                    try:
-                        _grab(page, out_dir, f"smoke-{ARCH}-4-loading.png")
-                    finally:
-                        _release(page)
+                    _grab_paused(page, out_dir, f"smoke-{ARCH}-4-loading.png")
                     saw_loading = True
             except PageError:
                 _release(page)
