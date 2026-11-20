@@ -1101,10 +1101,18 @@ def _born_shot(
             # A stuck cast does not change when the page scrolls.
             if "repeated a previous screencast frame" not in str(exc):
                 fail(str(exc))
-            _eval(shot, "window.scrollBy(0, 160)")
+            # The cast has already sent its one frame. A small scroll and a new
+            # cast are what produced the panel pictures above.
+            _eval(shot, "window.scrollBy(0, 8)")
             mark("scroll")
+            try:
+                shot.call("Page.stopScreencast")
+            except PageError:
+                pass
+            shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+            mark("Page.startScreencast")
             _paint(shot)
-            scrolled, note = _painted_frame(shot, 1.5, previous=data)
+            scrolled, note = _painted_frame(shot, 4.0, previous=data)
             mark(note)
             if not scrolled:
                 fail(str(exc))
