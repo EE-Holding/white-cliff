@@ -6,36 +6,48 @@ White Cliff is open source. Anyone can read the program. The file SHA256SUMS.txt
 
 The first lookup is the first live one; the app was tested with saved filings.
 
-The download is not signed. The computer does not know who made the program, so it shows a warning. The warning is the usual message. Follow the steps for the computer.
-
-## Which file
-
-1. A Mac with an Apple chip, such as M1, M2, M3, or M4: White-Cliff-Mac-Apple-silicon.zip
-2. An older Mac with an Intel chip: White-Cliff-Mac-Intel.zip
-3. A Windows computer: White-Cliff-Windows.exe
-
-On a Mac, unzip the file. On Windows, the download is the program. There is nothing else to install.
+The download is not signed. A Mac with an Apple chip uses White-Cliff-Mac-Apple-silicon.zip. An older Mac uses White-Cliff-Mac-Intel.zip. A Windows computer uses White-Cliff-Windows.exe. Each step has one picture. A yellow box means the picture is a drawing, not a screenshot.
 
 ## Mac
 
-1. Double-click White Cliff.
-2. Read the message. It says the Mac cannot check that the program is free of harmful software. Click Done. Do not click Move to Trash.
-3. Right-click White Cliff. Click Open. If the Mac asks again, click Open. On a mouse with one button, hold the Control key and click.
-4. If Open is not there: click the Apple menu at the top left. Click System Settings. Click Privacy & Security. Click Open Anyway. Type the computer password if the Mac asks.
-5. The browser shows a private page on this computer.
+1. Unzip the Mac file shown in the picture.
 
-The Open Anyway button stays for about an hour after the double-click. If the button is not there, double-click White Cliff again, then go back to Privacy & Security.
+![Drawing, not a screenshot: the file names.](how-to-files.png)
+
+2. Double-click White Cliff.
+
+![Drawing, not a screenshot: the White Cliff icon.](how-to-mac-icon.png)
+
+3. Click Done, and do not click Move to Trash.
+
+![Drawing, not a screenshot: the Mac message, with Done marked.](how-to-mac-warning.png)
+
+4. Right-click White Cliff and click Open.
+
+![Drawing, not a screenshot: the Open command.](how-to-mac-open.png)
+
+5. Click Privacy & Security, then click Open Anyway.
+
+![Drawing, not a screenshot: Privacy & Security, with Open Anyway marked.](how-to-mac-settings.png)
+
+6. The browser shows a private page on this computer.
+
+![Screenshot from the Mac build: the private page.](how-to-app.png)
 
 ## Windows
 
-1. Double-click White-Cliff-Windows.exe.
-2. Read the blue window. The title is "Windows protected your PC".
-3. Click More info.
-4. Click Run anyway.
-5. The browser shows a private page on this computer.
+1. Double-click the Windows file shown in the picture.
 
-If the blue window says the program was blocked and there is no Run anyway button, the computer has a stricter check turned on. The steps above are for the usual blue window.
+![Drawing, not a screenshot: the Windows file.](how-to-windows-file.png)
 
-## What the page shows
+2. Click More info.
 
-Large type. The disclaimer is at the top. The first time, the page asks for a name and an email and says why. After that, there is one box, "Company name or ticker", and an Explain button. Opening White Cliff again opens the page that is already running. The page closes after 30 minutes with no use.
+![Drawing, not a screenshot: the Windows message, with More info marked.](how-to-windows-more-info.png)
+
+3. Click Run anyway.
+
+![Drawing, not a screenshot: the Windows message, with Run anyway marked.](how-to-windows-run.png)
+
+4. The browser shows a private page on this computer.
+
+![Screenshot from the Mac build: the private page.](how-to-app.png)

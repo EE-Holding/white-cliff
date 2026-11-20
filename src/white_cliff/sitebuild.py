@@ -128,4 +128,7 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
     for name in ("how-to-open.md", "how-to-open-de.md", "release-notes.md"):
         guide = data / name
         (output / name).write_bytes(guide.read_bytes())
+    docs = Path(__file__).resolve().parents[2] / "docs"
+    for picture in sorted(docs.glob("how-to-*.png")):
+        (output / picture.name).write_bytes(picture.read_bytes())
     return output

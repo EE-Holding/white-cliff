@@ -92,6 +92,26 @@ def assemble(downloaded: Path, dest: Path, *, version: str, date: str, template:
     note = dest / "how-to-open.md"
     note.write_bytes(_named(first, "how-to-open.md"))
     written.append(note)
+    german = dest / "how-to-open-de.md"
+    german.write_bytes(_named(first, "how-to-open-de.md"))
+    written.append(german)
+    with zipfile.ZipFile(first) as zipped:
+        pictures = sorted(
+            name
+            for name in zipped.namelist()
+            if Path(name).name.startswith("how-to-") and Path(name).name.endswith(".png")
+        )
+        if not pictures:
+            raise AssembleError("the open guide pictures were not in the zip")
+        seen: set[str] = set()
+        for name in pictures:
+            filename = Path(name).name
+            if filename in seen:
+                continue
+            seen.add(filename)
+            target = dest / filename
+            target.write_bytes(zipped.read(name))
+            written.append(target)
     lines = [
         f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
         for path in written

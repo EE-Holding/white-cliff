@@ -31,6 +31,14 @@ def _load(name: str, path: Path):
     return module
 
 
+def _guide_images() -> list[str]:
+    names: set[str] = set()
+    for guide in ("how-to-open.md", "how-to-open-de.md"):
+        text = (ROOT / "docs" / guide).read_text(encoding="utf-8")
+        names.update(re.findall(r"\((how-to-[^)]+\.png)\)", text))
+    return sorted(names)
+
+
 def _zip(path: Path, note: bytes, german: bytes | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
@@ -39,6 +47,8 @@ def _zip(path: Path, note: bytes, german: bytes | None = None) -> None:
         archive.writestr("program.txt", path.name.encode("ascii"))
         if "Windows" in path.name:
             archive.writestr("WhiteCliff-Windows/White Cliff.exe", b"windows-program")
+        for picture in _guide_images():
+            archive.writestr(picture, picture.encode("ascii"))
 
 
 def test_the_five_jobs_publish_plain_names_and_checksums():
@@ -60,6 +70,66 @@ def test_the_five_jobs_publish_plain_names_and_checksums():
     lowered = text.lower()
     for banned in ("codesign", "notarize", "notarytool", "productsign", "signtool"):
         assert banned not in lowered
+
+
+def _png_text(data: bytes) -> dict[str, str]:
+    found: dict[str, str] = {}
+    position = 8
+    while position + 8 <= len(data):
+        length = int.from_bytes(data[position : position + 4], "big")
+        kind = data[position + 4 : position + 8]
+        chunk = data[position + 8 : position + 8 + length]
+        position += 12 + length
+        if kind == b"tEXt" and b"\x00" in chunk:
+            key, value = chunk.split(b"\x00", 1)
+            found[key.decode("latin-1")] = value.decode("latin-1")
+        if kind == b"IEND":
+            break
+    return found
+
+
+def _picture_steps(text: str) -> list[tuple[str, str]]:
+    steps: list[tuple[str, str]] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        if re.match(r"^\d+\. .+\.$", lines[index]):
+            sentence = lines[index]
+            assert sentence.split(". ", 1)[1].count(".") == 1
+            index += 1
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            assert lines[index].startswith("!["), sentence
+            steps.append((sentence, lines[index]))
+        index += 1
+    return steps
+
+
+def test_each_open_step_has_one_picture():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    download = readme.split("## Download", 1)[1].split("## For developers", 1)[0]
+    english = (ROOT / "docs" / "how-to-open.md").read_text(encoding="utf-8")
+    german = (ROOT / "docs" / "how-to-open-de.md").read_text(encoding="utf-8")
+    for text, drawing_mark, shot_mark in (
+        (english, "Drawing, not a screenshot", "Screenshot"),
+        (german, "Zeichnung, keine Bildschirmaufnahme", "Bildschirmaufnahme"),
+    ):
+        steps = _picture_steps(text)
+        assert len(steps) >= 8
+        for sentence, image in steps:
+            name = re.search(r"\(([^)]+)\)", image).group(1)
+            path = ROOT / "docs" / name
+            assert path.is_file(), name
+            note = _png_text(path.read_bytes()).get("Source", "")
+            if drawing_mark in image:
+                assert note == "drawing"
+            else:
+                assert shot_mark in image
+                assert note == "screenshot"
+            assert name in download or Path(name).name in download
+        assert sum(1 for _sentence, image in steps if shot_mark in image and drawing_mark not in image) >= 1
+    for sentence, _image in _picture_steps(english):
+        assert sentence in download
 
 
 def test_the_note_names_the_files_and_the_warning_buttons():
@@ -145,18 +215,24 @@ def test_the_assembler_writes_the_release_files_and_does_not_publish(tmp_path: P
         date="23 November 2026",
         template=ROOT / "docs" / "release-notes.md",
     )
-    assert tuple(sorted(path.name for path in dest.iterdir())) == tuple(sorted(RELEASE_ASSETS))
+    images = _guide_images()
+    assert sorted(path.name for path in dest.iterdir()) == sorted(
+        list(RELEASE_ASSETS) + ["how-to-open-de.md", *images]
+    )
     lines = (dest / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
     assert [line.split()[-1] for line in lines] == [
         "White-Cliff-Mac-Apple-silicon.zip",
         "White-Cliff-Mac-Intel.zip",
         "White-Cliff-Windows.exe",
         "how-to-open.md",
+        "how-to-open-de.md",
+        *images,
     ]
     for line in lines:
         digest, name = line.split()
         assert hashlib.sha256((dest / name).read_bytes()).hexdigest() == digest
     assert (dest / "how-to-open.md").read_bytes() == note
+    assert (dest / "how-to-open-de.md").read_bytes() == german
     assert (dest / "White-Cliff-Windows.exe").read_bytes() == b"windows-program"
     notes = (ROOT / "docs" / "release-notes.md").read_text(encoding="utf-8")
     assert notes.startswith(

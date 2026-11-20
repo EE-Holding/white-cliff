@@ -10,9 +10,95 @@ https://github.com/EE-Holding/white-cliff/releases/latest
 
 Pick the file for the computer. A Mac with an Apple chip uses White-Cliff-Mac-Apple-silicon.zip. An older Mac with an Intel chip uses White-Cliff-Mac-Intel.zip. A Windows computer uses White-Cliff-Windows.exe.
 
-The file is not signed. The computer shows a warning before it opens. The steps are in [how to open the program](docs/how-to-open.md).
+The file is not signed. The computer shows a warning before it opens. Each step has one picture. A yellow box means the picture is a drawing, not a screenshot. The same steps are in [how to open the program](docs/how-to-open.md). The German copy is [how-to-open-de.md](docs/how-to-open-de.md). It needs a native review. It is not a certified translation.
 
 SHA256SUMS.txt lists one long number for each file. Anyone can check that their download matches that number.
+
+### Mac
+
+1. Unzip the Mac file shown in the picture.
+
+![Drawing, not a screenshot: the file names.](docs/how-to-files.png)
+
+2. Double-click White Cliff.
+
+![Drawing, not a screenshot: the White Cliff icon.](docs/how-to-mac-icon.png)
+
+3. Click Done, and do not click Move to Trash.
+
+![Drawing, not a screenshot: the Mac message, with Done marked.](docs/how-to-mac-warning.png)
+
+4. Right-click White Cliff and click Open.
+
+![Drawing, not a screenshot: the Open command.](docs/how-to-mac-open.png)
+
+5. Click Privacy & Security, then click Open Anyway.
+
+![Drawing, not a screenshot: Privacy & Security, with Open Anyway marked.](docs/how-to-mac-settings.png)
+
+6. The browser shows a private page on this computer.
+
+![Screenshot from the Mac build: the private page.](docs/how-to-app.png)
+
+### Windows
+
+1. Double-click the Windows file shown in the picture.
+
+![Drawing, not a screenshot: the Windows file.](docs/how-to-windows-file.png)
+
+2. Click More info.
+
+![Drawing, not a screenshot: the Windows message, with More info marked.](docs/how-to-windows-more-info.png)
+
+3. Click Run anyway.
+
+![Drawing, not a screenshot: the Windows message, with Run anyway marked.](docs/how-to-windows-run.png)
+
+4. The browser shows a private page on this computer.
+
+![Screenshot from the Mac build: the private page.](docs/how-to-app.png)
+
+### German
+
+1. Die Mac-Datei im Bild entpacken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Dateinamen.](docs/how-to-files.png)
+
+2. White Cliff doppelklicken.
+
+![Zeichnung, keine Bildschirmaufnahme: das Symbol White Cliff.](docs/how-to-mac-icon.png)
+
+3. Auf Fertig klicken, und nicht auf In den Papierkorb legen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Meldung vom Mac, Fertig ist markiert.](docs/how-to-de-mac-warning.png)
+
+4. White Cliff mit der rechten Maustaste anklicken und auf Öffnen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: der Befehl Öffnen.](docs/how-to-de-mac-open.png)
+
+5. Auf Systemeinstellungen, Datenschutz & Sicherheit und dann auf Dennoch öffnen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: Datenschutz & Sicherheit, Dennoch öffnen ist markiert.](docs/how-to-de-mac-settings.png)
+
+6. Der Browser zeigt eine private Seite auf diesem Computer.
+
+![Bildschirmaufnahme vom Mac-Lauf: die private Seite.](docs/how-to-de-app.png)
+
+1. Die Windows-Datei im Bild doppelklicken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Datei.](docs/how-to-windows-file.png)
+
+2. Auf Weitere Informationen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Meldung, Weitere Informationen ist markiert.](docs/how-to-de-windows-more-info.png)
+
+3. Auf Trotzdem ausführen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Meldung, Trotzdem ausführen ist markiert.](docs/how-to-de-windows-run.png)
+
+4. Der Browser zeigt eine private Seite auf diesem Computer.
+
+![Bildschirmaufnahme vom Mac-Lauf: die private Seite.](docs/how-to-de-app.png)
 
 white-cliff explains a public company filing in plain language. It reads the inline XBRL figures in a US EDGAR annual report or quarterly report and shows revenue, margins, cash flow, debt, and share count. Every figure points back to the filing. The tool does not recommend buying, selling, or holding any security.
 

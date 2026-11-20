@@ -10,38 +10,48 @@ Dieser deutsche Text braucht noch eine Prüfung durch eine Person mit Deutsch al
 
 White Cliff ist quelloffen. Jede Person kann das Programm lesen. Die Datei SHA256SUMS.txt nennt eine lange Zahl für jede heruntergeladene Datei. Jede Person kann prüfen, ob die Datei zu dieser Zahl passt.
 
-Die erste Abfrage ist die erste echte Abfrage. Das Programm wurde mit gespeicherten Berichten geprüft.
-
-Die Datei ist nicht signiert. Der Computer kennt den Hersteller nicht und zeigt eine Warnung. Die Warnung ist die übliche Meldung. Die Schritte unten öffnen das Programm.
-
-## Welche Datei
-
-1. Ein Mac mit einem Apple-Chip, zum Beispiel M1, M2, M3 oder M4: White-Cliff-Mac-Apple-silicon.zip
-2. Ein älterer Mac mit einem Intel-Chip: White-Cliff-Mac-Intel.zip
-3. Ein Windows-Computer: White-Cliff-Windows.exe
-
-Auf einem Mac die Datei entpacken. Unter Windows ist die heruntergeladene Datei das Programm. Es ist nichts weiter zu installieren.
+Die Datei ist nicht signiert. Ein Mac mit einem Apple-Chip verwendet White-Cliff-Mac-Apple-silicon.zip. Ein älterer Mac verwendet White-Cliff-Mac-Intel.zip. Ein Windows-Computer verwendet White-Cliff-Windows.exe. Jeder Schritt hat ein Bild. Ein gelbes Feld bedeutet, dass das Bild eine Zeichnung ist und keine Bildschirmaufnahme.
 
 ## Mac
 
-1. White Cliff doppelklicken.
-2. Die Meldung lesen. Der Mac sagt, dass er nicht prüfen kann, ob das Programm frei von schädlicher Software ist. Auf Fertig klicken. Nicht auf In den Papierkorb legen klicken.
-3. White Cliff mit der rechten Maustaste anklicken. Auf Öffnen klicken. Wenn der Mac noch einmal fragt, auf Öffnen klicken. Bei einer Maus mit einer Taste die Control-Taste halten und klicken.
-4. Wenn Öffnen fehlt: auf das Apfel-Menü oben links klicken. Auf Systemeinstellungen klicken. Auf Datenschutz & Sicherheit klicken. Auf Dennoch öffnen klicken. Das Passwort des Computers eingeben, wenn der Mac danach fragt.
-5. Der Browser zeigt eine private Seite auf diesem Computer.
+1. Die Mac-Datei im Bild entpacken.
 
-Die Schaltfläche Dennoch öffnen bleibt etwa eine Stunde nach dem Doppelklick. Wenn sie fehlt, White Cliff noch einmal doppelklicken und dann zurück zu Datenschutz & Sicherheit gehen.
+![Zeichnung, keine Bildschirmaufnahme: die Dateinamen.](how-to-files.png)
+
+2. White Cliff doppelklicken.
+
+![Zeichnung, keine Bildschirmaufnahme: das Symbol White Cliff.](how-to-mac-icon.png)
+
+3. Auf Fertig klicken, und nicht auf In den Papierkorb legen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Meldung vom Mac, Fertig ist markiert.](how-to-de-mac-warning.png)
+
+4. White Cliff mit der rechten Maustaste anklicken und auf Öffnen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: der Befehl Öffnen.](how-to-de-mac-open.png)
+
+5. Auf Systemeinstellungen, Datenschutz & Sicherheit und dann auf Dennoch öffnen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: Datenschutz & Sicherheit, Dennoch öffnen ist markiert.](how-to-de-mac-settings.png)
+
+6. Der Browser zeigt eine private Seite auf diesem Computer.
+
+![Bildschirmaufnahme vom Mac-Lauf: die private Seite.](how-to-de-app.png)
 
 ## Windows
 
-1. White-Cliff-Windows.exe doppelklicken.
-2. Das blaue Fenster lesen. Der Titel sagt, dass Windows den PC geschützt hat.
-3. Auf Weitere Informationen klicken.
-4. Auf Trotzdem ausführen klicken.
-5. Der Browser zeigt eine private Seite auf diesem Computer.
+1. Die Windows-Datei im Bild doppelklicken.
 
-Wenn das blaue Fenster sagt, dass das Programm blockiert wurde, und Trotzdem ausführen fehlt, ist auf dem Computer eine strengere Prüfung eingeschaltet. Die Schritte oben gelten für das übliche blaue Fenster.
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Datei.](how-to-windows-file.png)
 
-## Was die Seite zeigt
+2. Auf Weitere Informationen klicken.
 
-Große Schrift. Der Hinweis steht oben. Beim ersten Mal fragt die Seite nach einem Namen und einer E-Mail und sagt, warum. Danach gibt es ein Feld, „Firmenname oder Kürzel“, und eine Schaltfläche Erklären. Ein erneutes Öffnen zeigt die Seite, die schon läuft. Die Seite schließt nach 30 Minuten ohne Nutzung.
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Meldung, Weitere Informationen ist markiert.](how-to-de-windows-more-info.png)
+
+3. Auf Trotzdem ausführen klicken.
+
+![Zeichnung, keine Bildschirmaufnahme: die Windows-Meldung, Trotzdem ausführen ist markiert.](how-to-de-windows-run.png)
+
+4. Der Browser zeigt eine private Seite auf diesem Computer.
+
+![Bildschirmaufnahme vom Mac-Lauf: die private Seite.](how-to-de-app.png)

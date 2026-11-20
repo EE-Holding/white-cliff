@@ -61,6 +61,7 @@ jobs:
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
           cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
+          cp docs/how-to-*.png "$stage/"
           ditto -c -k --keepParent "$stage" "$stage.zip"
           shasum -a 256 "$stage.zip" > SHA256SUMS
       - name: Show the old certificate failure
@@ -115,6 +116,7 @@ jobs:
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
           cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
+          cp docs/how-to-*.png "$stage/"
           ditto -c -k --keepParent "$stage" "$stage.zip"
           shasum -a 256 "$stage.zip" > SHA256SUMS
       - name: Show the old certificate failure
@@ -168,6 +170,7 @@ jobs:
           Copy-Item "dist/White Cliff.exe" (Join-Path $stage "White Cliff.exe")
           Copy-Item "docs/how-to-open.md" (Join-Path $stage "how-to-open.md")
           Copy-Item "docs/how-to-open-de.md" (Join-Path $stage "how-to-open-de.md")
+          Copy-Item "docs/how-to-*.png" $stage
           Compress-Archive -Path $stage -DestinationPath "WhiteCliff-Windows.zip"
           $hash = (Get-FileHash "WhiteCliff-Windows.zip" -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "SHA256SUMS" -Value "$hash  WhiteCliff-Windows.zip" -Encoding ascii
