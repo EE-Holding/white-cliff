@@ -2428,8 +2428,8 @@ _PANEL_SCRIPT = {
             item.textContent.includes("abzüglich Zahlungsmittel"));
           if (!card) return false;
           const heading = card.querySelector("h3") || card;
-          heading.scrollIntoView({block: "start", inline: "nearest"});
-          window.scrollBy(0, -24);
+          const top = heading.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(top - 24, 0));
           return true;
         })()
     """,
@@ -2440,8 +2440,9 @@ _PANEL_SCRIPT = {
           const hits = [section, ...section.querySelectorAll("*")].filter((item) =>
             (item.textContent || "").includes("Die Ertragsteuer lag"));
           hits.sort((a, b) => a.textContent.length - b.textContent.length);
-          (hits[0] || section).scrollIntoView({block: "start", inline: "nearest"});
-          window.scrollBy(0, -24);
+          const node = hits[0] || section;
+          const top = node.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(top - 24, 0));
           return true;
         })()
     """,
@@ -2451,8 +2452,8 @@ _PANEL_SCRIPT = {
             (item.textContent || "").includes("Formel:"));
           if (!hits.length) return false;
           hits.sort((a, b) => a.textContent.length - b.textContent.length);
-          hits[0].scrollIntoView({block: "start", inline: "nearest"});
-          window.scrollBy(0, -24);
+          const top = hits[0].getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(top - 24, 0));
           return true;
         })()
     """,
