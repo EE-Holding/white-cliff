@@ -343,24 +343,11 @@ def _fit_window(page: DevTools, width: int, height: int) -> None:
     if not _intel():
         return
     global _SCREEN_LEFT, _BOUNDS
-    if _SCREEN_LEFT is None:
-        _SCREEN_LEFT = 0
-        makers = [page]
-        if _BROWSER is not None and _BROWSER is not page:
-            makers.insert(0, _BROWSER)
-        for session in makers:
-            try:
-                added = session.call(
-                    "Emulation.addScreen",
-                    {"left": 2000, "top": 0, "width": 1600, "height": 2400},
-                )
-                info = added.get("screenInfo") if isinstance(added, dict) else None
-                _SCREEN_LEFT = int((info or {}).get("left") or 2000)
-                break
-            except (PageError, TypeError, ValueError) as exc:
-                _BOUNDS = str(exc)
+    # The launch screen is 1400px. A window parked at 2000 is off that screen,
+    # and then the cast sends no frame.
+    _SCREEN_LEFT = 0
     bounds = {
-        "left": _SCREEN_LEFT,
+        "left": 0,
         "top": 0,
         "width": int(width),
         "height": int(min(height, 1400)),
@@ -730,9 +717,10 @@ def _intel_photo(
                     # One copy, after the window has had its chance to resize.
                     # Copying the main window sticks the next layout near 906px.
                     alt = _copied_png(fresh, wanted)
+                    alt_w = _png_width(alt)
                     if (
                         len(alt) >= 1000
-                        and _png_width(alt) == wanted
+                        and alt_w == wanted
                         and alt != data
                         and alt not in _SEEN
                         and alt != _LAST
@@ -740,10 +728,11 @@ def _intel_photo(
                         data = alt
                         break
                     if stale or got == wanted:
-                        raise PageError(f"{name} repeated the previous picture {_COPY_ERROR}")
+                        raise PageError(f"{name} repeated the previous picture copy {alt_w} {_COPY_ERROR}")
                     screen = 0 if _PAUSED else _screen_width(fresh)
                     raise PageError(
-                        f"{name} is {got}px wide, wanted {wanted}, screen {screen} {_COPY_ERROR} {_BOUNDS}"
+                        f"{name} is {got}px wide, wanted {wanted}, screen {screen} "
+                        f"copy {alt_w} {_COPY_ERROR} {_BOUNDS}"
                     )
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
