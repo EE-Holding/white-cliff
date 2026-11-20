@@ -591,31 +591,27 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             event = None
         _ack_frame(page, event)
         chosen = _frame_png(event)
+        # The first frame is often the previous picture. A later one carries the
+        # scroll and the new page. While paused, the renderer cannot paint another.
         if chosen and not _PAUSED:
-            try:
-                later = page.next_event("Page.screencastFrame", 0.6)
+            later_deadline = time.time() + 1.5
+            while time.time() < later_deadline:
+                try:
+                    later = page.next_event("Page.screencastFrame", 0.4)
+                except (PageError, TimeoutError):
+                    break
                 _ack_frame(page, later)
                 fresh = _frame_png(later)
-                if fresh and (not chosen or _png_width(fresh) >= _png_width(chosen)):
-                    chosen = fresh
-            except (PageError, TimeoutError):
-                pass
+                if not fresh or _png_width(fresh) < _png_width(chosen):
+                    continue
+                chosen = fresh
+                if (not _LAST or fresh != _LAST) and (not width or _png_width(fresh) == width):
+                    break
     finally:
         try:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    if not chosen and not _PAUSED:
-        result = page.call(
-            "Page.captureScreenshot",
-            {"format": "png", "captureBeyondViewport": True, "optimizeForSpeed": True},
-            timeout=8,
-        )
-        chosen = base64.b64decode(result["data"])
-    if not chosen or (_LAST and chosen == _LAST):
-        painted = _copied_png(page, width or _png_width(chosen) or 1100)
-        if painted and painted != chosen and (not width or _png_width(painted) == width):
-            chosen = painted
     if not chosen:
         raise PageError("the window had no frame")
     return chosen
@@ -637,15 +633,15 @@ def _intel_photo(
     motion: str = "",
 ) -> Path:
     """Photograph the live window. A copied document hides a paint fault and the typed ticker."""
+    global _LAST
     del reveal
     wanted = int(width or _css_width(page) or 1100)
     height_px = min(int(height or 900), 900)
     last: Exception | None = None
     for attempt in range(2):
-        # A new connection keeps the search page picture after the result is on
-        # this page. Use this connection, and a new one only while it is paused.
-        own = bool(_PAUSED)
-        fresh = DevTools(page.ws_url) if own else page
+        # A new connection keeps the search page picture after this page has moved.
+        own = False
+        fresh = page
         try:
             if own:
                 fresh.call("Page.enable")
@@ -666,31 +662,39 @@ def _intel_photo(
                     pass
             # The layout can already say 1100 while the pictured window is still
             # the 800px headless screen. Wait for a frame of the requested width.
-            deadline = time.time() + (0 if _PAUSED else 2)
+            deadline = time.time() + (0 if _PAUSED else 1.5)
             data = b""
             got = 0
             while True:
                 data = _live_frame(fresh, wanted)
                 got = _png_width(data)
-                if len(data) >= 1000 and got == wanted:
+                stale = bool(_LAST) and data == _LAST
+                if len(data) >= 1000 and got == wanted and not stale:
                     break
                 if _PAUSED or time.time() >= deadline:
+                    # One copy, after the window has had its chance to resize.
+                    # Copying the main window sticks the next layout near 906px.
                     alt = _copied_png(fresh, wanted)
-                    if len(alt) >= 1000 and _png_width(alt) == wanted:
+                    if (
+                        len(alt) >= 1000
+                        and _png_width(alt) == wanted
+                        and alt != data
+                        and (not _LAST or alt != _LAST)
+                    ):
                         data = alt
                         break
+                    if stale or got == wanted:
+                        raise PageError(f"{name} repeated the previous picture")
                     screen = 0 if _PAUSED else _screen_width(fresh)
                     raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
             limit = height or height_px
             png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
-            if png_height > limit:
-                data = _crop_png(data, limit)
-            global _LAST
+            saved = _crop_png(data, limit) if png_height > limit else data
             _LAST = data
             path = directory / name
-            path.write_bytes(data)
+            path.write_bytes(saved)
             print(f"screenshot {path}", flush=True)
             return path
         except (PageError, TimeoutError, OSError) as exc:
@@ -1678,6 +1682,7 @@ def _grab_steps(
         # The typed ticker lives on the control, not in the markup a copied
         # document would keep. Write it down, and let it paint, before pausing.
         try:
+            # One synchronous write. Waiting for a frame lets the result replace the steps.
             _eval(
                 page,
                 """(() => {
@@ -1686,10 +1691,6 @@ def _grab_steps(
                   });
                   return true;
                 })()""",
-            )
-            _eval(
-                page,
-                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
             )
         except (PageError, TimeoutError, OSError):
             pass
