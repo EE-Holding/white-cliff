@@ -2460,6 +2460,7 @@ _PANEL_SCRIPT = {
           const node = hits[0] || section;
           const top = node.getBoundingClientRect().top + window.scrollY;
           window.scrollTo(0, Math.max(top - 24, 0));
+          window.scrollBy(0, 32);
           return true;
         })()
     """,
