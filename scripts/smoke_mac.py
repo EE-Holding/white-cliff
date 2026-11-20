@@ -1056,8 +1056,12 @@ def _born_shot(
         if reduced:
             _motion(shot, "reduce")
             mark("Emulation.setEmulatedMedia")
-        shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
-        mark("Page.startScreencast")
+        # A cast started before the page is ready sends a real frame. A second
+        # cast, after a scroll, sends one blank frame and then stops. Scroll
+        # first when the picture is a section, then start the only cast.
+        if prepare is None:
+            shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+            mark("Page.startScreencast")
         shot.call("Page.navigate", {"url": url})
         mark("Page.navigate")
         _wait_ready(shot, 30)
@@ -1075,32 +1079,19 @@ def _born_shot(
         if not ready:
             fail("the page did not paint")
         mark("paint-ready")
-        _paint(shot)
-        before, note = _painted_frame(shot, 4.0)
-        mark(note)
-        if not before:
-            fail("the page did not paint")
-        mark("painted")
         if prepare is not None:
             crop = prepare(shot)
             if isinstance(crop, int) and crop > 0:
                 height = crop
             mark("prepare")
-            # The cast that photographed the top of the page can go quiet after a
-            # scroll. Start it again and require a frame of the scrolled page.
-            try:
-                shot.call("Page.stopScreencast")
-            except PageError:
-                pass
             shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
             mark("Page.startScreencast")
-            _paint(shot)
-            data, note = _painted_frame(shot, 4.0, previous=before)
-            mark(note)
-            if not data:
-                fail("the picture did not change")
-        else:
-            data = before
+        _paint(shot)
+        data, note = _painted_frame(shot, 4.0)
+        mark(note)
+        if not data:
+            fail("the page did not paint")
+        mark("painted")
         mark(f"frame {_png_width(data)}")
         try:
             return _commit_live_frame(directory, name, data, width, height)
