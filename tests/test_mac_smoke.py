@@ -214,6 +214,18 @@ def test_intel_photo_shows_the_card_beside_the_first(tmp_path, monkeypatch):
     assert _ink(driver, data, 700, 40)
 
 
+def test_the_settled_pair_is_not_exempt(tmp_path):
+    """The 1100 result is not allowed to be a copy of the first result picture."""
+    driver = _driver()
+    row = bytearray([255, 255, 255] * 60)
+    row[0:3] = b"\x00\x00\x00"
+    data = driver._png_bytes(60, 60, 2, 8, [bytes(row)] * 60)
+    (tmp_path / "smoke-x86_64-3-nvda.png").write_bytes(data)
+    (tmp_path / "smoke-arm64-8-result-1100.png").write_bytes(data)
+    with pytest.raises(driver.PageError, match="is the same picture as"):
+        driver._distinct(tmp_path)
+
+
 def test_launch_resolves_a_relative_binary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     binary = tmp_path / "dist" / "White Cliff"
@@ -318,3 +330,4 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     result = (tmp_path / f"smoke-{driver.ARCH}-3-nvda.png").read_bytes()
     reduced = (tmp_path / f"smoke-{driver.ARCH}-5-reduced.png").read_bytes()
     assert reduced != result
+    assert result != desktop
