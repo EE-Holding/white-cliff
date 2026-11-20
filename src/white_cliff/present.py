@@ -24,7 +24,7 @@ from white_cliff.desktop_copy import (
 from white_cliff.disclaimer import ISSUE_URL, OutputRefused
 from white_cliff.explain import acceptable_name
 from white_cliff.german import format_measure, format_raw
-from white_cliff.i18n import focus_language, german, phrase, shown_copy, ui
+from white_cliff.i18n import focus_language, german, german_enabled, phrase, shown_copy, ui
 from white_cliff.pipeline import Explained
 from white_cliff.strings import EN
 
@@ -155,6 +155,8 @@ def plain_report(form: str, period: str) -> str:
 
 def _language_control(token: str) -> str:
     """The English/Deutsch switch. It sits after the disclaimer."""
+    if not german_enabled():
+        return ""
 
     def segment(code: str, label: str) -> str:
         pressed = "true" if (code == "de") == german() else "false"

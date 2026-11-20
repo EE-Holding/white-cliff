@@ -50,7 +50,7 @@ from white_cliff.desktop_copy import (
 )
 from white_cliff.disclaimer import OutputRefused
 from white_cliff.fetch import strip_edgar_script
-from white_cliff.i18n import focus_language, reset_language, set_language
+from white_cliff.i18n import focus_language, german_enabled, reset_language, set_language
 from white_cliff.identity import (
     app_data_dir,
     cache_dir,
@@ -180,7 +180,7 @@ class Desktop:
     def _dispatch(self, method: str, path: str, form: dict[str, str]) -> Page:
         if method == "POST" and path == "/language":
             choice = form.get("language", "en")
-            if choice not in {"en", "de"}:
+            if choice != "de" or not german_enabled():
                 choice = "en"
             save_language(self.identity_file, choice)
             set_language(choice)

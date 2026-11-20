@@ -14,19 +14,31 @@ from white_cliff.pipeline import explain_filing, load_directory, load_file
 from white_cliff.sitebuild import build_site
 
 
+def _lead_with_disclaimer(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    original = parser.format_help
+
+    def format_help() -> str:
+        return DISCLAIMER + "\n\n" + original()
+
+    parser.format_help = format_help  # type: ignore[method-assign]
+    return parser
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="white-cliff",
-        description=DISCLAIMER,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+    parser = _lead_with_disclaimer(
+        argparse.ArgumentParser(
+            prog="white-cliff",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    explain = sub.add_parser(
-        "explain",
-        description=DISCLAIMER,
-        help="Explain a filing",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+    explain = _lead_with_disclaimer(
+        sub.add_parser(
+            "explain",
+            help="Explain a filing",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
     )
     explain.add_argument("target", help="Accession number or a local filing path")
     explain.add_argument("--format", choices=("md", "html", "both"), default="md")
@@ -37,20 +49,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the copyable export",
     )
 
-    site = sub.add_parser(
-        "site",
-        description=DISCLAIMER,
-        help="Write static pages",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+    site = _lead_with_disclaimer(
+        sub.add_parser(
+            "site",
+            help="Write static pages",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
     )
     site.add_argument("--output", default="docs")
     site.add_argument("--pinned", default=None)
 
-    page = sub.add_parser(
-        "page",
-        description=DISCLAIMER,
-        help="Write one HTML file from the saved filings",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+    page = _lead_with_disclaimer(
+        sub.add_parser(
+            "page",
+            help="Write one HTML file from the saved filings",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
     )
     page.add_argument("--out", required=True, help="HTML file to write")
     page.add_argument("--pinned", default=None)

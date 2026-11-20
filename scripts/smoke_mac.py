@@ -2223,8 +2223,14 @@ def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: st
     _grab(page, directory, name, 0, 0)
 
 
+def _german_toggle(page: DevTools) -> bool:
+    return _eval(page, 'document.querySelector("button[lang=\\"de\\"]") !== null') is True
+
+
 def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: str) -> None:
     """German result, first run, and loading, at 1280 and 420."""
+    if not _german_toggle(page):
+        return
     try:
         _motion(page, "no-preference")
     except PageError:
@@ -2424,16 +2430,22 @@ def _confirm_german(url: str) -> None:
     try:
         deadline = time.time() + 20
         lang = ""
+        toggle = None
         while time.time() < deadline:
             try:
                 lang = _eval(page, "document.documentElement.lang") or ""
+                toggle = _german_toggle(page)
             except PageError:
                 lang = ""
             if lang:
                 break
             time.sleep(0.1)
-        if lang != "de":
-            raise PageError("German did not survive a restart")
+        if toggle:
+            if lang != "de":
+                raise PageError("German did not survive a restart")
+            return
+        if lang != "en":
+            raise PageError("the release build showed a language toggle")
     finally:
         page.close()
         if chrome.poll() is None:

@@ -80,7 +80,8 @@ def test_help_carries_the_disclaimer_without_a_user_agent(tmp_path):
             capture_output=True,
         )
         assert completed.returncode == 0
-        assert DISCLAIMER in completed.stdout
+        assert completed.stdout.startswith(DISCLAIMER + "\n")
+        assert completed.stdout.find(DISCLAIMER) < completed.stdout.find("usage:")
 
 
 def test_exports_and_the_public_page_lead_with_the_disclaimer(tmp_path):

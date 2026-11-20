@@ -1,4 +1,7 @@
-"""The saved language. English is the default. German comes only from the cleared table."""
+"""The saved language. English is the default. German comes only from the cleared table.
+
+The packaged release leaves German off until a native-speaker review is recorded.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +10,9 @@ from contextvars import ContextVar, Token
 
 from white_cliff.lexicon import STRINGS
 from white_cliff.strings import EN
+
+# Off in the packaged release. Tests turn this on; a recorded review turns it on for a build.
+GERMAN_REVIEWED = False
 
 _language: ContextVar[str] = ContextVar("white_cliff_language", default="en")
 focus_language: ContextVar[bool] = ContextVar("white_cliff_focus_language", default=False)
@@ -41,12 +47,16 @@ def language() -> str:
     return _language.get()
 
 
+def german_enabled() -> bool:
+    return GERMAN_REVIEWED
+
+
 def german() -> bool:
-    return language() == "de"
+    return german_enabled() and language() == "de"
 
 
 def set_language(code: str) -> Token[str]:
-    if code not in {"en", "de"}:
+    if code != "de" or not german_enabled():
         code = "en"
     return _language.set(code)
 
