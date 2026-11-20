@@ -368,12 +368,18 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
     if _intel():
         # The headless screen starts at 800px. Grow it before the metrics
         # override, which reports a wide screen while the frame stays near 759px.
-        # A print leaves the override stuck, so a reset clears it before the next size.
+        # Printing leaves that override stuck near 957px. Clearing it and setting
+        # the width alone, as the other Mac path does, reaches the next size.
         if reset:
             try:
                 page.call("Emulation.clearDeviceMetricsOverride")
             except PageError:
                 pass
+            try:
+                page.call("Emulation.setDeviceMetricsOverride", metrics)
+            except PageError:
+                pass
+            return
         _fit_window(page, width, height)
         named = dict(metrics)
         named["screenWidth"] = int(width)
