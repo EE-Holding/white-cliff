@@ -543,6 +543,29 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
 _SAVED = b""
 
 
+def _begin_png(page: DevTools) -> bytes:
+    """Paint one headless frame and return it.
+
+    A screencast can keep returning the previous picture after the page has
+    changed. This asks the headless renderer to paint now.
+    """
+    try:
+        result = page.call(
+            "HeadlessExperimental.beginFrame",
+            {"screenshot": {"format": "png", "optimizeForSpeed": True}},
+            timeout=8,
+        )
+    except (PageError, TimeoutError, OSError):
+        return b""
+    encoded = result.get("screenshotData") if isinstance(result, dict) else ""
+    if not isinstance(encoded, str) or not encoded:
+        return b""
+    try:
+        return base64.b64decode(encoded)
+    except ValueError:
+        return b""
+
+
 def _live_frame(page: DevTools, ignore: bytes = b"") -> bytes:
     """One frame of this window.
 
@@ -563,7 +586,7 @@ def _live_frame(page: DevTools, ignore: bytes = b"") -> bytes:
                 )
             except (PageError, TimeoutError, OSError):
                 pass
-        deadline = time.time() + (1.0 if _PAUSED else 3.0)
+        deadline = time.time() + (0.4 if _PAUSED else 0.8)
         while time.time() < deadline:
             try:
                 event = page.next_event(
@@ -596,6 +619,10 @@ def _live_frame(page: DevTools, ignore: bytes = b"") -> bytes:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
+    if (not chosen or chosen in unwanted) and not _PAUSED:
+        painted = _begin_png(page)
+        if painted and painted not in unwanted:
+            chosen = painted
     if chosen and _PAUSED and chosen in unwanted:
         chosen = b""
     if not chosen and not _PAUSED:
