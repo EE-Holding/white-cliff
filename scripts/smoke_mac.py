@@ -167,11 +167,13 @@ class DevTools:
             raise PageError("devtools closed")
         self._buf += chunk
 
-    def _read(self, deadline: float):
+    def _frame(self, deadline: float) -> tuple[int, bool, bytes]:
+        """One websocket frame. A large reply arrives as several frames."""
         while len(self._buf) < 2:
             self._fill(deadline)
         second = self._buf[1]
         opcode = self._buf[0] & 0x0F
+        fin = bool(self._buf[0] & 0x80)
         masked = second & 0x80
         length = second & 0x7F
         offset = 2
@@ -199,14 +201,27 @@ class DevTools:
             start = offset
             payload = self._buf[start : start + length]
         self._buf = self._buf[start + length :]
-        if opcode == 0x8:
-            raise PageError("devtools closed")
-        if opcode == 0x9:
-            self._send(0x0A, payload)
-            return self._read(deadline)
-        if opcode != 0x1:
-            return self._read(deadline)
-        return payload.decode("utf-8")
+        return opcode, fin, payload
+
+    def _read(self, deadline: float):
+        parts: list[bytes] = []
+        kind = 0
+        while True:
+            opcode, fin, payload = self._frame(deadline)
+            if opcode == 0x8:
+                raise PageError("devtools closed")
+            if opcode == 0x9:
+                self._send(0x0A, payload)
+                continue
+            if opcode == 0x1 or (opcode == 0 and parts):
+                if opcode == 0x1:
+                    kind = opcode
+                parts.append(payload)
+                if fin and kind == 0x1:
+                    return b"".join(parts).decode("utf-8")
+                continue
+            if fin and not parts:
+                continue
 
 
 def _paeth(left: int, up: int, up_left: int) -> int:
