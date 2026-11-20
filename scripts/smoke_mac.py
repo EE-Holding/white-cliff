@@ -543,23 +543,39 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
 _LAST = b""
 
 
-def _viewport_png(page: DevTools) -> bytes:
-    """The visible window. A screencast can repeat the previous picture."""
+def _copied_png(page: DevTools, width: int) -> bytes:
+    """The current document in a new tab.
+
+    A screenshot of this window leaves the next Intel layout near 906px.
+    """
     try:
-        result = page.call(
-            "Page.captureScreenshot",
-            {"format": "png", "optimizeForSpeed": True},
-            timeout=5,
-        )
+        html = _document_html(page)
+        tab, target = _open_tab()
     except (PageError, TimeoutError, OSError):
         return b""
     try:
-        return base64.b64decode(result.get("data") or "")
-    except (ValueError, AttributeError):
+        tab.call("Page.enable")
+        tab.call("Runtime.enable")
+        frame = tab.call("Page.getFrameTree")["frameTree"]["frame"]["id"]
+        tab.call("Page.setDocumentContent", {"frameId": frame, "html": html})
+        _window(tab, width or 1100, 900)
+        result = tab.call(
+            "Page.captureScreenshot",
+            {"format": "png", "optimizeForSpeed": True},
+            timeout=8,
+        )
+        return base64.b64decode(result["data"])
+    except (PageError, TimeoutError, OSError, KeyError, ValueError):
         return b""
+    finally:
+        try:
+            tab.close()
+        except (PageError, OSError):
+            pass
+        _close_tab(target)
 
 
-def _live_frame(page: DevTools) -> bytes:
+def _live_frame(page: DevTools, width: int = 0) -> bytes:
     """One frame of this window.
 
     A surface screenshot repeats the Intel page beside itself and then leaves
@@ -596,22 +612,10 @@ def _live_frame(page: DevTools) -> bytes:
             timeout=8,
         )
         chosen = base64.b64decode(result["data"])
-    if chosen and _LAST and chosen == _LAST:
-        painted = _viewport_png(page)
-        if painted and painted != chosen:
+    if not chosen or (_LAST and chosen == _LAST):
+        painted = _copied_png(page, width or _png_width(chosen) or 1100)
+        if painted and painted != chosen and (not width or _png_width(painted) == width):
             chosen = painted
-    if not chosen and _PAUSED:
-        # The resized window can have no screencast frame while it is paused.
-        # The visible viewport is enough; the whole document is thousands of pixels.
-        try:
-            result = page.call(
-                "Page.captureScreenshot",
-                {"format": "png", "optimizeForSpeed": True},
-                timeout=5,
-            )
-            chosen = base64.b64decode(result["data"])
-        except (PageError, TimeoutError, OSError):
-            chosen = b""
     if not chosen:
         raise PageError("the window had no frame")
     return chosen
@@ -666,7 +670,7 @@ def _intel_photo(
             data = b""
             got = 0
             while True:
-                data = _live_frame(fresh)
+                data = _live_frame(fresh, wanted)
                 got = _png_width(data)
                 if len(data) >= 1000 and got == wanted:
                     break
