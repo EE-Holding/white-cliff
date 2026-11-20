@@ -533,6 +533,27 @@ def test_the_smoke_requires_the_full_disclaimer_lines():
     assert driver._read_disclaimer_pages([both, both], german=True) == ""
 
 
+def test_a_blank_glyph_before_a_line_break_does_not_hide_the_disclaimer():
+    driver = _driver()
+    cmap = b"begincmap\n1 beginbfchar\n<0002> <0041>\nendbfchar\nendcmap\n"
+    content = (
+        b"BT\n/F1 12 Tf\n1 0 0 -1 10 10 Tm\n<0001> Tj\n1 0 0 -1 10 40 Tm\n("
+        + DISCLAIMER.encode()
+        + b") Tj\nET\n"
+    )
+    pdf = _pdf(
+        [
+            _stream("", cmap),
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /A /ToUnicode 1 0 R >>",
+            _stream("", content),
+            b"<< /Type /Page /Resources << /Font << /F1 2 0 R >> >> /Contents 3 0 R >>",
+        ]
+    )
+    texts = driver._pdf_page_texts(pdf)
+    assert texts
+    assert DISCLAIMER in " ".join(texts[0].split())
+
+
 def test_the_smoke_compares_the_disclaimer_byte_for_byte():
     """Whitespace may differ. A changed letter or a dropped comma is a different line."""
     driver = _driver()

@@ -1011,7 +1011,8 @@ def _pdf_page_texts(data: bytes) -> list[str]:
 
         def break_line(y: float) -> None:
             nonlocal line_y
-            if line_y is not None and y != line_y and parts and not parts[-1][-1].isspace():
+            written = "".join(parts)
+            if line_y is not None and y != line_y and written and not written[-1].isspace():
                 parts.append(" ")
             line_y = y
 
