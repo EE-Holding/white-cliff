@@ -590,15 +590,23 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             event = page.next_event("Page.screencastFrame", 0.6)
         except (PageError, TimeoutError):
             event = None
-        # An idle page does not paint, so the cast stays silent. One frame asks for one.
+        # An idle page does not paint, so the cast stays silent. Resize while it is
+        # listening; the resize paint is the frame. A bare animation frame is not.
         if event is None and not _PAUSED:
-            try:
-                _eval(
-                    page,
-                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                )
-            except (PageError, TimeoutError, OSError):
-                pass
+            if width:
+                try:
+                    page.call("Emulation.clearDeviceMetricsOverride")
+                except PageError:
+                    pass
+                _window(page, width, 900)
+            else:
+                try:
+                    _eval(
+                        page,
+                        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                    )
+                except (PageError, TimeoutError, OSError):
+                    pass
             try:
                 event = page.next_event("Page.screencastFrame", 4)
             except (PageError, TimeoutError):
@@ -617,13 +625,20 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
                     if nudged or (chosen not in _SEEN and chosen != _LAST):
                         break
                     nudged = True
-                    try:
-                        _eval(
-                            page,
-                            "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                        )
-                    except (PageError, TimeoutError, OSError):
-                        break
+                    if width:
+                        try:
+                            page.call("Emulation.clearDeviceMetricsOverride")
+                        except PageError:
+                            pass
+                        _window(page, width, 900)
+                    else:
+                        try:
+                            _eval(
+                                page,
+                                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                            )
+                        except (PageError, TimeoutError, OSError):
+                            break
                     continue
                 _ack_frame(page, later)
                 fresh = _frame_png(later)
