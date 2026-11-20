@@ -358,7 +358,6 @@ def _fit_window(page: DevTools, width: int, height: int) -> None:
 
 def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: bool = False) -> None:
     """Emulate the layout. The real window cannot be wider than the Intel display."""
-    del reset
     height_px = min(int(height), 900)
     metrics = {
         "width": int(width),
@@ -369,6 +368,12 @@ def _window(page: DevTools, width: int = 1100, height: int = 2200, *, reset: boo
     if _intel():
         # The headless screen starts at 800px. Grow it before the metrics
         # override, which reports a wide screen while the frame stays near 759px.
+        # A print leaves the override stuck, so a reset clears it before the next size.
+        if reset:
+            try:
+                page.call("Emulation.clearDeviceMetricsOverride")
+            except PageError:
+                pass
         _fit_window(page, width, height)
         named = dict(metrics)
         named["screenWidth"] = int(width)
