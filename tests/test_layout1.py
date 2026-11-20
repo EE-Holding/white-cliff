@@ -134,13 +134,12 @@ def test_the_zero_tick_has_no_numeral():
 
 def test_print_has_side_margins_and_space_under_the_disclaimer():
     style = _style()
-    assert "@page { margin-left: 48px; margin-right: 48px; }" in style
     printed = style.split("@media print", 1)[1]
     disclaimer = printed.split(".print-head .disclaimer {", 1)[1].split("}", 1)[0]
     assert "padding-bottom: 24px" in disclaimer
     sheet = printed.split("table.print-sheet.column {", 1)[1].split("}", 1)[0]
-    assert "padding-left: 0" in sheet
-    assert "padding-right: 0" in sheet
+    assert "padding-left: 48px" in sheet
+    assert "padding-right: 48px" in sheet
 
 
 def test_the_header_search_input_is_at_least_360():
