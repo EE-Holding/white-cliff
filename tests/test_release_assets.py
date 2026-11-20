@@ -206,6 +206,171 @@ def test_release_workflow_cannot_create_or_publish():
         assert banned not in lowered
 
 
+def _release_on(doc: dict):
+    if "on" in doc:
+        return doc["on"]
+    return doc.get(True)
+
+
+def _scan_release_line(line: str) -> list[str]:
+    lowered = line.strip().lower()
+    found: list[str] = []
+    if re.search(r"\bgh\s+release\s+create\b", lowered):
+        found.append("gh release create")
+    if re.search(r"\bgh\s+release\s+edit\b", lowered):
+        found.append("gh release edit")
+    if "createrelease" in lowered:
+        found.append("createRelease")
+    if "updaterelease" in lowered:
+        found.append("updateRelease")
+    if re.search(r"\bgit\s+tag\b", lowered):
+        found.append("git tag")
+    if re.search(r"\bgit\s+push\b", lowered) and "--tags" in lowered:
+        found.append("git push --tags")
+    if (
+        "draft: false" in lowered
+        or "draft:false" in lowered
+        or "--draft=false" in lowered
+        or "--draft false" in lowered
+    ):
+        found.append("draft: false")
+    creates = re.search(r"(?:-x|--method)\s+post\b", lowered) and re.search(
+        r"/releases(?:[?'\"\s]|$)", lowered
+    )
+    if creates and "/assets" not in lowered:
+        found.append("createRelease API")
+    if re.search(r"(?:-x|--method)\s+patch\b", lowered) and "/releases" in lowered:
+        found.append("updateRelease API")
+    if re.search(r"\bgh\s+release\b", lowered) and re.search(r"--(?:notes|notes-file|body)\b", lowered):
+        found.append("gh release edit")
+    return found
+
+
+def _walk_release(node, problems: list[str]) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if str(key).lower() == "draft" and (value is False or str(value).strip().lower() == "false"):
+                problems.append("draft: false")
+            if str(key).lower() == "uses" and isinstance(value, str):
+                lowered = value.lower()
+                for marker in (
+                    "action-gh-release",
+                    "create-release",
+                    "release-action",
+                    "automatic-releases",
+                    "goreleaser-action",
+                ):
+                    if marker in lowered:
+                        problems.append(f"release-creating action {value}")
+            _walk_release(value, problems)
+        return
+    if isinstance(node, list):
+        for item in node:
+            _walk_release(item, problems)
+        return
+    if isinstance(node, str):
+        for line in node.splitlines():
+            problems.extend(_scan_release_line(line))
+
+
+def release_workflow_problems(text: str) -> list[str]:
+    """Return the ways a workflow could create, publish, or edit a release."""
+    import yaml
+
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        return [f"release.yml is not valid YAML: {exc}"]
+    if not isinstance(document, dict):
+        return ["release.yml is not a workflow"]
+    problems: list[str] = []
+    trigger = _release_on(document)
+    if not isinstance(trigger, dict):
+        problems.append("the workflow has no release trigger")
+        trigger = {}
+    if set(trigger) - {"release", "workflow_dispatch"}:
+        problems.append("the workflow has an extra trigger")
+    release = trigger.get("release")
+    types = release.get("types") if isinstance(release, dict) else None
+    if types != ["created"]:
+        problems.append("the release trigger is not limited to created")
+    dispatch = trigger.get("workflow_dispatch")
+    inputs = dispatch.get("inputs") if isinstance(dispatch, dict) else None
+    tag_input = inputs.get("tag") if isinstance(inputs, dict) else None
+    if not isinstance(tag_input, dict) or tag_input.get("required") is not True:
+        problems.append("workflow_dispatch needs a required tag of the existing release")
+    _walk_release(document.get("jobs"), problems)
+    expected = "${{ github.event.release.tag_name || inputs.tag }}"
+    found = []
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            run = step.get("run")
+            if isinstance(run, str) and re.search(r"\bgh\s+release\s+upload\b", run):
+                found.append((job, step, run))
+    if len(found) != 1:
+        problems.append("the upload step must target the existing release only")
+        return problems
+    job, step, run = found[0]
+    env: dict = {}
+    if isinstance(job.get("env"), dict):
+        env.update(job["env"])
+    if isinstance(step.get("env"), dict):
+        env.update(step["env"])
+    tag = env.get("RELEASE_TAG", "")
+    same = isinstance(tag, str) and re.sub(r"\s+", "", tag) == re.sub(r"\s+", "", expected)
+    aimed = bool(re.search(r'gh\s+release\s+upload\s+"\$RELEASE_TAG"', run)) and same
+    inlined = re.sub(r"\s+", "", expected) in re.sub(r"\s+", "", run)
+    if not aimed and not inlined:
+        problems.append("the upload step must target the existing release only")
+    if not re.search(r'gh\s+release\s+view\s+"\$RELEASE_TAG"', run):
+        problems.append("the upload step must target the existing release only")
+    return problems
+
+
+def test_release_yml_only_uploads_to_an_existing_release():
+    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert release_workflow_problems(text) == []
+    anchor = '          gh release view "$RELEASE_TAG" --json tagName > /dev/null\n'
+
+    def inserted(command: str) -> str:
+        return f"          {command}\n{anchor}"
+
+    forbidden = {
+        "gh release create": inserted('gh release create "$RELEASE_TAG"'),
+        "gh release edit": inserted('gh release edit "$RELEASE_TAG" --notes "pasted"'),
+        "createRelease": inserted("gh api graphql -f query='mutation { createRelease(input: {}) { id } }'"),
+        "updateRelease": inserted("gh api graphql -f query='mutation { updateRelease(input: {}) { id } }'"),
+        "git tag": inserted("git tag v1"),
+        "git push --tags": inserted("git push --tags"),
+        "draft: false": inserted("echo 'draft: false'"),
+        "create release api": inserted("gh api --method POST /repos/EE-Holding/white-cliff/releases"),
+        "update release api": inserted(
+            "gh api --method PATCH /repos/EE-Holding/white-cliff/releases/1 -f body=hello"
+        ),
+    }
+    for label, snippet in forbidden.items():
+        problems = release_workflow_problems(text.replace(anchor, snippet, 1))
+        assert problems, label
+        assert any(label.split()[0].lower() in problem.lower() for problem in problems)
+    action = text.replace(
+        "uses: actions/upload-artifact@v4\n",
+        "uses: softprops/action-gh-release@v2\n",
+        1,
+    )
+    assert release_workflow_problems(action)
+    other_tag = text.replace(
+        'gh release upload "$RELEASE_TAG" \\',
+        'gh release upload "v9" \\',
+        1,
+    )
+    assert release_workflow_problems(other_tag)
+
+
 def test_the_readme_puts_download_ahead_of_the_developer_commands():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert readme.startswith(
