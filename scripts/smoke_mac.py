@@ -551,45 +551,6 @@ def _png_width(data: bytes) -> int:
     return int.from_bytes(data[16:20], "big") if len(data) >= 24 else 0
 
 
-_METRIC_ERROR = ""
-
-
-def _metrics(page: DevTools, width: int, height: int) -> None:
-    """Set the layout width without naming a screen. A named screen is rejected after the first picture."""
-    global _METRIC_ERROR
-    try:
-        page.call("Emulation.clearDeviceMetricsOverride")
-    except PageError as exc:
-        _METRIC_ERROR = str(exc)[:180]
-    try:
-        page.call(
-            "Emulation.setDeviceMetricsOverride",
-            {
-                "width": int(width),
-                "height": int(height),
-                "deviceScaleFactor": 1,
-                "mobile": False,
-            },
-        )
-        _METRIC_ERROR = ""
-    except PageError as exc:
-        _METRIC_ERROR = str(exc)[:180]
-
-
-def _layout_png(page: DevTools, width: int, height: int) -> bytes:
-    """Photograph the live layout when the window frame is still the 800px screen."""
-    result = page.call(
-        "Page.captureScreenshot",
-        {
-            "format": "png",
-            "captureBeyondViewport": True,
-            "clip": {"x": 0, "y": 0, "width": int(width), "height": int(height), "scale": 1},
-        },
-        timeout=20,
-    )
-    return base64.b64decode(result["data"])
-
-
 def _intel_photo(
     page: DevTools,
     directory: Path,
@@ -632,23 +593,10 @@ def _intel_photo(
                 got = _png_width(data)
                 if len(data) >= 1000 and got == wanted:
                     break
-                if not _PAUSED:
-                    _metrics(fresh, wanted, height_px)
-                if _css_width(fresh) == wanted:
-                    try:
-                        shot = _layout_png(fresh, wanted, height_px)
-                    except (PageError, TimeoutError, OSError):
-                        shot = b""
-                    if len(shot) >= 1000 and _png_width(shot) == wanted:
-                        data = shot
-                        break
                 if _PAUSED or time.time() >= deadline:
                     screen = 0 if _PAUSED else _screen_width(fresh)
-                    layout = _css_width(fresh)
-                    detail = f", metrics {_METRIC_ERROR}" if _METRIC_ERROR else ""
-                    raise PageError(
-                        f"{name} is {got}px wide, wanted {wanted}, screen {screen}, layout {layout}{detail}"
-                    )
+                    raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
+                _window(fresh, wanted, height_px)
                 time.sleep(0.25)
             if height:
                 png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
