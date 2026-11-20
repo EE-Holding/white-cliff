@@ -607,14 +607,10 @@ def _intel_photo(
     height_px = min(int(height or 900), 900)
     last: Exception | None = None
     for attempt in range(2):
-        # A second connection sees the 800px window and ignores the override
-        # already set on this page. Use that page, except while it is paused.
-        own = bool(_PAUSED)
-        fresh = DevTools(page.ws_url) if own else page
+        fresh = DevTools(page.ws_url)
         try:
-            if own:
-                fresh.call("Page.enable")
-                fresh.call("Runtime.enable")
+            fresh.call("Page.enable")
+            fresh.call("Runtime.enable")
             if not _PAUSED:
                 _window(fresh, wanted, height_px)
                 if motion:
@@ -665,8 +661,7 @@ def _intel_photo(
         except (PageError, TimeoutError, OSError) as exc:
             last = exc
         finally:
-            if own:
-                fresh.close()
+            fresh.close()
     raise PageError(last)
 
 
@@ -750,13 +745,14 @@ def _shot(
     raise PageError(last)
 
 
-def _print_preview(page: DevTools, out_dir: Path) -> None:
+def _print_preview(page: DevTools, out_dir: Path, html: str = "") -> None:
     """Print preview at 1280. Each printed page opens with the disclaimer."""
     tab = page
     target_id = ""
     try:
         if _intel():
-            html = _document_html(page)
+            if not html:
+                html = _document_html(page)
             tab, target_id = _open_tab()
             tab.call("Page.enable")
             tab.call("Runtime.enable")
@@ -1333,62 +1329,6 @@ def _state(page: DevTools) -> dict:
     return json.loads(raw or "{}")
 
 
-def _replace_narrow_window(page: DevTools, port: int) -> DevTools:
-    """Open a window at 1100px when this target cannot emulate a viewport.
-
-    Intel headless rejects the metrics override and has no browser window to
-    resize, so the first target stays near 777px on a wider screen.
-    """
-    if not _intel() or _BROWSER is None:
-        return page
-    try:
-        inner = int(_eval(page, "window.innerWidth") or 0)
-    except (PageError, TypeError, ValueError):
-        inner = 0
-    if inner == 1100:
-        return page
-    try:
-        created = _BROWSER.call(
-            "Target.createTarget",
-            {
-                "url": "about:blank",
-                "left": 0,
-                "top": 0,
-                "width": 1100,
-                "height": 900,
-                "newWindow": True,
-            },
-        )
-        target_id = str(created.get("targetId") or "")
-    except (PageError, TypeError, ValueError):
-        return page
-    if not target_id:
-        return page
-    info = None
-    deadline = time.time() + 5
-    while time.time() < deadline and info is None:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5) as response:
-                tabs = json.loads(response.read().decode("utf-8"))
-            for tab in tabs:
-                if tab.get("id") == target_id and tab.get("webSocketDebuggerUrl"):
-                    info = tab
-                    break
-        except (OSError, json.JSONDecodeError):
-            pass
-        if info is None:
-            time.sleep(0.05)
-    if not info:
-        return page
-    global _TARGET_ID
-    _TARGET_ID = target_id
-    fresh = DevTools(info["webSocketDebuggerUrl"])
-    page.close()
-    fresh.call("Page.enable")
-    fresh.call("Runtime.enable")
-    return fresh
-
-
 def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     binary = chrome_binary()
     if binary is None:
@@ -1476,7 +1416,6 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     page.call("Page.enable")
     page.call("Runtime.enable")
     _window(page)
-    page = _replace_narrow_window(page, port)
     page.call("Page.navigate", {"url": url})
     try:
         _motion(page, "no-preference")
@@ -1524,7 +1463,11 @@ def drive(
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
-        _print_preview(page, out_dir)
+        # Printing leaves the Intel layout near 957px, so keep the English page
+        # and print it after the other pictures have used the live window.
+        english = _document_html(page) if _intel() else ""
+        if not _intel():
+            _print_preview(page, out_dir)
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
@@ -1557,6 +1500,8 @@ def drive(
             raise PageError("the reduced-motion steps were not shown")
         _wait_result(page, out_dir, heading, suffix, loading=False, capture=False)
         _german_shots(page, out_dir, url, query, heading)
+        if english:
+            _print_preview(page, out_dir, english)
         _distinct(out_dir)
     finally:
         page.close()
