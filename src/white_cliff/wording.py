@@ -2231,7 +2231,9 @@ def build_additions(
             headings[control] = (
                 f'<h2 id="{html.escape(control, quote=True)}">'
                 f'<button type="button" class="tap" aria-expanded="false" '
-                f'aria-controls="{html.escape(note_id, quote=True)}">{html.escape(statement)}</button>'
+                f'aria-controls="{html.escape(note_id, quote=True)}">{html.escape(statement)}'
+                '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"></path></svg>'
+                "</button>"
                 f"</h2>\n"
                 + note
             )

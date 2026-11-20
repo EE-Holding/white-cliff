@@ -1,5 +1,6 @@
 """One centred column, a collapsed section note, and the print margins."""
 
+import html
 import re
 import time
 from pathlib import Path
@@ -103,12 +104,18 @@ def test_section_notes_are_collapsed_and_the_words_stay():
             assert control is not None
             button = re.search(
                 rf'<button type="button" class="tap" aria-expanded="false" '
-                rf'aria-controls="{re.escape(control.group(1))}">([^<]+)</button>',
+                rf'aria-controls="{re.escape(control.group(1))}">(.*?)</button>',
                 page,
+                re.S,
             )
             assert button is not None
+            assert 'path d="M5 8l5 5 5-5"' in button.group(1)
+            assert re.sub(r"<[^>]+>", "", button.group(1)).strip()
         if language == "en":
-            assert ">Income statement</button>" in page
+            assert ">Income statement" in page
+    printed = _style()
+    assert "h2 button.tap svg" in printed
+    assert "h2 button.tap[aria-expanded='true'] svg" in printed
     rule = _style().split('p[data-template="SECTION"] {', 1)[1].split("}", 1)[0]
     assert "font-size: 18px" in rule
 
@@ -331,6 +338,71 @@ def test_printed_content_starts_48px_in(tmp_path):
     assert starts
     # Chrome records the 48px inset in the text matrix. Every page starts there.
     assert all(46 <= item <= 52 for item in starts)
+
+
+def test_the_english_summary_prints_on_at_most_12_a4_pages(tmp_path):
+    import base64
+
+    from tests.test_desktop_app import _chrome_binary, _chrome_page
+    from tests.test_print_summary import _pdf_lines
+    from white_cliff.disclaimer import DISCLAIMER
+
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    page_html = _page("en")
+    figures = [
+        html.unescape(item)
+        for item in re.findall(r'<a class="figure"[^>]*>([^<]*)</a>', page_html)
+    ]
+    assert figures
+    assert "https://www.sec.gov/" in page_html
+    html_path = tmp_path / "result.html"
+    html_path.write_text(page_html, encoding="utf-8")
+    chrome, stderr_file, page = _chrome_page(binary, tmp_path / "profile", tmp_path / "chrome.txt")
+    try:
+        page.call("Page.enable")
+        page.call("Page.navigate", {"url": html_path.as_uri()})
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _eval_ready(page):
+                break
+            time.sleep(0.05)
+        printed = page.call(
+            "Page.printToPDF",
+            {
+                "printBackground": True,
+                "displayHeaderFooter": False,
+                "paperWidth": 8.27,
+                "paperHeight": 11.69,
+                "marginTop": 0,
+                "marginBottom": 0,
+                "marginLeft": 0,
+                "marginRight": 0,
+            },
+        )
+    finally:
+        page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
+    pages = _pdf_lines(base64.b64decode(printed["data"]))
+    # The same filing previously filled 18 A4 pages.
+    assert 2 <= len(pages) <= 12
+    text = " ".join(" ".join(line.split()) for lines in pages for line in lines)
+    for lines in pages:
+        flat = " ".join(" ".join(lines).split())
+        assert flat.startswith(DISCLAIMER)
+    assert "This section shows Revenue" in text
+    for figure in figures:
+        assert figure in text
+
+
+def _eval_ready(page) -> bool:
+    from tests.test_desktop_app import _eval
+
+    return bool(_eval(page, "document.querySelector('article.card') !== null"))
 
 
 def test_print_shows_every_section_note(tmp_path):

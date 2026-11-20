@@ -1,0 +1,319 @@
+﻿key,english,german,where
+§1.DISCLAIMER,"This tool explains the numbers in a public company filing. It does not recommend buying, selling or holding any security, and it is not investment advice.",Dieses Werkzeug erklärt die Zahlen im Bericht eines börsennotierten Unternehmens. Es empfiehlt weder den Kauf noch den Verkauf noch das Halten eines Wertpapiers und ist keine Anlageberatung.,src/white_cliff/present.py; src/white_cliff/wording.py
+S0.dir.rose,rose,stieg,src/white_cliff/lexicon.py; src/white_cliff/wording.py
+S0.dir.fell,fell,sank,src/white_cliff/lexicon.py; src/white_cliff/wording.py
+S0.dir.unchanged,was unchanged,blieb unverändert,src/white_cliff/lexicon.py
+S0.dir.higher,was higher than,war höher als,src/white_cliff/lexicon.py
+S0.dir.lower,was lower than,war niedriger als,src/white_cliff/lexicon.py
+C1,{figure} was {value} in {period}. It was {value_prev} in {period_prev} and {value_yoy} in {period_yoy}.,Der Wert der Position „{figure}“ lag bei {value} im {period}. Er lag bei {value_prev} im {period_prev} und bei {value_yoy} im {period_yoy}.,src/white_cliff/checks.py; src/white_cliff/wording.py
+C2,"It {clause_prev}, and {clause_yoy}.",Der Wert {clause_prev} und {clause_yoy}.,src/white_cliff/checks.py; src/white_cliff/wording.py
+C2.one,It {clause_prev}.,Der Wert {clause_prev}.,src/white_cliff/lexicon.py
+C2.clause.rose,rose {pct} from {period},stieg um {pct} gegenüber dem {period},src/white_cliff/lexicon.py
+C2.clause.fell,fell {pct} from {period},sank um {pct} gegenüber dem {period},src/white_cliff/lexicon.py
+C2.clause.unchanged,was unchanged from {period},blieb unverändert gegenüber dem {period},src/white_cliff/lexicon.py
+C2.amount,It was {diff} {higher|lower} than {period_prev}.,Der Wert war um {diff} {höher|niedriger} als im {period_prev}.,src/white_cliff/lexicon.py
+C2.example,"It rose 17.9 percent from the quarter ended April 26, 2026, and rose 105.9 percent from the quarter ended July 27, 2025.","Der Wert stieg um 17,9 Prozent gegenüber dem Quartal zum 26. April 2026 und stieg um 105,9 Prozent gegenüber dem Quartal zum 27. Juli 2025.",src/white_cliff/lexicon.py
+C3,{figure} was unchanged from {period_prev} at {value}.,Der Wert der Position „{figure}“ blieb gegenüber dem {period_prev} unverändert bei {value}.,src/white_cliff/checks.py; src/white_cliff/wording.py
+C4,"{figure} was {value} in {period}, compared with {value_prev} in {period_prev}. A percentage change is not shown because {reason}.","Der Wert der Position „{figure}“ lag bei {value} im {period}, verglichen mit {value_prev} im {period_prev}. Eine prozentuale Veränderung wird nicht angezeigt, weil {reason}.",src/white_cliff/checks.py; src/white_cliff/wording.py
+C4.reason.zero,the earlier figure was zero,der frühere Wert null war,src/white_cliff/wording.py
+C4.reason.loss_to_profit,the figure changed from a loss to a profit,der Wert von einem Verlust zu einem Gewinn wechselte,src/white_cliff/wording.py
+C4.reason.profit_to_loss,the figure changed from a profit to a loss,der Wert von einem Gewinn zu einem Verlust wechselte,src/white_cliff/wording.py
+C5,The {period_prev} figure is shown as restated in the {form} filed on {date}; the earlier filing showed {value_orig}.,"Der Wert im {period_prev} wird so gezeigt, wie er im am {date} eingereichten Bericht ({form}) rückwirkend angepasst wurde; der frühere Bericht wies {value_orig} aus.",src/white_cliff/wording.py
+C6.lengths,The periods are different lengths.,Die Zeiträume sind unterschiedlich lang.,src/white_cliff/wording.py
+C6.fiscal_year,The company changed its fiscal year.,Das Unternehmen hat sein Geschäftsjahr geändert.,src/white_cliff/lexicon.py
+C6.currency,"The figures are in different currencies, so no change is shown.","Die Werte lauten auf unterschiedliche Währungen, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+C-YTD.derived,The {period} figure is calculated as {formula} from the filing's year-to-date figures.,Der Wert im {period} ist berechnet als {formula} aus den Werten des Berichts seit Beginn des Geschäftsjahres.,src/white_cliff/lexicon.py
+E1,{figure} is {neutral textbook definition}.,„{figure}“ ist {neutral textbook definition}.,src/white_cliff/wording.py
+E1.example,Operating cash flow is the cash the company's day-to-day business brought in or paid out during the period.,Der operative Cashflow ist der Zahlungsmittelzufluss oder -abfluss aus dem laufenden Geschäft des Unternehmens im Zeitraum.,src/white_cliff/wording.py
+E2,"For {company}, {figure} was {value} in {period}. It came from {where in the filing: statement name and line}. {C2 change line if available}.",Bei {company} lag der Wert der Position „{figure}“ bei {value} im {period}. Er stammt aus {where in the filing: statement name and line}. {C2 change line if available},src/white_cliff/wording.py
+E2.computed,"It is calculated as {formula}, using {input figures with values}.",Er wird berechnet als {formula} aus {input figures with values}.,src/white_cliff/lexicon.py
+E2.formula.label,Formula:,Formel:,src/white_cliff/wording.py
+E2.formula.div,{a} divided by {b},{a} geteilt durch {b},src/white_cliff/lexicon.py
+E2.formula.minus,{a} minus {b},{a} minus {b},src/white_cliff/wording.py
+E2.formula.yoy,"({a} in {period} minus {a} in {period_prev}), divided by {a} in {period_prev}","({a} im {period} minus {a} im {period_prev}), geteilt durch {a} im {period_prev}",src/white_cliff/wording.py
+H6.e2,"For {company}, {line} was {amount} at {date}. It came from the Balance sheet.",Bei {company} lag die Position „{line}“ zum {date} bei {amount}. Der Wert stammt aus der Bilanz.,src/white_cliff/wording.py
+E3,"The filing says: \""{quote}\""","Im Bericht heißt es (Originalsprache Englisch): \""{quote}\""",src/white_cliff/wording.py
+SECTION.tap,This section shows {list of line items} from the {statement name} in {company}'s {form} for {period}.,"Dieser Abschnitt zeigt {list of line items} im {period}, entnommen aus der {statement name} im Bericht ({form}) von {company}.",src/white_cliff/lexicon.py
+Q.limit,"This check is arithmetic on the filing's own numbers. It does not say whether the numbers are right or wrong, and it is not an audit.","Dieser Abgleich ist eine Rechnung mit den eigenen Zahlen des Berichts. Er sagt nicht, ob die Zahlen richtig oder falsch sind, und er ist keine Abschlussprüfung.",src/white_cliff/present.py; src/white_cliff/wording.py
+Q-OC,"Differences like this can come from timing, a one-time item, an acquisition or sale, a change in accounting, or a restatement. The filing's notes may explain it.","Unterschiede dieser Art können auf zeitliche Verschiebungen, einen einmaligen Posten, einen Unternehmenserwerb oder eine Veräußerung, eine Änderung der Bilanzierung oder eine rückwirkende Anpassung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+Q1.heading,Net income and operating cash flow,Nettoergebnis und operativer Cashflow,src/white_cliff/lexicon.py
+Q1.unusual,"Net income {direction} {pct} from {period_cmp} to {period}, while operating cash flow {direction} {pct} over the same periods. The check marks a gap of more than {threshold} percentage points.","Das Nettoergebnis {direction} zwischen dem {period_cmp} und dem {period} um {pct}, während der operative Cashflow im selben Vergleich um {pct} {direction}. Der Abgleich markiert einen Abstand von mehr als {threshold} Prozentpunkten.",src/white_cliff/lexicon.py
+Q1.consistent,"Net income and operating cash flow moved in the same direction from {period_cmp} to {period} ({pct} and {pct}), within {threshold} percentage points of each other.","Nettoergebnis und operativer Cashflow veränderten sich zwischen dem {period_cmp} und dem {period} in dieselbe Richtung ({pct} und {pct}), mit einem Abstand von höchstens {threshold} Prozentpunkten.",src/white_cliff/lexicon.py
+Q2.heading,Receivables and revenue,Forderungen und Umsatz,src/white_cliff/lexicon.py
+Q2.unusual,"Accounts receivable {direction} {pct} from {period_cmp} to {period}, while revenue {direction} {pct}. The check marks receivables growing more than {threshold} percentage points faster than revenue.","Die Forderungen aus Lieferungen und Leistungen {direction} zwischen dem {period_cmp} und dem {period} um {pct}, während der Umsatz um {pct} {direction}. Der Abgleich markiert Forderungen, die um mehr als {threshold} Prozentpunkte schneller stiegen als der Umsatz.",src/white_cliff/lexicon.py
+Q2.oc,"This can come from timing of sales near the period end, changes in payment terms, an acquisition, or a change in accounting. The filing's notes may explain it.","Dies kann auf den Zeitpunkt von Umsätzen kurz vor dem Periodenende, geänderte Zahlungsbedingungen, einen Unternehmenserwerb oder eine Änderung der Bilanzierung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+Q2.consistent,Accounts receivable and revenue changed by similar amounts from {period_cmp} to {period} ({pct} and {pct}).,Forderungen aus Lieferungen und Leistungen und Umsatz veränderten sich zwischen dem {period_cmp} und dem {period} in ähnlichem Umfang ({pct} und {pct}).,src/white_cliff/lexicon.py
+Q3.heading,Inventory and {revenue|cost of sales},Vorräte und {Umsatz|Umsatzkosten},src/white_cliff/lexicon.py
+Q3.unusual,"Inventory {direction} {pct} from {period_cmp} to {period}, while {revenue|cost of sales} {direction} {pct}. The check marks inventory growing more than {threshold} percentage points faster.","Die Vorräte {direction} zwischen dem {period_cmp} und dem {period} um {pct}, während {der Umsatz|die Umsatzkosten} um {pct} {direction}. Der Abgleich markiert Vorräte, die um mehr als {threshold} Prozentpunkte schneller stiegen.",src/white_cliff/lexicon.py
+Q3.oc,"This can come from building stock ahead of expected sales, seasonal patterns, supply changes, an acquisition, or a change in accounting. The filing's notes may explain it.","Dies kann auf einen Lageraufbau im Vorgriff auf Umsätze, saisonale Muster, Änderungen in der Belieferung, einen Unternehmenserwerb oder eine Änderung der Bilanzierung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+Q3.consistent,"as Q2 consistent with ""Inventory""",Vorräte und {Umsatz|Umsatzkosten} veränderten sich zwischen dem {period_cmp} und dem {period} in ähnlichem Umfang ({pct} und {pct}).,src/white_cliff/lexicon.py
+Q4.heading,Items the filing labels as one-time or unusual,"Posten, die der Bericht als einmalig oder ungewöhnlich bezeichnet",src/white_cliff/lexicon.py
+Q4.present,"The filing reports {item label as tagged or as the filing names it} of {value} in {period}. Without it, {figure} would have been {value_ex}, calculated as {formula}.","Der Bericht weist im {period} {item label as tagged or as the filing names it} in Höhe von {value} aus. Ohne diesen Posten hätte der Wert der Position „{figure}“ bei {value_ex} gelegen, berechnet als {formula}.",src/white_cliff/lexicon.py
+Q4.share,That item is {pct} of {figure} for the period.,Dieser Posten entspricht {pct} des Werts der Position „{figure}“ im Zeitraum.,src/white_cliff/lexicon.py
+Q4.none,The filing does not label any items as one-time or unusual for {period}.,Der Bericht bezeichnet im {period} keine Posten als einmalig oder ungewöhnlich.,src/white_cliff/lexicon.py
+Q5.heading,Adjusted and reported figures,Bereinigte und berichtete Werte,src/white_cliff/lexicon.py
+Q5.present,"The company reports {adjusted label, exactly as the filing names it} of {value} and {reported GAAP label} of {value} for {period}, a difference of {diff}. The company's reconciliation lists {n} adjustments; the largest is {label} at {value}.","Das Unternehmen berichtet im {period} {adjusted label, exactly as the filing names it} von {value} und {reported GAAP label} von {value}, ein Unterschied von {diff}. Die Überleitungsrechnung des Unternehmens nennt {n} Anpassungen; die größte ist {label} mit {value}.",src/white_cliff/lexicon.py
+Q5.defined,Adjusted figures are defined by the company and are not standardized across companies.,Bereinigte Werte werden vom Unternehmen selbst definiert und sind zwischen Unternehmen nicht vereinheitlicht.,src/white_cliff/lexicon.py
+Q5.gap,The difference was {diff} in {period} and {diff_prev} in {period_prev}.,Der Unterschied lag bei {diff} im {period} und bei {diff_prev} im {period_prev}.,src/white_cliff/lexicon.py
+Q6.match_statements,{figure} on the {statement A} matches {figure} on the {statement B}: both are {value}.,„{figure}“ in der {statement A} stimmt mit „{figure}“ in der {statement B} überein: Beide liegen bei {value}.,src/white_cliff/lexicon.py
+Q6.match_parts,The {parts} add up to the reported {total} of {value}.,Die {parts} ergeben zusammen den berichteten Wert „{total}“ von {value}.,src/white_cliff/lexicon.py
+Q6.mismatch,"{figure} on the {statement A}, {value_a}, differs from {statement B}, {value_b}, by {diff}.","„{figure}“ in der {statement A}, {value_a}, weicht von der {statement B}, {value_b}, um {diff} ab.",src/white_cliff/lexicon.py
+Q6.oc,Differences like this often come from rounding or from how the filing groups items. The filing's notes may explain it.,"Unterschiede dieser Art entstehen oft durch Rundung oder dadurch, wie der Bericht Posten zusammenfasst. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+M1,"{company}'s {form} for {period} does not report {figure}, so it is not shown.","Der Bericht ({form}) von {company} enthält im {period} keinen Wert für „{figure}“, daher wird er nicht angezeigt.",src/white_cliff/wording.py
+M2,"{figure} for {period_prev} is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ im {period_prev} ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+M3,"This check needs {list of figures}. {missing figure} is not in the filing, so the check was not run.","Für diesen Abgleich werden {list of figures} benötigt. „{missing figure}“ ist im Bericht nicht enthalten, daher wurde der Abgleich nicht durchgeführt.",src/white_cliff/wording.py
+M4,White Cliff found no figures it can show from this filing. You can read the filing itself on sec.gov.,"White Cliff hat in diesem Bericht keine Werte gefunden, die es anzeigen kann. Sie können den Bericht selbst auf sec.gov lesen.",src/white_cliff/wording.py
+M5,This figure is not shown because its unit could not be read from the filing.,"Dieser Wert wird nicht angezeigt, weil seine Einheit aus dem Bericht nicht ermittelt werden konnte.",src/white_cliff/wording.py
+M6,{figure} for the prior quarter is not available for this filing.,Der Wert der Position „{figure}“ für das Vorquartal ist für diesen Bericht nicht verfügbar.,src/white_cliff/wording.py
+M2.de.same_period,"{figure} for the same period a year earlier is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ für den gleichen Zeitraum ein Jahr zuvor ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+M2.de.prior_quarter,"{figure} for the prior quarter is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ für das Vorquartal ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+M2.de.same_quarter,"{figure} for the same quarter a year earlier is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ für das gleiche Quartal ein Jahr zuvor ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+M2.de.same_ytd,"{figure} for the same {six|nine} months a year earlier is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ für die gleichen {sechs|neun} Monate ein Jahr zuvor ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+M2.de.prior_year,"{figure} for the prior year is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ für das Vorjahr ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+M2.de.prior_fy_end,"{figure} for the prior fiscal year end is not in the filings White Cliff read, so no change is shown.","Der Wert der Position „{figure}“ zum Ende des vorherigen Geschäftsjahres ist in den von White Cliff gelesenen Berichten nicht enthalten, daher wird keine Veränderung angezeigt.",src/white_cliff/wording.py
+F.checks,These checks compare the company's own reported numbers with each other. They are not a judgement of the company and not investment advice.,Diese Abgleiche vergleichen die vom Unternehmen selbst berichteten Zahlen miteinander. Sie sind keine Beurteilung des Unternehmens und keine Anlageberatung.,src/white_cliff/wording.py
+F.marker.unusual.q,Check: unusual,Abgleich: ungewöhnlich,src/white_cliff/lexicon.py
+F.marker.consistent.q,Check: consistent,Abgleich: stimmig,src/white_cliff/lexicon.py
+F.marker.notrun.q,Check: not run,Abgleich: nicht durchgeführt,src/white_cliff/lexicon.py
+K.marker.unusual,Check: unusual,Abgleich: ungewöhnlich,src/white_cliff/lexicon.py
+K.marker.consistent,Check: consistent,Abgleich: stimmig,src/white_cliff/lexicon.py
+K.marker.notrun,Check: not run: {plain reason},Abgleich: nicht durchgeführt: {plain reason},src/white_cliff/lexicon.py
+K.threshold,This check marks results {at or above|below} {threshold in plain words}.,Dieser Abgleich markiert Ergebnisse {ab|unter} {threshold in plain words}.,src/white_cliff/lexicon.py
+C1.notrun,There is no profit to compare cash flow with.,"Es gibt keinen Gewinn, mit dem der Cashflow verglichen werden kann.",src/white_cliff/lexicon.py
+C2C3.notrun.10q,Needs the annual report.,Benötigt den Jahresbericht.,src/white_cliff/lexicon.py
+C2.notrun,The earlier receivables or revenue figure is zero or less.,Der frühere Wert der Forderungen oder des Umsatzes ist null oder kleiner.,src/white_cliff/lexicon.py
+C3.notrun.none,This company reports no inventory.,Dieses Unternehmen weist keine Vorräte aus.,src/white_cliff/lexicon.py
+C3.notrun.zero,The earlier inventory figure is zero or less.,Der frühere Wert der Vorräte ist null oder kleiner.,src/white_cliff/lexicon.py
+C4.notrun.none,No one-off items are tagged.,Es sind keine einmaligen Posten gekennzeichnet.,src/white_cliff/lexicon.py
+C4.notrun.zero,Operating income is zero.,Das Betriebsergebnis ist null.,src/white_cliff/lexicon.py
+C6.notrun,The earlier diluted share count is not available.,Die frühere verwässerte Aktienzahl ist nicht verfügbar.,src/white_cliff/lexicon.py
+C7.notrun.rev,Revenue is zero or less in one of the periods.,Der Umsatz ist in einem der Zeiträume null oder kleiner.,src/white_cliff/lexicon.py
+C7.notrun.gm,The filing reports no gross profit or cost of sales.,Der Bericht weist weder ein Bruttoergebnis noch Umsatzkosten aus.,src/white_cliff/lexicon.py
+C8.notrun,A tax rate isn't meaningful on a pre-tax loss.,Bei einem Verlust vor Steuern ist ein Steuersatz nicht aussagekräftig.,src/white_cliff/lexicon.py
+K.notrun.missing,{figure} is not in the filing.,„{figure}“ ist im Bericht nicht enthalten.,src/white_cliff/wording.py
+K.notrun.definitions,The figures use different definitions in the two periods.,Die Werte beruhen in den beiden Zeiträumen auf unterschiedlichen Definitionen.,src/white_cliff/lexicon.py
+K.notrun.lengths,The periods are different lengths.,Die Zeiträume sind unterschiedlich lang.,src/white_cliff/lexicon.py
+K.notrun.usd,The figures are not in US dollars.,Die Werte lauten nicht auf US-Dollar.,src/white_cliff/lexicon.py
+C1.threshold,This check marks results below 0.80 times.,"Dieser Abgleich markiert Ergebnisse unter dem 0,80-Fachen.",src/white_cliff/wording.py
+C2C3.threshold,This check marks results where {receivables|inventory} grew at least 10 percentage points faster than {revenue|cost of sales}.,"Dieser Abgleich markiert Ergebnisse, bei denen {die Forderungen|die Vorräte} um mindestens 10 Prozentpunkte schneller stiegen als {der Umsatz|die Umsatzkosten}.",src/white_cliff/wording.py
+C4.threshold,This check marks any item equal to at least 10 percent of operating income.,Dieser Abgleich markiert jeden Posten in Höhe von mindestens 10 Prozent des Betriebsergebnisses.,src/white_cliff/wording.py
+C6.threshold,"This check marks a rise of at least 3 percent in diluted shares, or diluted shares at least 3 percent above basic shares.","Dieser Abgleich markiert einen Anstieg der verwässerten Aktienzahl um mindestens 3 Prozent oder eine verwässerte Aktienzahl, die mindestens 3 Prozent über der unverwässerten liegt.",src/white_cliff/wording.py
+C7.threshold,This check marks a change of at least 3.0 percentage points in either margin.,"Dieser Abgleich markiert eine Veränderung von mindestens 3,0 Prozentpunkten bei einer der beiden Margen.",src/white_cliff/wording.py
+C8.threshold,This check marks a change of at least 5.0 percentage points.,"Dieser Abgleich markiert eine Veränderung von mindestens 5,0 Prozentpunkten.",src/white_cliff/wording.py
+C1.title,Profit vs operating cash flow,Ergebnis und operativer Cashflow,src/white_cliff/lexicon.py
+C1.numbers,"Operating cash flow was {OCF} and net income was {NI} for {period}, so operating cash flow was {ratio} times net income ({ratio_prior} times for {period_prior}).",Der operative Cashflow lag bei {OCF} und das Nettoergebnis bei {NI} im {period}; der operative Cashflow entsprach damit dem {ratio}-Fachen des Nettoergebnisses (dem {ratio_prior}-Fachen im {period_prior}).,src/white_cliff/wording.py
+C1.why,"Net income includes amounts recorded before cash is received or paid, so it is often compared with the cash the business actually brought in over the same period.","Das Nettoergebnis enthält Beträge, die erfasst werden, bevor Zahlungen eingehen oder geleistet werden; deshalb wird es oft mit den Zahlungsmitteln verglichen, die das Geschäft im selben Zeitraum tatsächlich eingebracht hat.",src/white_cliff/lexicon.py
+C1.oc,"A gap can come from timing of customer payments, building inventory, large non-cash gains, or tax and working-capital timing. The filing's cash flow statement and notes may explain it.","Ein Unterschied kann auf den Zeitpunkt von Kundenzahlungen, den Aufbau von Vorräten, hohe nicht zahlungswirksame Erträge oder zeitliche Effekte bei Steuern und beim Umlaufvermögen zurückgehen. Die Kapitalflussrechnung und der Anhang des Berichts können dies erläutern.",src/white_cliff/lexicon.py
+C2.title,Receivables vs revenue (10-K),Forderungen und Umsatz (10-K),src/white_cliff/lexicon.py
+C2.numbers,"Accounts receivable {rose|fell} {g_AR} percent from {fy_prior} to {fy}, while revenue {rose|fell} {g_Rev} percent. Receivables equalled {days_t} days of sales, compared with {days_p} days a year earlier.","Die Forderungen aus Lieferungen und Leistungen {stiegen|sanken} zwischen dem {fy_prior} und dem {fy} um {g_AR} Prozent, während der Umsatz um {g_Rev} Prozent {stieg|sank}. Die Forderungen entsprachen dem Umsatz von {days_t} Tagen, gegenüber {days_p} Tagen ein Jahr zuvor.",src/white_cliff/wording.py
+C2.why,"Receivables are sales not yet paid for, so their change is often compared with the change in sales.","Forderungen sind Umsätze, die noch nicht bezahlt wurden; deshalb wird ihre Veränderung oft mit der Veränderung des Umsatzes verglichen.",src/white_cliff/lexicon.py
+C2.oc,"This can come from sales concentrated near the year end, changed payment terms, an acquisition, or a change in accounting. The filing's notes may explain it.","Dies kann auf Umsätze kurz vor dem Ende des Geschäftsjahres, geänderte Zahlungsbedingungen, einen Unternehmenserwerb oder eine Änderung der Bilanzierung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+C3.title,Inventory vs cost of sales (10-K),Vorräte und Umsatzkosten (10-K),src/white_cliff/lexicon.py
+C3.numbers,"Inventory {rose|fell} {g_Inv} percent from {fy_prior} to {fy}, while {cost of sales|revenue} {rose|fell} {g_Cost} percent.","Die Vorräte {stiegen|sanken} zwischen dem {fy_prior} und dem {fy} um {g_Inv} Prozent, während {die Umsatzkosten|der Umsatz} um {g_Cost} Prozent {stiegen|sanken / stieg|sank}.",src/white_cliff/wording.py
+C3.why,"Inventory is goods held for sale, so its change is often compared with the change in the cost of goods sold.","Vorräte sind Waren, die für den Absatz bestimmt sind; deshalb wird ihre Veränderung oft mit der Veränderung der Umsatzkosten verglichen.",src/white_cliff/lexicon.py
+C3.oc,"This can come from stocking up ahead of expected sales, seasonal patterns, supply changes, an acquisition, or a change in accounting. The filing's notes may explain it.","Dies kann auf einen Lageraufbau im Vorgriff auf Umsätze, saisonale Muster, Änderungen in der Belieferung, einen Unternehmenserwerb oder eine Änderung der Bilanzierung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+C4.heading,"Items tagged as restructuring, impairment, disposal or acquisition costs","Als Restrukturierung, Wertminderung, Abgang oder Erwerbskosten gekennzeichnete Posten",src/white_cliff/lexicon.py
+C4.numbers,"The filing tags {item plain label} of {value} for {period}, a {charge|gain} equal to {share} percent of operating income of {OI}.","Der Bericht weist im {period} {item plain label} in Höhe von {value} aus, {einen Aufwand|einen Ertrag} in Höhe von {share} Prozent des Betriebsergebnisses von {OI}.",src/white_cliff/wording.py
+C4.why,"Items like restructuring, impairments and gains on sales can be large in one period and absent in the next, so their size is often compared with operating income.","Posten wie Restrukturierungen, Wertminderungen und Veräußerungsgewinne können in einem Zeitraum hoch sein und im nächsten fehlen; deshalb wird ihre Höhe oft mit dem Betriebsergebnis verglichen.",src/white_cliff/lexicon.py
+C4.oc,"Such items follow events the company describes in its filing, such as a reorganisation, a sale, or a change in the value of assets. The filing's notes may explain it.","Solche Posten folgen aus Ereignissen, die das Unternehmen in seinem Bericht beschreibt, etwa einer Reorganisation, einer Veräußerung oder einer Änderung des Werts von Vermögenswerten. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+C4.label.RestructuringCharges,restructuring charges,Restrukturierungsaufwendungen,src/white_cliff/lexicon.py
+C4.label.GoodwillImpairmentLoss,goodwill impairment,Wertminderung des Geschäfts- oder Firmenwerts,src/white_cliff/lexicon.py
+C4.label.ImpairmentOfIntangibleAssetsExcludingGoodwill,impairment of intangible assets,Wertminderung immaterieller Vermögenswerte,src/white_cliff/lexicon.py
+C4.label.AssetImpairmentCharges,asset impairment charges,Aufwendungen aus Wertminderungen von Vermögenswerten,src/white_cliff/lexicon.py
+C4.label.GainLossOnDispositionOfAssets,gain or loss on disposal of assets,Gewinn oder Verlust aus dem Abgang von Vermögenswerten,src/white_cliff/lexicon.py
+C4.label.GainLossOnSaleOfPropertyPlantEquipment,gain or loss on sale of property and equipment,Gewinn oder Verlust aus der Veräußerung von Sachanlagen,src/white_cliff/lexicon.py
+C4.label.DisposalGroupNotDiscontinuedOperationGainLossOnDisposal,gain or loss on disposal of a business unit,Gewinn oder Verlust aus dem Abgang eines Geschäftsbereichs,src/white_cliff/lexicon.py
+C4.label.GainsLossesOnExtinguishmentOfDebt,gain or loss on paying off debt early,Gewinn oder Verlust aus der vorzeitigen Tilgung von Schulden,src/white_cliff/lexicon.py
+C4.label.BusinessCombinationAcquisitionRelatedCosts,acquisition-related costs,Kosten im Zusammenhang mit Unternehmenserwerben,src/white_cliff/lexicon.py
+C6.title,Share count dilution (engineer's Q7),Verwässerung der Aktienzahl,src/white_cliff/lexicon.py
+C6.numbers,The diluted share count {rose|fell} {growth} percent from {period_prior} to {period}. Diluted shares were {gap} percent more than basic shares in {period}.,Die verwässerte Aktienzahl {stieg|sank} zwischen dem {period_prior} und dem {period} um {growth} Prozent. Im {period} lag die verwässerte Aktienzahl {gap} Prozent über der unverwässerten.,src/white_cliff/wording.py
+C6.why,"The diluted share count includes shares that options, convertible securities and similar awards could add, so its change shows how much the number of shares changed.","Die verwässerte Aktienzahl umfasst auch Aktien, die durch Optionen, wandelbare Wertpapiere und ähnliche Zusagen hinzukommen könnten; ihre Veränderung zeigt daher, um wie viel sich die Zahl der Aktien verändert hat.",src/white_cliff/lexicon.py
+C6.oc,"This can come from employee share awards, convertible securities, or shares issued for an acquisition or to raise money. The filing's notes may explain it.","Dies kann auf Aktienzuteilungen an Mitarbeitende, wandelbare Wertpapiere oder Aktien zurückgehen, die für einen Unternehmenserwerb oder zur Kapitalbeschaffung ausgegeben wurden. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+C6.decrease,The diluted share count fell {x} percent.,Die verwässerte Aktienzahl sank um {x} Prozent.,src/white_cliff/lexicon.py
+C7.title,Margin swings (engineer's Q8),Veränderung der Margen,src/white_cliff/lexicon.py
+C7.numbers,"Gross margin was {gm_t} percent in {period} and {gm_p} percent in {period_prior}, a change of {d} percentage points. Operating margin was {om_t} percent and {om_p} percent, a change of {d} percentage points.","Die Bruttomarge lag bei {gm_t} Prozent im {period} und bei {gm_p} Prozent im {period_prior}, eine Veränderung um {d} Prozentpunkte. Die operative Marge lag bei {om_t} Prozent und bei {om_p} Prozent, eine Veränderung um {d} Prozentpunkte.",src/white_cliff/wording.py
+C7.why,"Margins show each figure as a share of revenue, so a change in margin shows costs moving faster or slower than sales.","Margen zeigen einen Wert als Anteil am Umsatz; eine Veränderung der Marge zeigt daher, dass sich Kosten schneller oder langsamer verändert haben als der Umsatz.",src/white_cliff/lexicon.py
+C7.oc,"This can come from changes in prices or costs, the mix of products sold, one-time items, or an acquisition or sale. The filing's notes may explain it.","Dies kann auf Änderungen bei Preisen oder Kosten, die Zusammensetzung der abgesetzten Produkte, einmalige Posten oder einen Unternehmenserwerb oder eine Veräußerung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+C8.title,Effective tax rate swing (engineer's Q9),Veränderung des effektiven Steuersatzes,src/white_cliff/lexicon.py
+C8.numbers,"Income tax was {rate_t} percent of pre-tax income in {period} and {rate_p} percent in {period_prior}, a change of {d} percentage points.","Die Ertragsteuer lag bei {rate_t} Prozent des Ergebnisses vor Steuern im {period} und bei {rate_p} Prozent im {period_prior}, eine Veränderung um {d} Prozentpunkte.",src/white_cliff/lexicon.py
+C8.why,"The effective tax rate shows tax expense as a share of pre-tax income, and changes in it affect net income separately from the business itself.",Der effektive Steuersatz zeigt den Steueraufwand als Anteil am Ergebnis vor Steuern; Änderungen daran wirken sich unabhängig vom eigentlichen Geschäft auf das Nettoergebnis aus.,src/white_cliff/lexicon.py
+C8.oc,"This can come from tax law changes, one-time tax items, income earned in different countries, or settlements with tax authorities. The filing's tax note may explain it.","Dies kann auf Änderungen des Steuerrechts, einmalige Steuerposten, in verschiedenen Ländern erzielte Erträge oder Einigungen mit Steuerbehörden zurückgehen. Die Anhangangabe zu den Steuern kann dies erläutern.",src/white_cliff/lexicon.py
+LOAD.find,Finding the company,Unternehmen wird gesucht,src/white_cliff/lexicon.py
+LOAD.list,Getting the filing list,Liste der Berichte wird abgerufen,src/white_cliff/lexicon.py
+LOAD.read,Reading the filing,Bericht wird gelesen,src/white_cliff/lexicon.py
+LOAD.read_prior,Reading the filing and the earlier quarter,Bericht und Bericht des Vorquartals werden gelesen,src/white_cliff/lexicon.py
+COL.3m,Three months ended {date},Drei Monate zum {date},src/white_cliff/wording.py
+COL.12m,Year ended {date},Geschäftsjahr zum {date},src/white_cliff/wording.py
+COL.6m,Six months ended {date},Sechs Monate zum {date},src/white_cliff/wording.py
+COL.9m,Nine months ended {date},Neun Monate zum {date},src/white_cliff/wording.py
+H1.prior_quarter,Prior quarter,Vorquartal,src/white_cliff/i18n.py; src/white_cliff/wording.py
+H1.same_quarter,Same quarter a year earlier,Gleiches Quartal ein Jahr zuvor,src/white_cliff/i18n.py; src/white_cliff/wording.py
+H1.same_ytd,Same {six|nine} months a year earlier,Gleiche {sechs|neun} Monate ein Jahr zuvor,src/white_cliff/wording.py
+H1.prior_year,Prior year,Vorjahr,src/white_cliff/i18n.py; src/white_cliff/wording.py
+S1.two,It {rose|fell} {pct} from the prior quarter and {rose|fell} {pct} from the same quarter a year earlier.,Der Wert {stieg|sank} um {pct} gegenüber dem Vorquartal und {stieg|sank} um {pct} gegenüber dem gleichen Quartal ein Jahr zuvor.,src/white_cliff/lexicon.py
+S1.ytd,It {rose|fell} {pct} from the same {six|nine} months a year earlier.,Der Wert {stieg|sank} um {pct} gegenüber den gleichen {sechs|neun} Monaten ein Jahr zuvor.,src/white_cliff/lexicon.py
+S1.10k,It {rose|fell} {pct} from the prior year.,Der Wert {stieg|sank} um {pct} gegenüber dem Vorjahr.,src/white_cliff/lexicon.py
+S1.unchanged,was unchanged from {period},blieb unverändert gegenüber dem {period},src/white_cliff/lexicon.py
+S1.m6,It {rose|fell} {pct} from the same quarter a year earlier.,Der Wert {stieg|sank} um {pct} gegenüber dem gleichen Quartal ein Jahr zuvor.,src/white_cliff/lexicon.py
+S1.period.prior_quarter,the prior quarter,dem Vorquartal,src/white_cliff/i18n.py; src/white_cliff/wording.py
+S1.period.same_quarter,the same quarter a year earlier,dem gleichen Quartal ein Jahr zuvor,src/white_cliff/i18n.py; src/white_cliff/wording.py
+S1.period.same_ytd,the same {six|nine} months a year earlier,den gleichen {sechs|neun} Monaten ein Jahr zuvor,src/white_cliff/wording.py
+S1.period.prior_year,the prior year,dem Vorjahr,src/white_cliff/i18n.py; src/white_cliff/wording.py
+UI.lang.en,English,English,src/white_cliff/lexicon.py; src/white_cliff/present.py
+UI.lang.de,Deutsch,Deutsch,src/white_cliff/lexicon.py; src/white_cliff/present.py
+UI.lang.aria,Language / Sprache,Language / Sprache,src/white_cliff/lexicon.py; src/white_cliff/present.py
+UI.appname,White Cliff,White Cliff,src/white_cliff/i18n.py; src/white_cliff/identity.py; src/white_cliff/strings.py
+UI.chart.alt,Bar chart.,Balkendiagramm.,src/white_cliff/i18n.py
+QCW.test.parts,parts add up to the total,Teilwerte ergeben zusammen die Summe,src/white_cliff/lexicon.py
+QCW.test.match,same figure matches in two places in the filing,derselbe Wert stimmt an zwei Stellen im Bericht überein,src/white_cliff/lexicon.py
+QCW.test.change,change from the prior period is larger than X%,Veränderung gegenüber dem Vorzeitraum ist größer als X Prozent,src/white_cliff/lexicon.py
+QCW.test.sign,sign differs from the prior period,Vorzeichen weicht vom Vorzeitraum ab,src/white_cliff/lexicon.py
+QCW.test.restated,figure restated from the earlier filing,Wert gegenüber dem früheren Bericht rückwirkend angepasst,src/white_cliff/lexicon.py
+QCW.result.1,matches,stimmt überein,src/white_cliff/lexicon.py
+QCW.result.2,does not match,stimmt nicht überein,src/white_cliff/lexicon.py
+QCW.result.3,differs by,weicht ab um,src/white_cliff/lexicon.py
+QCW.result.4,adds up,ergibt zusammen die Summe,src/white_cliff/lexicon.py
+QCW.result.5,does not add up,ergibt zusammen nicht die Summe,src/white_cliff/lexicon.py
+QCW.result.6,changed by,veränderte sich um,src/white_cliff/lexicon.py
+QCW.result.7,is larger/smaller than in [period],ist größer/kleiner als im [period],src/white_cliff/lexicon.py
+QCW.result.8,is outside the range of the last N periods in these filings,liegt außerhalb der Spanne der letzten N Zeiträume in diesen Berichten,src/white_cliff/lexicon.py
+QCW.result.9,was restated in [filing],wurde im [filing] rückwirkend angepasst,src/white_cliff/lexicon.py
+QCW.result.10,is consistent with [other figure in the filing],stimmt mit [other figure in the filing] überein,src/white_cliff/lexicon.py
+QCW.result.11,unusual for this company's own past filings,ungewöhnlich im Vergleich zu den eigenen früheren Berichten dieses Unternehmens,src/white_cliff/lexicon.py
+QCW.oc,"This can come from rounding, a change in accounting method, an acquisition or sale, a one-time item, or a restatement. The filing's notes may explain it.","Dies kann auf Rundung, eine Änderung der Bilanzierungsmethode, einen Unternehmenserwerb oder eine Veräußerung, einen einmaligen Posten oder eine rückwirkende Anpassung zurückgehen. Der Anhang des Berichts kann dies erläutern.",src/white_cliff/lexicon.py
+QCW.marker.matches,Check: matches,Abgleich: stimmt überein,src/white_cliff/lexicon.py
+QCW.marker.nomatch,Check: does not match,Abgleich: stimmt nicht überein,src/white_cliff/lexicon.py
+QCW.basis.fy,different fiscal year ends,unterschiedliche Enden des Geschäftsjahres,src/white_cliff/lexicon.py
+QCW.basis.ccy,different currencies,unterschiedliche Währungen,src/white_cliff/lexicon.py
+QCW.basis.restated,one figure is restated,ein Wert wurde rückwirkend angepasst,src/white_cliff/lexicon.py
+QCW.limit,"This check is arithmetic on the filing's own numbers. It does not say whether the numbers are right or wrong, and it is not an audit.","Dieser Abgleich ist eine Rechnung mit den eigenen Zahlen des Berichts. Er sagt nicht, ob die Zahlen richtig oder falsch sind, und er ist keine Abschlussprüfung.",src/white_cliff/lexicon.py
+QCW.report,Report an error,Fehler melden,src/white_cliff/i18n.py
+QCW.formula.example,"Revenue 2025 minus revenue 2024, divided by revenue 2024","Umsatz 2025 minus Umsatz 2024, geteilt durch Umsatz 2024",src/white_cliff/lexicon.py
+QCW.ex.1,Revenue rose 12.4% from 2024 to 2025 (from $X million to $Y million).,"Der Umsatz stieg von 2024 auf 2025 um 12,4 Prozent (von X Mio. USD auf Y Mio. USD).",src/white_cliff/lexicon.py
+QCW.ex.2,The segment figures add up to the reported total.,Die Segmentwerte ergeben zusammen die berichtete Summe.,src/white_cliff/lexicon.py
+QCW.ex.3,The segment figures do not add up to the reported total; they differ by $3 million. This can come from rounding...,Die Segmentwerte ergeben zusammen nicht die berichtete Summe; sie weichen um 3 Mio. USD ab. Dies kann auf Rundung …,src/white_cliff/lexicon.py
+QCW.ex.4,Operating cash flow was lower than net income in 2025.,Der operative Cashflow war 2025 niedriger als das Nettoergebnis.,src/white_cliff/lexicon.py
+QCW.ex.5,This figure was restated in the 10-K filed on [date]; the earlier filing showed $X million.,Dieser Wert wurde im am [date] eingereichten Bericht (10-K) rückwirkend angepasst; der frühere Bericht wies X Mio. USD aus.,src/white_cliff/lexicon.py
+QCW.ex.6,"Gross margin, 41.0%, is within the range of the company's last five annual filings (38.2%-42.5%).","Die Bruttomarge von 41,0 Prozent liegt innerhalb der Spanne der letzten fünf Jahresberichte des Unternehmens (38,2 bis 42,5 Prozent).",src/white_cliff/lexicon.py
+QCW.ex.7,Company A reported revenue of $X million and Company B $Y million for fiscal 2025. Their fiscal years end in different months.,Unternehmen A berichtete für das Geschäftsjahr 2025 einen Umsatz von X Mio. USD und Unternehmen B von Y Mio. USD. Ihre Geschäftsjahre enden in unterschiedlichen Monaten.,src/white_cliff/lexicon.py
+QCW.ex.8,The filing explains this change in Note 7.,Der Bericht erläutert diese Veränderung in Anhangangabe 7.,src/white_cliff/lexicon.py
+QCW.tap.example,Free cash flow is operating cash flow minus capital spending,Der freie Cashflow ist der operative Cashflow abzüglich der Investitionsausgaben,src/white_cliff/lexicon.py
+SEC_WHY,"The SEC asks programs that download filings from sec.gov to include a name and email with each request. White Cliff keeps yours only on this computer and sends them only to sec.gov, with each request. We never see them. You can change or erase them at any time.","Die SEC verlangt von Programmen, die Berichte von sec.gov herunterladen, bei jeder Anfrage einen Namen und eine E-Mail-Adresse mitzusenden. White Cliff speichert Ihre Angaben ausschließlich auf diesem Computer und sendet sie ausschließlich an sec.gov, mit jeder Anfrage. Wir sehen sie nie. Sie können sie jederzeit ändern oder löschen.",src/white_cliff/desktop_copy.py
+NO_INTERNET,White Cliff could not reach sec.gov. Check your internet connection and try again.,White Cliff konnte sec.gov nicht erreichen. Prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.,src/white_cliff/desktop_copy.py
+NO_MATCH,No company on the SEC list matches that.,Kein Unternehmen auf der SEC-Liste passt zu dieser Eingabe.,src/white_cliff/desktop_copy.py; src/white_cliff/present.py
+CLOSE_INTRO,No exact match. These names are on the SEC list.,Kein genauer Treffer. Diese Namen stehen auf der SEC-Liste.,src/white_cliff/desktop_copy.py
+SEVERAL,Several companies on the SEC list match. Pick one.,Mehrere Unternehmen auf der SEC-Liste passen. Wählen Sie eines aus.,src/white_cliff/desktop_copy.py
+NO_10KQ,That company has no 10-K or 10-Q on the SEC list.,Für dieses Unternehmen gibt es auf der SEC-Liste keinen Bericht 10-K oder 10-Q.,src/white_cliff/desktop_copy.py
+BUSY,sec.gov is busy. Wait a moment and try again.,sec.gov ist ausgelastet. Warten Sie einen Moment und versuchen Sie es erneut.,src/white_cliff/desktop_copy.py
+CANNOT_EXPLAIN,White Cliff cannot explain this filing.,White Cliff kann diesen Bericht nicht erklären.,src/white_cliff/desktop_copy.py
+ENTER_BOTH,Enter your name and a full email address.,Geben Sie Ihren Namen und eine vollständige E-Mail-Adresse ein.,src/white_cliff/desktop_copy.py
+SEC_ODD,sec.gov did not answer. Try again.,sec.gov hat nicht geantwortet. Versuchen Sie es erneut.,src/white_cliff/desktop_copy.py
+EMPTY_QUERY,Enter a company name or ticker.,Geben Sie einen Unternehmensnamen oder ein Tickersymbol ein.,src/white_cliff/desktop_copy.py
+ONLY_SEC,White Cliff only contacts sec.gov.,White Cliff kontaktiert ausschließlich sec.gov.,src/white_cliff/desktop_copy.py
+REFUSED,White Cliff did not accept that request.,White Cliff hat diese Anfrage nicht angenommen.,src/white_cliff/desktop_copy.py
+LOOKING,Looking this up…,Wird nachgeschlagen …,src/white_cliff/desktop_copy.py
+CLOSED,White Cliff has closed. Open it again to keep going.,"White Cliff wurde geschlossen. Öffnen Sie es erneut, um fortzufahren.",src/white_cliff/desktop_copy.py
+SEC_CERT,White Cliff could not confirm the connection to sec.gov. Try again.,White Cliff konnte die Verbindung zu sec.gov nicht bestätigen. Versuchen Sie es erneut.,src/white_cliff/desktop_copy.py
+SEC_REFUSED,sec.gov did not accept the name and email. Check them and try again.,sec.gov hat den Namen und die E-Mail-Adresse nicht angenommen. Prüfen Sie die Angaben und versuchen Sie es erneut.,src/white_cliff/desktop_copy.py
+PR.report_10q,Quarterly report for the three months ended {date}.,Quartalsbericht für die drei Monate zum {date}.,src/white_cliff/present.py
+PR.report_10q_nodate,Quarterly report.,Quartalsbericht.,src/white_cliff/present.py
+PR.report_10k,Annual report for the year ended {date}.,Jahresbericht für das Geschäftsjahr zum {date}.,src/white_cliff/present.py
+PR.report_10k_nodate,Annual report.,Jahresbericht.,src/white_cliff/present.py
+PR.report_other,Report for the period ended {date}.,Bericht für den Zeitraum zum {date}.,src/white_cliff/present.py
+UI.filing_link,The filing,Der Bericht,src/white_cliff/i18n.py
+UI.pick_fallback,A company on the SEC list,Ein Unternehmen auf der SEC-Liste,src/white_cliff/i18n.py
+UI.change_identity,Change my name and email,Meinen Namen und meine E-Mail-Adresse ändern,src/white_cliff/i18n.py
+UI.query_label,Company name or ticker,Unternehmensname oder Tickersymbol,src/white_cliff/i18n.py
+UI.explain,Explain,Erklären,src/white_cliff/i18n.py
+UI.name_label,Your name,Ihr Name,src/white_cliff/i18n.py
+UI.email_label,Your email,Ihre E-Mail-Adresse,src/white_cliff/i18n.py
+UI.save,Save,Speichern,src/white_cliff/i18n.py
+UI.erase,Erase,Löschen,src/white_cliff/i18n.py
+UI.refusal,This filing has no tagged figures that White Cliff can explain.,"Dieser Bericht enthält keine mit XBRL gekennzeichneten Werte, die White Cliff erklären kann.",src/white_cliff/lexicon.py
+UI.filer,the filer,das einreichende Unternehmen,src/white_cliff/lexicon.py
+UI.filer_hover,Filer on EDGAR,Einreichendes Unternehmen auf EDGAR,src/white_cliff/lexicon.py
+UI.sic,SEC industry (SIC NNNN): <SEC title>,SEC-Branche (SIC NNNN): <SEC title>,src/white_cliff/lexicon.py
+UI.howto,Opening White Cliff again opens the page that is already running. The page closes after 30 minutes with no use.,"Wenn Sie White Cliff erneut öffnen, öffnet sich die bereits laufende Seite. Die Seite schließt sich nach 30 Minuten ohne Nutzung.",src/white_cliff/lexicon.py
+UI.draft_tag,Draft tag,Entwurf,src/white_cliff/lexicon.py
+UI.chart.aria,"Bar chart. {caption}: {value}; Prior quarter, {caption}: {value}; …","Balkendiagramm. {caption}: {value}; Vorquartal, {caption}: {value}; …",src/white_cliff/lexicon.py
+ST.income,Income statement,Gewinn- und Verlustrechnung,src/white_cliff/wording.py
+ST.balance,Balance sheet,Bilanz,src/white_cliff/wording.py
+ST.cashflow,Cash flows,Kapitalflussrechnung,src/white_cliff/wording.py
+ST.equity,Equity,Eigenkapital,src/white_cliff/wording.py
+ST.document,Document,Dokument,src/white_cliff/wording.py
+ST.s.income,Income statement,Gewinn- und Verlustrechnung,src/white_cliff/wording.py
+ST.s.balance,Balance sheet,Bilanz,src/white_cliff/wording.py
+ST.s.cashflow,Cash flows,Kapitalflussrechnung,src/white_cliff/wording.py
+ST.s.equity,Equity,Eigenkapitalveränderungsrechnung,src/white_cliff/wording.py
+ST.chip,"Cash flows, <period>","Kapitalflussrechnung, <period>",src/white_cliff/lexicon.py
+LBL.revenue,Revenue,Umsatz,src/white_cliff/wording.py
+LBL.revenue_contract,Revenue from contracts with customers,Umsatzerlöse aus Verträgen mit Kunden,src/white_cliff/wording.py
+LBL.gross_profit,Gross profit,Bruttoergebnis,src/white_cliff/wording.py
+LBL.operating_income,Operating income,Betriebsergebnis,src/white_cliff/wording.py
+LBL.net_income,Net income attributable to the company,Auf das Unternehmen entfallendes Nettoergebnis,src/white_cliff/wording.py
+LBL.ocf,Operating cash flow,Operativer Cashflow,src/white_cliff/lexicon.py
+LBL.ocf_ytd,Operating cash flow for the year to date,Operativer Cashflow seit Beginn des Geschäftsjahres,src/white_cliff/present.py
+LBL.cash,Cash and cash equivalents,Zahlungsmittel und Zahlungsmitteläquivalente,src/white_cliff/wording.py
+LBL.shares_basic,The basic average share count,Durchschnittliche Anzahl der Aktien (unverwässert),src/white_cliff/lexicon.py
+LBL.shares_out,Common shares outstanding at the period end,Ausstehende Stammaktien zum Periodenende,src/white_cliff/lexicon.py
+LBL.shares_end,The share count at the period end,Anzahl der Aktien zum Periodenende,src/white_cliff/lexicon.py
+LBL.debt,"Long-term debt, including current maturities",Langfristige Finanzschulden einschließlich kurzfristig fälliger Anteile,src/white_cliff/wording.py
+LBL.debt_noncurrent,"Long-term debt, excluding current portion",Langfristige Finanzschulden ohne kurzfristig fälligen Anteil,src/white_cliff/wording.py
+LBL.debt_lease,"Long-term debt and finance lease obligations, excluding current portion",Langfristige Finanzschulden und Verbindlichkeiten aus Finanzierungsleasing ohne kurzfristig fälligen Anteil,src/white_cliff/wording.py
+LBL.debt_lease_incl,"Long-term debt and finance lease obligations, including current maturities",Langfristige Finanzschulden und Verbindlichkeiten aus Finanzierungsleasing einschließlich kurzfristig fälliger Anteile,src/white_cliff/wording.py
+LBL.net_debt,{debt_label} minus cash and cash equivalents,{debt_label} abzüglich Zahlungsmittel und Zahlungsmitteläquivalente,src/white_cliff/present.py; src/white_cliff/wording.py
+LBL.gross_margin,The gross margin (gross profit / revenue),Bruttomarge (Bruttoergebnis / Umsatz),src/white_cliff/present.py; src/white_cliff/wording.py
+LBL.operating_margin,The operating margin (operating income / revenue),Operative Marge (Betriebsergebnis / Umsatz),src/white_cliff/present.py; src/white_cliff/wording.py
+LBL.net_margin,The net margin (net income attributable to the company / revenue),Nettomarge (auf das Unternehmen entfallendes Nettoergebnis / Umsatz),src/white_cliff/present.py; src/white_cliff/wording.py
+LBL.yoy,The year over year change in revenue,Veränderung des Umsatzes gegenüber dem Vorjahreszeitraum,src/white_cliff/present.py
+LBL.diluted_shares,Diluted shares,Verwässerte Aktienzahl,src/white_cliff/wording.py
+LBL.income_tax,Income tax,Ertragsteuer,src/white_cliff/wording.py
+LBL.accounts_receivable,Accounts receivable,Forderungen aus Lieferungen und Leistungen,src/white_cliff/wording.py
+U1.lead,You do this once. The SEC is the US government agency that publishes company reports on sec.gov. It asks for a name and email; they stay on this computer and go only to sec.gov.,"Dieser Schritt ist einmalig. Die SEC ist die US-Behörde, die Unternehmensberichte auf sec.gov veröffentlicht. Sie verlangt einen Namen und eine E-Mail-Adresse; diese bleiben auf diesem Computer und gehen ausschließlich an sec.gov.",src/white_cliff/present.py
+U2.placeholder,e.g. Apple or AAPL,z. B. Apple oder AAPL,src/white_cliff/present.py
+U4.next,"White Cliff looks for the company on the SEC list. Check the spelling, or try the full company name or its ticker.",White Cliff sucht das Unternehmen auf der SEC-Liste. Prüfen Sie die Schreibweise oder versuchen Sie es mit dem vollständigen Unternehmensnamen oder dem Tickersymbol.,src/white_cliff/present.py
+U8.lbl.gross_margin,Gross margin: gross profit as a percent of revenue,Bruttomarge: Bruttoergebnis in Prozent des Umsatzes,src/white_cliff/present.py; src/white_cliff/wording.py
+U8.lbl.operating_margin,Operating margin: operating income as a percent of revenue,Operative Marge: Betriebsergebnis in Prozent des Umsatzes,src/white_cliff/present.py; src/white_cliff/wording.py
+U8.lbl.net_margin,Net margin: net income attributable to the company as a percent of revenue,Nettomarge: auf das Unternehmen entfallendes Nettoergebnis in Prozent des Umsatzes,src/white_cliff/present.py; src/white_cliff/wording.py
+U8.line.two,It {rose|fell} {pp} from the prior quarter and {rose|fell} {pp} from the same quarter a year earlier.,Der Wert {stieg|sank} um {pp} gegenüber dem Vorquartal und {stieg|sank} um {pp} gegenüber dem gleichen Quartal ein Jahr zuvor.,src/white_cliff/lexicon.py
+U8.line.ytd,It {rose|fell} {pp} from the same {six|nine} months a year earlier.,Der Wert {stieg|sank} um {pp} gegenüber den gleichen {sechs|neun} Monaten ein Jahr zuvor.,src/white_cliff/lexicon.py
+U8.line.10k,It {rose|fell} {pp} from the prior year.,Der Wert {stieg|sank} um {pp} gegenüber dem Vorjahr.,src/white_cliff/lexicon.py
+U8.line.m6,It {rose|fell} {pp} from the same quarter a year earlier.,Der Wert {stieg|sank} um {pp} gegenüber dem gleichen Quartal ein Jahr zuvor.,src/white_cliff/lexicon.py
+U8.unchanged,was unchanged from {period},blieb unverändert gegenüber dem {period},src/white_cliff/lexicon.py
+U9.lbl.net_debt,Debt minus cash,Finanzschulden abzüglich Zahlungsmittel,src/white_cliff/present.py
+U9.neg,A figure below zero means cash was larger than debt.,"Ein Wert unter null bedeutet, dass die Zahlungsmittel höher waren als die Finanzschulden.",src/white_cliff/wording.py
+U10.heading,Checks on the company's own numbers,Abgleiche der eigenen Zahlen des Unternehmens,src/white_cliff/wording.py
+U10.marker.marked,Check: marked,Abgleich: markiert,src/white_cliff/wording.py
+U10.marker.notmarked,Check: not marked,Abgleich: nicht markiert,src/white_cliff/wording.py
+U10.marker.notrun,Check: not run: {plain reason},Abgleich: nicht durchgeführt: {plain reason},src/white_cliff/wording.py
+U10.h.C1,Profit and operating cash flow,Ergebnis und operativer Cashflow,src/white_cliff/lexicon.py
+U10.h.C2,Receivables and revenue,Forderungen und Umsatz,src/white_cliff/lexicon.py
+U10.h.C3,Inventory and cost of sales,Vorräte und Umsatzkosten,src/white_cliff/lexicon.py
+U10.h.C4,"Items tagged as restructuring, impairment, disposal or acquisition costs","Als Restrukturierung, Wertminderung, Abgang oder Erwerbskosten gekennzeichnete Posten",src/white_cliff/lexicon.py
+U10.h.C6,Diluted and basic shares,Verwässerte und unverwässerte Aktienzahl,src/white_cliff/lexicon.py
+U10.h.C7,Gross margin and operating margin,Bruttomarge und operative Marge,src/white_cliff/lexicon.py
+U10.h.C8,Income tax and income before tax,Ertragsteuer und Ergebnis vor Steuern,src/white_cliff/lexicon.py
+U10.C1.oc,"A gap can come from when customers pay, building up inventory, large gains that brought in no cash, or when taxes and suppliers are paid. The filing's cash flow statement and notes may explain it.","Ein Unterschied kann darauf zurückgehen, wann Kunden zahlen, auf den Aufbau von Vorräten, auf hohe Erträge ohne Zahlungseingang oder darauf, wann Steuern und Lieferanten bezahlt werden. Die Kapitalflussrechnung und der Anhang des Berichts können dies erläutern.",src/white_cliff/wording.py
+U10.C8.numbers,"Income tax was {rate_t} percent of income before tax in {period} and {rate_p} percent in {period_prior}, a change of {d} percentage points.","Die Ertragsteuer lag bei {rate_t} Prozent des Ergebnisses vor Steuern im {period} und bei {rate_p} Prozent im {period_prior}, eine Veränderung um {d} Prozentpunkte.",src/white_cliff/wording.py
+PRINT.button,Print summary,Zusammenfassung drucken,src/white_cliff/present.py
+PRINT.sources,Sources on sec.gov,Quellen auf sec.gov,src/white_cliff/present.py
+DE.month.01,January,Januar,src/white_cliff/german.py
+DE.month.02,February,Februar,src/white_cliff/german.py
+DE.month.03,March,März,src/white_cliff/german.py
+DE.month.04,April,April,src/white_cliff/german.py
+DE.month.05,May,Mai,src/white_cliff/german.py
+DE.month.06,June,Juni,src/white_cliff/german.py
+DE.month.07,July,Juli,src/white_cliff/german.py
+DE.month.08,August,August,src/white_cliff/german.py
+DE.month.09,September,September,src/white_cliff/german.py
+DE.month.10,October,Oktober,src/white_cliff/german.py
+DE.month.11,November,November,src/white_cliff/german.py
+DE.month.12,December,Dezember,src/white_cliff/german.py
+DE.scale.millions,millions,Mio.,src/white_cliff/german.py
+DE.scale.thousands,thousands,Tsd.,src/white_cliff/german.py
+DE.scale.billions,billions,Mrd.,src/white_cliff/german.py
+DE.unit.percent,percent,Prozent,src/white_cliff/german.py
+DE.unit.percentage_points,percentage points,Prozentpunkte,src/white_cliff/german.py
+DE.unit.per_share,per share,je Aktie,src/white_cliff/german.py
+DE.unit.shares,shares,Aktien,src/white_cliff/german.py
+src/white_cliff/wording.py:1132,It was unchanged from,Der Wert blieb unverändert gegenüber,src/white_cliff/wording.py:1132

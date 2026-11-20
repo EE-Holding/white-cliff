@@ -61,7 +61,11 @@ def test_site_needs_no_user_agent(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert code == 0
     assert MESSAGE not in captured.err
-    expected = sorted(path.relative_to(ROOT / "docs") for path in (ROOT / "docs").rglob("*") if path.is_file())
+    expected = sorted(
+        path.relative_to(ROOT / "docs")
+        for path in (ROOT / "docs").rglob("*")
+        if path.is_file() and path.name != "de-review.csv"
+    )
     actual = sorted(path.relative_to(output) for path in output.rglob("*") if path.is_file())
     assert actual == expected
     for rel in expected:
