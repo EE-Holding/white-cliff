@@ -157,6 +157,109 @@ def check_percent_notes(page: str) -> dict[str, int]:
     return {"noted": noted, "single": single}
 
 
+def _parse_figure(text: str, *, german: bool) -> Decimal | None:
+    """The face number in an amount or a percent, without its unit word."""
+    cleaned = (
+        html.unescape(text)
+        .replace("\u00a0", " ")
+        .replace("\u2212", "-")
+        .replace("$", "")
+    )
+    match = re.search(r"-?\d[\d.,]*", cleaned)
+    if match is None:
+        return None
+    token = match.group(0)
+    if german:
+        token = token.replace(".", "").replace(",", ".")
+    else:
+        token = token.replace(",", "")
+    if token in {"", "-", ".", "-."}:
+        return None
+    return Decimal(token)
+
+
+def percent_mismatches(page: str) -> list[dict[str, str]]:
+    """Recompute each noted percent from its two linked amounts.
+
+    The change from the later amount to the earlier one, divided by the earlier
+    amount, has to equal the percent on the page. A different figure is WRONG.
+    """
+    from white_cliff.compare import percent_change
+
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in re.finditer(r'<a class="pct" href="([^"]+)">([^<]*)</a>', page):
+        href = html.unescape(match.group(1))
+        text = html.unescape(match.group(2))
+        folded = text.casefold()
+        if "percent" not in folded and "prozent" not in folded:
+            continue
+        if "percentage point" in folded or "prozentpunkt" in folded:
+            continue
+        if not href.startswith("#pct-"):
+            continue
+        note_id = href[1:]
+        if note_id in seen:
+            continue
+        seen.add(note_id)
+        note = re.search(
+            rf'<p class="pct-note" id="{re.escape(note_id)}">(.*?)</p>', page, re.S
+        )
+        if note is None:
+            continue
+        german = note.group(1).lstrip().startswith("Berechnet")
+        amounts = [
+            html.unescape(item)
+            for item in re.findall(
+                r'<a href="https://www\.sec\.gov/[^"]*"[^>]*>([^<]*)</a>', note.group(1)
+            )
+        ]
+        before = re.sub(r"<[^>]+>", " ", page[max(0, match.start() - 200) : match.start()]).casefold()
+        nearest = ""
+        nearest_at = -1
+        for token in ("stiegen", "sanken", "stieg", "sank", "rose", "fell"):
+            at = before.rfind(token)
+            if at > nearest_at:
+                nearest_at = at
+                nearest = token
+        shown = _parse_figure(text, german=german)
+        current = _parse_figure(amounts[0], german=german) if len(amounts) > 0 else None
+        prior = _parse_figure(amounts[1], german=german) if len(amounts) > 1 else None
+        recomputed = (
+            percent_change(current, prior)
+            if current is not None and prior is not None
+            else None
+        )
+        rose = nearest in {"rose", "stieg", "stiegen"}
+        fell = nearest in {"fell", "sank", "sanken"}
+        agrees = (
+            recomputed is not None
+            and shown is not None
+            and abs(recomputed) == abs(shown)
+            and not (rose and recomputed <= 0)
+            and not (fell and recomputed >= 0)
+        )
+        if agrees:
+            continue
+        plain = re.sub(r"<[^>]+>", " ", html.unescape(note.group(1)))
+        plain = re.sub(r"\s+", " ", plain)
+        period = ""
+        english = re.search(r"from (.+?) to (.+?), divided", plain)
+        deutsch = re.search(r"von (.+?) zu (.+?), geteilt", plain)
+        if english:
+            period = f"{english.group(2)} vs {english.group(1)}"
+        elif deutsch:
+            period = f"{deutsch.group(2)} vs {deutsch.group(1)}"
+        rows.append(
+            {
+                "shown": re.sub(r"\s+", " ", text).strip(),
+                "recomputed": "" if recomputed is None else format(recomputed, "f"),
+                "period": period,
+            }
+        )
+    return rows
+
+
 def shown_ids(markdown: str) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -204,6 +307,14 @@ def render_summary(report: dict) -> str:
         f"Percents with both inputs: {report.get('percents_noted', 0)}",
         f"Percents removed: {report.get('percents_removed', 0)}",
         f"Percents linked to one input: {report.get('percents_single', 0)}",
+        "Percent recomputes that disagree: "
+        + str(
+            sum(
+                1
+                for row in report.get("wrong_rows") or []
+                if row.get("concept") == "percent"
+            )
+        ),
         "",
         "## WRONG",
         "",
@@ -503,6 +614,16 @@ def explain_one(client: EdgarClient, item: dict[str, str], index: dict) -> dict:
     record["percents_noted"] = noted
     record["percents_removed"] = removed
     record["percents_single"] = checked["single"]
+    for mismatch in percent_mismatches(page):
+        record["wrong"] += 1
+        record["wrong_rows"].append(
+            {
+                "concept": "percent",
+                "period": mismatch["period"],
+                "shown": mismatch["shown"],
+                "xbrl": mismatch["recomputed"],
+            }
+        )
     return record
 
 

@@ -22,8 +22,9 @@ Review list: 0
 Percents with both inputs: 352
 Percents removed: 0
 Percents linked to one input: 0
+Percent recomputes that disagree: 0
 
-Covered filings are 20 from MMM and 4 each from AAPL, JPM, BAC, WMT, NVDA, JNJ, MSFT, and KO. Margins, the year-over-year change, and net debt are NOT_COMPARABLE because they have no company-facts concept. On those 52 filings, 352 percents carry the full note for both inputs. None were removed.
+Covered filings are 20 from MMM and 4 each from AAPL, JPM, BAC, WMT, NVDA, JNJ, MSFT, and KO. Margins, the year-over-year change, and net debt are NOT_COMPARABLE because they have no company-facts concept. On those 52 filings, 352 percents carry the full note for both inputs. The harness recomputed each one from the two amounts linked in its note. None disagreed, and none were removed.
 
 ## WRONG
 

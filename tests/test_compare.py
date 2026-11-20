@@ -1,5 +1,6 @@
 """Comparison math: percent rules, prior-quarter selection, and pinned figures."""
 
+import html
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -682,3 +683,36 @@ def test_a_percent_without_two_filing_links_is_removed():
     noted, removed = take_percent_note_counts()
     assert noted == 0
     assert removed >= 1
+
+
+def test_the_note_uses_the_values_the_percent_was_computed_from():
+    """The amount in the note is the table value that was divided, not another reading of the fact."""
+    from white_cliff.wording import fact_href
+
+    current = make_fact("110", fact_id="samecur", end="2026-07-26", start="2026-04-27")
+    prior_fact = make_fact("50", fact_id="sameold", end="2026-04-26", start="2026-01-26")
+    prior = Cell(
+        True,
+        value=Decimal("100"),
+        unit=prior_fact.unit,
+        period_end=prior_fact.period.end or "",
+        period_start=prior_fact.period.start,
+        kind=prior_fact.period.kind,
+        fact=prior_fact,
+    )
+    face, lines = _comparison_block(
+        "revenue", current, prior, None, "money", "quarterly report", "2026-08-01"
+    )
+    note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', face + lines, flags=re.S)
+    assert note is not None
+    links = [
+        (html.unescape(href), label)
+        for href, label in re.findall(r'<a href="([^"]+)">([^<]+)</a>', note.group(1))
+    ]
+    assert len(links) == 2
+    assert "110" in links[0][1]
+    assert "100" in links[1][1]
+    assert "50" not in links[1][1]
+    assert links[0][0] == fact_href(current)
+    assert links[1][0] == fact_href(prior_fact)
+    assert links[1][0].startswith("https://www.sec.gov/")

@@ -142,6 +142,10 @@ def test_the_percent_note_is_on_the_screen_and_in_the_print():
     printed = _printed(page).text()
     assert "It is calculated as the change from " in printed
     assert "divided by the " in printed
+    from tests.test_full_index import _harness
+
+    harness = _harness()
+    assert harness.percent_mismatches(page) == []
     from white_cliff.i18n import using
 
     with using("de"):
@@ -167,6 +171,7 @@ def test_the_percent_note_is_on_the_screen_and_in_the_print():
     assert len(german_links) == 2
     assert len(set(html.unescape(item) for item in german_links)) == 2
     assert "Berechnet als Veränderung von " in _printed(german).text()
+    assert harness.percent_mismatches(german) == []
 
 
 def test_the_disclaimer_is_the_first_printed_text_above_any_number():

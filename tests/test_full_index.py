@@ -168,6 +168,7 @@ def test_summary_opens_with_the_disclaimer_and_lists_wrong_rows():
     assert "Percents with both inputs: 0" in text
     assert "Percents removed: 0" in text
     assert "Percents linked to one input: 0" in text
+    assert "Percent recomputes that disagree: 0" in text
     assert "@" not in text
 
 
@@ -193,3 +194,30 @@ def test_the_harness_checks_both_inputs_of_every_percent():
         "for July 26, 2026 and Revenue of 100 USD for April 26, 2026.</p>"
     )
     assert harness.check_percent_notes(one_link)["single"] == 1
+
+
+def test_a_percent_that_does_not_recompute_from_its_linked_inputs_is_wrong():
+    harness = _harness()
+    bad = (
+        '<p>It rose <a class="pct" href="#pct-bad">10.0 percent</a>.</p>'
+        '<p class="pct-note" id="pct-bad">It is calculated as the change from '
+        "April 26, 2026 to July 26, 2026, divided by the April 26, 2026 figure, using "
+        'Revenue of <a href="https://www.sec.gov/Archives/edgar/data/1/a.htm">200 USD</a> '
+        "for July 26, 2026 and Revenue of "
+        '<a href="https://www.sec.gov/Archives/edgar/data/1/b.htm">100 USD</a> '
+        "for April 26, 2026.</p>"
+    )
+    rows = harness.percent_mismatches(bad)
+    assert len(rows) == 1
+    assert rows[0]["shown"] == "10.0 percent"
+    assert rows[0]["recomputed"] == "100.0"
+    fell = (
+        '<p>It fell <a class="pct" href="#pct-fell">50.0 percent</a>.</p>'
+        '<p class="pct-note" id="pct-fell">It is calculated as the change from '
+        "April 26, 2026 to July 26, 2026, divided by the April 26, 2026 figure, using "
+        'Revenue of <a href="https://www.sec.gov/Archives/edgar/data/1/a.htm">100 USD</a> '
+        "for July 26, 2026 and Revenue of "
+        '<a href="https://www.sec.gov/Archives/edgar/data/1/b.htm">200 USD</a> '
+        "for April 26, 2026.</p>"
+    )
+    assert harness.percent_mismatches(fell) == []

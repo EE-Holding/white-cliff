@@ -511,8 +511,10 @@ def _percent_fields(label: str, current: Cell, prior: Cell, display: str) -> dic
         return None
     if current_href == prior_href:
         return None
-    current_shown = show_measure(current.fact.value, current.fact.unit)
-    prior_shown = show_measure(prior.fact.value, prior.fact.unit)
+    if current.value is None or prior.value is None:
+        return None
+    current_shown = show_measure(current.value, current.unit)
+    prior_shown = show_measure(prior.value, prior.unit)
     if not current_shown or not prior_shown:
         return None
     return {
