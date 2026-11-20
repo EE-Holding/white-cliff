@@ -230,14 +230,14 @@ def test_left_edges_match_and_the_search_is_wide(tmp_path):
 
 def test_the_narrow_search_input_is_one_line_tall():
     narrow = _style().split("@media (max-width: 480px)", 1)[1].split("@media", 1)[0]
-    rule = narrow.split("form.search input", 1)[1].split("}", 1)[0]
+    rule = narrow.split("body.result form.search input {", 1)[1].split("}", 1)[0]
     assert "flex: 0 0 auto" in rule
     assert "width: 100%" in rule
     assert "min-width: 0" in rule
     assert "height: 48px" in rule
 
 
-def test_the_narrow_search_input_is_48px_tall(tmp_path):
+def test_the_420px_search_input_is_48px_and_full_width(tmp_path):
     from tests.test_desktop_app import _chrome_binary, _chrome_page, _eval
 
     binary = _chrome_binary()
@@ -260,11 +260,25 @@ def test_the_narrow_search_input_is_48px_tall(tmp_path):
                 break
             time.sleep(0.05)
         box = _eval(page, """(() => {
-          const input = document.querySelector('#query').getBoundingClientRect();
-          return {height: input.height, width: input.width};
+          const input = document.querySelector('#query');
+          const shown = input.getBoundingClientRect();
+          const row = input.parentElement.getBoundingClientRect();
+          const style = getComputedStyle(input);
+          return {
+            viewport: window.innerWidth,
+            height: shown.height,
+            width: shown.width,
+            row: row.width,
+            minWidth: style.minWidth,
+            flexBasis: style.flexBasis
+          };
         })()""")
+        assert box["viewport"] == 420
+        # A 360px minimum on the result search makes this field about 360 tall.
         assert abs(box["height"] - 48) <= 2
-        assert box["width"] > 300
+        assert abs(box["width"] - box["row"]) <= 1
+        assert box["minWidth"] == "0px"
+        assert box["flexBasis"] != "360px"
     finally:
         page.close()
         chrome.kill()
