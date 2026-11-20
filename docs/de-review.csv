@@ -84,9 +84,12 @@ C2C3.notrun.10q,Needs the annual report.,Benötigt den Jahresbericht.,src/white_
 C2.notrun,The earlier receivables or revenue figure is zero or less.,Der frühere Wert der Forderungen oder des Umsatzes ist null oder kleiner.,src/white_cliff/lexicon.py
 C3.notrun.none,This company reports no inventory.,Dieses Unternehmen weist keine Vorräte aus.,src/white_cliff/lexicon.py
 C3.notrun.zero,The earlier inventory figure is zero or less.,Der frühere Wert der Vorräte ist null oder kleiner.,src/white_cliff/lexicon.py
+C3.notrun.revenue,The earlier revenue figure is zero or less.,¤,src/white_cliff/lexicon.py
+C3.notrun.cost,The earlier cost of sales figure is zero or less.,¤,src/white_cliff/lexicon.py
 C4.notrun.none,No one-off items are tagged.,Es sind keine einmaligen Posten gekennzeichnet.,src/white_cliff/lexicon.py
 C4.notrun.zero,Operating income is zero.,Das Betriebsergebnis ist null.,src/white_cliff/lexicon.py
 C6.notrun,The earlier diluted share count is not available.,Die frühere verwässerte Aktienzahl ist nicht verfügbar.,src/white_cliff/lexicon.py
+C6.notrun.basic,The basic share count is zero or less.,¤,src/white_cliff/lexicon.py
 C7.notrun.rev,Revenue is zero or less in one of the periods.,Der Umsatz ist in einem der Zeiträume null oder kleiner.,src/white_cliff/lexicon.py
 C7.notrun.gm,The filing reports no gross profit or cost of sales.,Der Bericht weist weder ein Bruttoergebnis noch Umsatzkosten aus.,src/white_cliff/lexicon.py
 C8.notrun,A tax rate isn't meaningful on a pre-tax loss.,Bei einem Verlust vor Steuern ist ein Steuersatz nicht aussagekräftig.,src/white_cliff/lexicon.py
@@ -251,7 +254,7 @@ LBL.revenue_contract,Revenue from contracts with customers,Umsatzerlöse aus Ver
 LBL.gross_profit,Gross profit,Bruttoergebnis,src/white_cliff/wording.py
 LBL.operating_income,Operating income,Betriebsergebnis,src/white_cliff/wording.py
 LBL.net_income,Net income attributable to the company,Auf das Unternehmen entfallendes Nettoergebnis,src/white_cliff/wording.py
-LBL.ocf,Operating cash flow,Operativer Cashflow,src/white_cliff/lexicon.py
+LBL.ocf,Operating cash flow,Operativer Cashflow,src/white_cliff/wording.py
 LBL.ocf_ytd,Operating cash flow for the year to date,Operativer Cashflow seit Beginn des Geschäftsjahres,src/white_cliff/present.py
 LBL.cash,Cash and cash equivalents,Zahlungsmittel und Zahlungsmitteläquivalente,src/white_cliff/wording.py
 LBL.shares_basic,The basic average share count,Durchschnittliche Anzahl der Aktien (unverwässert),src/white_cliff/lexicon.py
@@ -269,6 +272,10 @@ LBL.yoy,The year over year change in revenue,Veränderung des Umsatzes gegenübe
 LBL.diluted_shares,Diluted shares,Verwässerte Aktienzahl,src/white_cliff/wording.py
 LBL.income_tax,Income tax,Ertragsteuer,src/white_cliff/wording.py
 LBL.accounts_receivable,Accounts receivable,Forderungen aus Lieferungen und Leistungen,src/white_cliff/wording.py
+LBL.inventory,Inventory,¤,src/white_cliff/wording.py
+LBL.cost_of_sales,Cost of sales,¤,src/white_cliff/wording.py
+LBL.basic_shares,Basic shares,¤,src/white_cliff/wording.py
+LBL.pretax,Pre-tax income,¤,src/white_cliff/wording.py
 U1.lead,You do this once. The SEC is the US government agency that publishes company reports on sec.gov. It asks for a name and email; they stay on this computer and go only to sec.gov.,"Dieser Schritt ist einmalig. Die SEC ist die US-Behörde, die Unternehmensberichte auf sec.gov veröffentlicht. Sie verlangt einen Namen und eine E-Mail-Adresse; diese bleiben auf diesem Computer und gehen ausschließlich an sec.gov.",src/white_cliff/present.py
 U2.placeholder,e.g. Apple or AAPL,z. B. Apple oder AAPL,src/white_cliff/present.py
 U4.next,"White Cliff looks for the company on the SEC list. Check the spelling, or try the full company name or its ticker.",White Cliff sucht das Unternehmen auf der SEC-Liste. Prüfen Sie die Schreibweise oder versuchen Sie es mit dem vollständigen Unternehmensnamen oder dem Tickersymbol.,src/white_cliff/present.py

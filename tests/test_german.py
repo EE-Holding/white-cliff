@@ -50,7 +50,7 @@ def _names(text: str) -> list[str]:
 
 
 def test_each_english_id_has_one_german_string():
-    assert len(STRINGS) == 298
+    assert len(STRINGS) == 305
     assert len(SUPERSEDED) == 25
     for ident, (english, deutsch) in STRINGS.items():
         assert english

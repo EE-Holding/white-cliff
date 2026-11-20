@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# German for this line is not recorded. The page leaves that line out.
+UNREVIEWED = "¤"
+
 STRINGS: dict[str, tuple[str, str]] = {
     '§1.DISCLAIMER': ('This tool explains the numbers in a public company filing. It does not recommend buying, selling or holding any security, and it is not investment advice.', 'Dieses Werkzeug erklärt die Zahlen im Bericht eines börsennotierten Unternehmens. Es empfiehlt weder den Kauf noch den Verkauf noch das Halten eines Wertpapiers und ist keine Anlageberatung.'),
     'S0.dir.rose': ('rose', 'stieg'),
@@ -88,9 +91,12 @@ STRINGS: dict[str, tuple[str, str]] = {
     'C2.notrun': ('The earlier receivables or revenue figure is zero or less.', 'Der frühere Wert der Forderungen oder des Umsatzes ist null oder kleiner.'),
     'C3.notrun.none': ('This company reports no inventory.', 'Dieses Unternehmen weist keine Vorräte aus.'),
     'C3.notrun.zero': ('The earlier inventory figure is zero or less.', 'Der frühere Wert der Vorräte ist null oder kleiner.'),
+    'C3.notrun.revenue': ('The earlier revenue figure is zero or less.', UNREVIEWED),
+    'C3.notrun.cost': ('The earlier cost of sales figure is zero or less.', UNREVIEWED),
     'C4.notrun.none': ('No one-off items are tagged.', 'Es sind keine einmaligen Posten gekennzeichnet.'),
     'C4.notrun.zero': ('Operating income is zero.', 'Das Betriebsergebnis ist null.'),
     'C6.notrun': ('The earlier diluted share count is not available.', 'Die frühere verwässerte Aktienzahl ist nicht verfügbar.'),
+    'C6.notrun.basic': ('The basic share count is zero or less.', UNREVIEWED),
     'C7.notrun.rev': ('Revenue is zero or less in one of the periods.', 'Der Umsatz ist in einem der Zeiträume null oder kleiner.'),
     'C7.notrun.gm': ('The filing reports no gross profit or cost of sales.', 'Der Bericht weist weder ein Bruttoergebnis noch Umsatzkosten aus.'),
     'C8.notrun': ("A tax rate isn't meaningful on a pre-tax loss.", 'Bei einem Verlust vor Steuern ist ein Steuersatz nicht aussagekräftig.'),
@@ -273,6 +279,10 @@ STRINGS: dict[str, tuple[str, str]] = {
     'LBL.diluted_shares': ('Diluted shares', 'Verwässerte Aktienzahl'),
     'LBL.income_tax': ('Income tax', 'Ertragsteuer'),
     'LBL.accounts_receivable': ('Accounts receivable', 'Forderungen aus Lieferungen und Leistungen'),
+    'LBL.inventory': ('Inventory', UNREVIEWED),
+    'LBL.cost_of_sales': ('Cost of sales', UNREVIEWED),
+    'LBL.basic_shares': ('Basic shares', UNREVIEWED),
+    'LBL.pretax': ('Pre-tax income', UNREVIEWED),
     'U1.lead': ('You do this once. The SEC is the US government agency that publishes company reports on sec.gov. It asks for a name and email; they stay on this computer and go only to sec.gov.', 'Dieser Schritt ist einmalig. Die SEC ist die US-Behörde, die Unternehmensberichte auf sec.gov veröffentlicht. Sie verlangt einen Namen und eine E-Mail-Adresse; diese bleiben auf diesem Computer und gehen ausschließlich an sec.gov.'),
     'U2.placeholder': ('e.g. Apple or AAPL', 'z. B. Apple oder AAPL'),
     'U4.next': ('White Cliff looks for the company on the SEC list. Check the spelling, or try the full company name or its ticker.', 'White Cliff sucht das Unternehmen auf der SEC-Liste. Prüfen Sie die Schreibweise oder versuchen Sie es mit dem vollständigen Unternehmensnamen oder dem Tickersymbol.'),

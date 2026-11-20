@@ -1344,9 +1344,12 @@ def _append_changes(chunks, label, current, last, year, measure, form_words, fil
                     ("text", " aus."),
                 ], "change-line"))
             else:
+                period = period_phrase(column.kind, column.period_start, column.period_end)
+                if period.startswith("the "):
+                    period = period[4:]
                 chunks.append(_parts_html("C5", [
                     ("text", "The "),
-                    _period_link(period_phrase(column.kind, column.period_start, column.period_end), column.fact),
+                    _period_link(period, column.fact),
                     ("text", f" figure is shown as restated in the {form_words} filed on "),
                     ("link", when, _filing_href(current.fact.source.url)),
                     ("text", "; the earlier filing showed "),
@@ -1599,13 +1602,17 @@ def _marker(outcome: str, reason: str) -> str:
     elif outcome == "consistent":
         text = phrase("U10.marker.notmarked")
     else:
-        plain = _german_reason(reason) if german() else reason
+        plain = reason if not german() else _german_reason(reason)
+        if not plain:
+            return ""
         text = phrase("U10.marker.notrun").replace("{plain reason}", plain)
     return f'<p class="marker" data-template="MARKER">{html.escape(text)}</p>\n'
 
 
-def _german_figure(name: str) -> str:
-    """A check's figure name from the cleared labels. A name with no label stays as the filing wrote it."""
+def _german_figure(name: str) -> str | None:
+    """A check's figure name from the cleared labels. Unrecorded German omits the line."""
+    from white_cliff.lexicon import UNREVIEWED
+
     labels = {
         "Operating income": "LBL.operating_income",
         "Net income": "LBL.net_income",
@@ -1614,22 +1621,36 @@ def _german_figure(name: str) -> str:
         "Diluted shares": "LBL.diluted_shares",
         "Income tax": "LBL.income_tax",
         "Accounts receivable": "LBL.accounts_receivable",
+        "Operating cash flow": "LBL.ocf",
+        "Inventory": "LBL.inventory",
+        "Cost of sales": "LBL.cost_of_sales",
+        "Basic shares": "LBL.basic_shares",
+        "Pre-tax income": "LBL.pretax",
     }
     ident = labels.get(name)
-    if ident:
-        return phrase(ident)
-    return name
+    if ident is None:
+        return None
+    text = phrase(ident)
+    if text == UNREVIEWED:
+        return None
+    return text
 
 
-def _german_reason(reason: str) -> str:
+def _german_reason(reason: str) -> str | None:
+    from white_cliff.lexicon import UNREVIEWED
+
     copied = shown_copy(reason)
     if copied != reason:
+        if copied == UNREVIEWED:
+            return None
         return copied
     suffix = " is not in the filing."
     if reason.endswith(suffix):
         figure = _german_figure(reason[: -len(suffix)])
+        if figure is None:
+            return None
         return phrase("K.notrun.missing").replace("{figure}", figure)
-    return reason
+    return None
 
 
 def _linked(display: str, href: str) -> str:
@@ -1651,6 +1672,21 @@ def _period_html(fact: Fact) -> str:
         period_phrase(fact.period.kind, fact.period.start, fact.period.end or ""),
         _filing_href(fact.source.url),
     )
+
+
+def _item_label(concept: str) -> str | None:
+    """The plain item name. An unrecorded or unknown type is omitted, never the internal name."""
+    from white_cliff.lexicon import STRINGS, UNREVIEWED
+
+    pair = STRINGS.get("C4.label." + concept)
+    if pair is None:
+        return None
+    english, deutsch = pair
+    if not german():
+        return ITEM_LABELS.get(concept, english)
+    if deutsch == UNREVIEWED:
+        return None
+    return deutsch
 
 
 def _check_numbers_de(result: CheckResult) -> str:
@@ -1725,7 +1761,9 @@ def _check_numbers_de(result: CheckResult) -> str:
                 {"einen Aufwand|einen Ertrag": "einen Aufwand" if item.charge else "einen Ertrag"},
             )
             share = (item.share * Decimal(100)).quantize(Decimal("0.1"))
-            label = phrase("C4.label." + item.fact.concept) if ("C4.label." + item.fact.concept) in STRINGS else item.fact.concept
+            label = _item_label(item.fact.concept)
+            if label is None:
+                continue
             lines.append(paragraph(fill(template, {
                 "period": _period_html(item.fact),
                 "item plain label": html.escape(label),
@@ -1901,8 +1939,11 @@ def _check_numbers(result: CheckResult) -> str:
         for item in result.items:
             kind = "charge" if item.charge else "gain"
             share = (item.share * Decimal(100)).quantize(Decimal("0.1"))
+            label = _item_label(item.fact.concept)
+            if label is None:
+                continue
             lines.append(_parts_html("NUMBERS", [
-                ("text", f"The filing tags {ITEM_LABELS.get(item.fact.concept, item.fact.concept)} of "),
+                ("text", f"The filing tags {label} of "),
                 _link_fact(item.fact),
                 ("text", " for "),
                 _period_link(period_phrase(item.fact.period.kind, item.fact.period.start, item.fact.period.end or ""), item.fact),
@@ -2134,13 +2175,21 @@ def _statement_sentence(name: str) -> str:
     return phrase(ident) if ident else name
 
 
+def _with_stop(name: str) -> str:
+    """One full stop. A name that already ends with one keeps that stop."""
+    text = name.rstrip()
+    if text.endswith((".", "!", "?")):
+        return text
+    return text + "."
+
+
 def _section_parts(names: str, statement: str, company: str, form_words: str, fact: Fact) -> list[tuple]:
     period = _period_link(period_phrase(fact.period.kind, fact.period.start, fact.period.end or ""), fact)
     if german():
         return [
             ("text", f"Dieser Abschnitt zeigt {names} im "),
             period,
-            ("text", f", entnommen aus der {statement} im Bericht ({form_words}) von {company}."),
+            ("text", f", entnommen aus der {statement} im Bericht ({form_words}) von {_with_stop(company)}"),
         ]
     return [
         ("text", f"This section shows {names} from the {statement} in {company}'s {form_words} for "),
