@@ -1601,6 +1601,51 @@ def _press(page: DevTools, selector: str) -> None:
     )
 
 
+def _wait_ready(page: DevTools, timeout: float) -> None:
+    """The submit handler is in a script after the form. Wait until it has run."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if _eval(page, "document.readyState") == "complete":
+                return
+        except PageError:
+            pass
+        time.sleep(0.05)
+    raise PageError("the page did not finish loading")
+
+
+def _submit_form(page: DevTools, selector: str) -> None:
+    """Start the form through its own submit handler."""
+    _wait_node(page, selector + " button", 20)
+    shown = json.dumps(selector)
+    _eval(
+        page,
+        "(() => { const form = document.querySelector("
+        + shown
+        + "); form.requestSubmit(form.querySelector('button')); return true; })()",
+    )
+
+
+def _loading_view(page: DevTools) -> str:
+    """Structural facts only. No field values."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const steps = document.getElementById("steps");
+          const arc = document.querySelector("li.active .arc");
+          return [
+            "hidden=" + (steps ? String(steps.hidden) : "missing"),
+            "active=" + (steps ? steps.querySelectorAll("li.active").length : 0),
+            "arc=" + (arc ? getComputedStyle(arc).display : "missing"),
+            "reduce=" + window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ].join(" ");
+        })()
+        """,
+    )
+    return str(raw)
+
+
 def _click(page: DevTools, selector: str) -> None:
     node = _wait_node(page, selector, 20)
     page.call("DOM.focus", {"nodeId": node})
@@ -2297,17 +2342,20 @@ def _loading_shot(
         mark("Runtime.enable")
         page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
         mark("Page.startScreencast")
-        if reduced:
-            _motion(page, "reduce")
-            mark("Emulation.setEmulatedMedia")
+        # The main window asks for motion before it loads. A new window does too,
+        # or a machine that prefers less motion hides the arc and the shot waits forever.
+        _motion(page, "reduce" if reduced else "no-preference")
+        mark("Emulation.setEmulatedMedia")
         page.call("Page.navigate", {"url": url})
         mark("Page.navigate")
         _wait_node(page, "#query", 30)
+        _wait_ready(page, 30)
         if german and _eval(page, "document.documentElement.lang") != "de":
             _press(page, 'button[lang="de"]')
             _wait_node(page, "#query", 20)
+            _wait_ready(page, 20)
         _fill(page, "#query", query)
-        _press(page, 'form[action="/explain"] button')
+        _submit_form(page, 'form[action="/explain"]')
         mark("click")
         deadline = time.time() + 90
         ready = False
@@ -2325,7 +2373,11 @@ def _loading_shot(
                 break
             time.sleep(0.05)
         if not ready:
-            fail("the loading steps were not shown")
+            try:
+                state = _loading_view(page)
+            except PageError:
+                state = "view failed"
+            fail(f"the loading steps were not shown\n{state}")
         mark("steps")
         _discard_queued_frames(page)
         try:

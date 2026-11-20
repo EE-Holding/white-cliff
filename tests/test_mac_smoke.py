@@ -299,8 +299,22 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
     class Page:
         def call(self, method, params=None, timeout=20):
             order.append(method)
-            if "requestAnimationFrame" in str((params or {}).get("expression") or ""):
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if method == "Emulation.setEmulatedMedia":
+                features = params.get("features") or [{}]
+                order.append("media " + str(features[0].get("value")))
+            if "requestAnimationFrame" in expression:
                 order.append("paint")
+            if "document.readyState" in expression:
+                order.append("ready")
+                return {"result": {"value": "complete"}}
+            if "requestSubmit" in expression:
+                order.append("requestSubmit")
+                return {"result": {"value": True}}
+            if "steps.hidden" in expression:
+                order.append("view")
+                return {"result": {"value": "hidden=true active=0 arc=missing reduce=false"}}
             return {}
 
         def next_event(self, method, timeout):
@@ -314,7 +328,13 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
                 raise driver.PageError(method)
             if not sent["fresh"]:
                 sent["fresh"] = True
-                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                wanted = 420
+                for item in reversed(order):
+                    if item.startswith("createTarget "):
+                        wanted = int(item.split()[1].split("x")[0])
+                        break
+                payload = fresh if wanted == 420 else picture(wanted, wanted)
+                raw = __import__("base64").b64encode(payload).decode("ascii")
                 return {"method": method, "params": {"data": raw, "sessionId": 2}}
             raise driver.PageError(method)
 
@@ -325,6 +345,7 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
     monkeypatch.setattr(driver, "_fill", lambda *args, **kwargs: order.append("fill"))
     monkeypatch.setattr(driver, "_press", lambda *args, **kwargs: order.append("click"))
     monkeypatch.setattr(driver, "_steps_visible", lambda page: True)
+    monkeypatch.setattr(driver, "_reduced_steps", lambda page: True)
     monkeypatch.setattr(driver, "_loading", lambda page: True)
     monkeypatch.setattr(driver, "_spinning", lambda page: True)
     monkeypatch.setattr(driver, "_close_loading_target", lambda page: order.append("close"))
@@ -341,14 +362,64 @@ def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatc
         assert path.read_bytes() != old
         assert order.index("hold") < order.index("Page.startScreencast")
         assert order.index("Page.startScreencast") < order.index("Page.navigate")
+        assert order.index("media no-preference") < order.index("Page.navigate")
+        assert order.index("ready") < order.index("requestSubmit")
         assert order.index("createTarget 420x900") < order.index("Page.startScreencast")
         assert "resize" not in order
         assert "Page.captureScreenshot" not in order
         assert order.index("release") > order.index("Page.navigate")
+        order.clear()
+        sent["old"] = False
+        sent["fresh"] = False
+        driver._LAST = b""
+        driver._SEEN = set()
+        driver._loading_shot(
+            tmp_path, "smoke-x86_64-5-reduced.png", 1100, "http://127.0.0.1:9/", "NVDA", reduced=True
+        )
+        assert order.index("media reduce") < order.index("Page.navigate")
     finally:
         driver._PAUSED = paused
         driver._LAST = last
         driver._SEEN = seen
+
+
+def test_a_missing_loading_panel_reports_the_page_state(tmp_path, monkeypatch):
+    """A shot that never shows the steps says what the document was doing."""
+    driver = _driver()
+    order: list[str] = []
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "requestSubmit" in expression:
+                order.append("requestSubmit")
+                return {"result": {"value": True}}
+            if "steps.hidden" in expression:
+                return {"result": {"value": "hidden=true active=0 arc=missing reduce=true"}}
+            return {}
+
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Page())
+    monkeypatch.setattr(driver, "_wait_node", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_fill", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_steps_visible", lambda page: False)
+    monkeypatch.setattr(driver, "_spinning", lambda page: False)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    monkeypatch.setattr(driver._sec_hold, "arm", lambda everything=False: None)
+    monkeypatch.setattr(driver._sec_hold, "release", lambda: None)
+    ticks = {"n": 0}
+
+    def warped():
+        ticks["n"] += 1
+        return 1000.0 if ticks["n"] < 30 else 10000.0
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    with pytest.raises(driver.PageError, match="hidden=true active=0 arc=missing reduce=true"):
+        driver._loading_shot(tmp_path, "smoke-x86_64-4-loading.png", 1100, "http://127.0.0.1:9/", "NVDA")
+    assert "requestSubmit" in order
 
 
 def test_the_settled_pair_is_not_exempt(tmp_path):
