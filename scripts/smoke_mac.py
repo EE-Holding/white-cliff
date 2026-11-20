@@ -612,8 +612,7 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             timeout=8,
         )
         chosen = base64.b64decode(result["data"])
-    narrow = bool(width and chosen and _png_width(chosen) != width)
-    if not chosen or (_LAST and chosen == _LAST) or narrow:
+    if not chosen or (_LAST and chosen == _LAST):
         painted = _copied_png(page, width or _png_width(chosen) or 1100)
         if painted and painted != chosen and (not width or _png_width(painted) == width):
             chosen = painted
