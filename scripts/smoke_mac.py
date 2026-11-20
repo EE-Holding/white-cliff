@@ -519,9 +519,6 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
         pass
 
 
-_LAST_FRAME = b""
-
-
 def _live_frame(page: DevTools) -> bytes:
     """One frame of this window.
 
@@ -552,19 +549,15 @@ def _live_frame(page: DevTools) -> bytes:
             page.call("Page.stopScreencast")
         except (PageError, TimeoutError, OSError):
             pass
-    global _LAST_FRAME
-    if (not chosen or chosen == _LAST_FRAME) and not _PAUSED:
+    if not chosen and not _PAUSED:
         result = page.call(
             "Page.captureScreenshot",
             {"format": "png", "captureBeyondViewport": True, "optimizeForSpeed": True},
             timeout=8,
         )
-        still = base64.b64decode(result["data"])
-        if still and still != _LAST_FRAME:
-            chosen = still
-    if not chosen or chosen == _LAST_FRAME:
+        chosen = base64.b64decode(result["data"])
+    if not chosen:
         raise PageError("the window had no frame")
-    _LAST_FRAME = chosen
     return chosen
 
 
@@ -1375,13 +1368,12 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     debug.bind(("127.0.0.1", 0))
     port = debug.getsockname()[1]
     debug.close()
-    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS, _LAST_FRAME
+    global _DEBUG_PORT, _SCREEN_LEFT, _BROWSER, _TARGET_ID, _BOUNDS
     _DEBUG_PORT = port
     _SCREEN_LEFT = None
     _BROWSER = None
     _TARGET_ID = ""
     _BOUNDS = ""
-    _LAST_FRAME = b""
     profile = Path(tempfile.mkdtemp(prefix="white-cliff-chrome-"))
     stderr_fd, stderr_name = tempfile.mkstemp(prefix="white-cliff-chrome-err-")
     stderr_path = Path(stderr_name)
