@@ -1277,6 +1277,67 @@ def _state(page: DevTools) -> dict:
     return json.loads(raw or "{}")
 
 
+def _widen(page: DevTools, port: int) -> DevTools:
+    """A new window at 1100px when the first one stayed on the old 800px screen."""
+    if not _intel() or _BROWSER is None:
+        return page
+    try:
+        inner = int(_eval(page, "window.innerWidth") or 0)
+    except (PageError, TypeError, ValueError, TimeoutError, OSError):
+        return page
+    if inner >= 1100:
+        return page
+    try:
+        created = _BROWSER.call(
+            "Target.createTarget",
+            {
+                "url": "about:blank",
+                "left": 0,
+                "top": 0,
+                "width": 1100,
+                "height": 900,
+                "newWindow": True,
+            },
+            timeout=4,
+        )
+    except (PageError, TimeoutError, OSError, TypeError, ValueError):
+        return page
+    target_id = str(created.get("targetId") or "")
+    if not target_id:
+        return page
+    info = None
+    deadline = time.time() + 2
+    while time.time() < deadline and info is None:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.5) as response:
+                tabs = json.loads(response.read().decode("utf-8"))
+            for tab in tabs:
+                if tab.get("id") == target_id and tab.get("webSocketDebuggerUrl"):
+                    info = tab
+                    break
+        except (OSError, json.JSONDecodeError):
+            pass
+        if info is None:
+            time.sleep(0.05)
+    if not info:
+        return page
+    fresh = DevTools(info["webSocketDebuggerUrl"])
+    try:
+        fresh.call("Page.enable")
+        fresh.call("Runtime.enable")
+        opened = int(_eval(fresh, "window.innerWidth") or 0)
+    except (PageError, TypeError, ValueError, TimeoutError, OSError):
+        fresh.close()
+        return page
+    if opened < 1100:
+        fresh.close()
+        return page
+    global _TARGET_ID
+    _TARGET_ID = target_id
+    page.close()
+    return fresh
+
+
 def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     binary = chrome_binary()
     if binary is None:
@@ -1314,7 +1375,9 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
     if _intel():
         # Headless defaults to an 800x600 screen, so a 1100 window stays near 800.
         command[command.index("--headless=old")] = "--headless=new"
-        command.insert(command.index("--window-size=1100,2200"), "--screen-info={1400x2400}")
+        # Name the screen before the window is created. Later, the window stays
+        # near 759px on a 1400px screen and cannot be resized.
+        command.insert(1, "--screen-info={1400x2400}")
     chrome = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
@@ -1358,6 +1421,7 @@ def _open_chrome(url: str) -> tuple[subprocess.Popen, DevTools]:
         _BROWSER = None
     page.call("Page.enable")
     page.call("Runtime.enable")
+    page = _widen(page, port)
     _window(page)
     page.call("Page.navigate", {"url": url})
     try:
