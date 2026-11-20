@@ -10,15 +10,17 @@ EN: This filing can't be explained yet.
 DE: Dieser Bericht kann noch nicht erklärt werden.
 
 Filings in scope: 13536
-Filings covered: 20
-Filings explained: 20
-Coverage of scope: 0.1%
+Filings covered: 52
+Filings explained: 52
+Coverage of scope: 0.4%
 Filings refused: 0
 Filings not retrieved: 0
-Numbers MATCH: 120
+Numbers MATCH: 341
 Numbers WRONG: 0
-Numbers NOT_COMPARABLE: 60
+Numbers NOT_COMPARABLE: 179
 Review list: 0
+
+Covered filings are 20 from MMM and 4 each from AAPL, JPM, BAC, WMT, NVDA, JNJ, MSFT, and KO. Margins, the year-over-year change, and net debt are NOT_COMPARABLE because they have no company-facts concept.
 
 ## WRONG
 

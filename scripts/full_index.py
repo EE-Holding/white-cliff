@@ -494,13 +494,29 @@ def write_summary(scope: list[dict]) -> dict:
     return report
 
 
-def run(limit: int | None) -> dict:
+def select_pending(pending: list[dict[str, str]], tickers: list[str] | None, limit: int | None) -> list[dict[str, str]]:
+    chosen = pending
+    if tickers:
+        wanted = {ticker.upper() for ticker in tickers}
+        chosen = [
+            item
+            for item in chosen
+            if wanted.intersection(part.upper() for part in item["ticker"].split(","))
+        ]
+    if limit is not None:
+        return chosen[:limit]
+    return chosen
+
+
+def run(limit: int | None, tickers: list[str] | None = None) -> dict:
     client = _client()
     scope = build_scope(client)
     done = {path.stem for path in (CACHE / "results").glob("*.json")} if (CACHE / "results").is_dir() else set()
-    pending = [item for item in scope if item["accession"] not in done]
-    if limit is not None:
-        pending = pending[:limit]
+    pending = select_pending(
+        [item for item in scope if item["accession"] not in done],
+        tickers,
+        limit,
+    )
     facts_cache: dict[str, dict] = {}
     covered = 0
     for item in pending:
@@ -543,8 +559,9 @@ def run(limit: int | None) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=DISCLAIMER)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--ticker", action="append", default=None)
     args = parser.parse_args(argv)
-    report = run(args.limit)
+    report = run(args.limit, args.ticker)
     print(
         f"scope {report['filings_in_scope']} covered {report['filings_covered']} "
         f"explained {report['filings_explained']} refused {report['filings_refused']} "

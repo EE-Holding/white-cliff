@@ -20,6 +20,18 @@ def _harness():
     return module
 
 
+def test_ticker_filter_keeps_a_shared_class_and_honors_the_limit():
+    harness = _harness()
+    pending = [
+        {"ticker": "MMM", "accession": "1"},
+        {"ticker": "GOOGL,GOOG", "accession": "2"},
+        {"ticker": "AAPL", "accession": "3"},
+        {"ticker": "AAPL", "accession": "4"},
+    ]
+    chosen = harness.select_pending(pending, ["aapl", "GOOG"], 2)
+    assert [item["accession"] for item in chosen] == ["2", "3"]
+
+
 def test_constituent_file_is_pinned_to_a_public_source():
     path = ROOT / "pinned" / "sp500-constituents.json"
     document = json.loads(path.read_text(encoding="utf-8"))
