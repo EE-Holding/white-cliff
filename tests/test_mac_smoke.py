@@ -427,8 +427,8 @@ def test_a_wider_result_picture_comes_from_a_new_window(tmp_path, monkeypatch):
     assert "Page.captureScreenshot" not in order
 
 
-def test_a_repeated_result_scrolls_the_new_window(tmp_path, monkeypatch):
-    """The same page can paint the same pixels. A scroll must produce a new frame."""
+def test_a_repeated_result_from_a_new_window_is_rejected(tmp_path, monkeypatch):
+    """A new window that paints the same pixels is still a repeated frame."""
     driver = _driver()
 
     def picture(seed: int) -> bytes:
@@ -441,9 +441,8 @@ def test_a_repeated_result_scrolls_the_new_window(tmp_path, monkeypatch):
         return driver._png_bytes(1100, 60, 2, 8, rows)
 
     seen = picture(3)
-    fresh = picture(4)
     order: list[str] = []
-    phase = {"before": 0, "after": 0, "scrolled": False}
+    sent = {"n": 0}
 
     class Source:
         def call(self, method, params=None, timeout=20):
@@ -461,22 +460,15 @@ def test_a_repeated_result_scrolls_the_new_window(tmp_path, monkeypatch):
                 return {"result": {"value": 80}}
             if "column" in expression and "opacity" in expression:
                 return {"result": {"value": True}}
-            if "scrollBy" in expression:
-                phase["scrolled"] = True
-                order.append("scroll")
+            if method == "Page.startScreencast" and sent["n"]:
+                order.append("second-cast")
             return {}
 
         def next_event(self, method, timeout):
-            if not phase["scrolled"]:
-                phase["before"] += 1
-                if phase["before"] == 1:
-                    raw = __import__("base64").b64encode(seen).decode("ascii")
-                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
-                raise driver.PageError(method)
-            phase["after"] += 1
-            if phase["after"] == 1:
-                raw = __import__("base64").b64encode(fresh).decode("ascii")
-                return {"method": method, "params": {"data": raw, "sessionId": 2}}
+            sent["n"] += 1
+            if sent["n"] == 1:
+                raw = __import__("base64").b64encode(seen).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 1}}
             raise driver.PageError(method)
 
     monkeypatch.setattr(driver, "_intel", lambda: True)
@@ -490,13 +482,14 @@ def test_a_repeated_result_scrolls_the_new_window(tmp_path, monkeypatch):
     driver._LAST = b""
     driver._SEEN = {seen}
     try:
-        path = driver._shot(Source(), tmp_path, "smoke-x86_64-8-result-1100.png", width=1100)
+        with pytest.raises(driver.PageError, match="repeated a previous screencast frame"):
+            driver._shot(Source(), tmp_path, "smoke-x86_64-8-result-1100.png", width=1100)
     finally:
         driver._PAUSED = paused
         driver._LAST = last
         driver._SEEN = saved
-    assert path.read_bytes() == fresh
-    assert order == ["scroll"]
+    assert "resize" not in order
+    assert "second-cast" not in order
 
 
 def test_the_filing_request_waits_until_the_loading_shot_releases():

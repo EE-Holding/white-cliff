@@ -1096,31 +1096,8 @@ def _born_shot(
         try:
             return _commit_live_frame(directory, name, data, width, height)
         except PageError as exc:
-            # A second visit to the same page can paint the same pixels. Scroll
-            # the new window and require a frame that is not that picture.
-            # A stuck cast does not change when the page scrolls.
-            if "repeated a previous screencast frame" not in str(exc):
-                fail(str(exc))
-            # The cast has already sent its one frame. A small scroll and a new
-            # cast are what produced the panel pictures above.
-            _eval(shot, "window.scrollBy(0, 8)")
-            mark("scroll")
-            try:
-                shot.call("Page.stopScreencast")
-            except PageError:
-                pass
-            shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
-            mark("Page.startScreencast")
-            _paint(shot)
-            scrolled, note = _painted_frame(shot, 4.0, previous=data)
-            mark(note)
-            if not scrolled:
-                fail(str(exc))
-            mark(f"frame {_png_width(scrolled)}")
-            try:
-                return _commit_live_frame(directory, name, scrolled, width, height)
-            except PageError as again:
-                fail(str(again))
+            # A second cast sends one blank frame and then stops. Do not start one.
+            fail(str(exc))
     finally:
         if shot is not None:
             _close_loading_target(shot)
@@ -2462,6 +2439,7 @@ _PANEL_SCRIPT = {
           hits.sort((a, b) => a.textContent.length - b.textContent.length);
           const top = hits[0].getBoundingClientRect().top + window.scrollY;
           window.scrollTo(0, Math.max(top - 24, 0));
+          window.scrollBy(0, 16);
           return true;
         })()
     """,
@@ -2476,6 +2454,7 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
             _eval(shot, "window.scrollTo(0, 0)")
             box = _share_box(shot)
             _eval(shot, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
+            _eval(shot, "window.scrollBy(0, 16)")
             return max(int(box["height"]) + 16, 280)
 
         _born_shot(directory, name, width, height, _page_url(page), prepare=prepare)
