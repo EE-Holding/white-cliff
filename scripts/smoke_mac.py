@@ -735,6 +735,19 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
                 page.call("Emulation.clearDeviceMetricsOverride")
             except PageError:
                 pass
+            try:
+                # Width only. Adding a screen size leaves the previous bitmap in place.
+                page.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
             _fit_window(page, width, 900)
             later_deadline = time.time() + 2.5
             while time.time() < later_deadline:

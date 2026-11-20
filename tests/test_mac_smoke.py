@@ -276,6 +276,8 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
         def call(self, method, params=None, timeout=20):
             if method == "Emulation.clearDeviceMetricsOverride":
                 calls.append(("clear",))
+            if method == "Emulation.setDeviceMetricsOverride":
+                calls.append(("metrics", (params or {}).get("width")))
             return {}
 
         def next_event(self, method, timeout):
@@ -301,6 +303,7 @@ def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
         driver._SEEN = seen
     assert data == fresh
     assert ("clear",) in calls
+    assert ("metrics", 1100) in calls
     assert ("bounds", 1100) in calls
 
 
