@@ -557,6 +557,17 @@ def _ack_frame(page: DevTools, event: dict | None) -> None:
 
 _LAST = b""
 _SEEN: set[bytes] = set()
+_COPY_ERROR = ""
+
+
+def _activate() -> None:
+    """Show the main window again. A copied tab otherwise keeps the cast silent."""
+    if _BROWSER is None or not _TARGET_ID:
+        return
+    try:
+        _BROWSER.call("Target.activateTarget", {"targetId": _TARGET_ID})
+    except (PageError, TimeoutError, OSError):
+        pass
 
 
 def _copied_png(page: DevTools, width: int) -> bytes:
@@ -564,10 +575,12 @@ def _copied_png(page: DevTools, width: int) -> bytes:
 
     A screenshot of this window leaves the next Intel layout near 906px.
     """
+    global _COPY_ERROR
     try:
         html = _document_html(page)
         tab, target = _open_tab()
-    except (PageError, TimeoutError, OSError):
+    except (PageError, TimeoutError, OSError) as exc:
+        _COPY_ERROR = str(exc)[:180]
         return b""
     try:
         tab.call("Page.enable")
@@ -580,8 +593,10 @@ def _copied_png(page: DevTools, width: int) -> bytes:
             {"format": "png", "optimizeForSpeed": True},
             timeout=8,
         )
+        _COPY_ERROR = ""
         return base64.b64decode(result["data"])
-    except (PageError, TimeoutError, OSError, KeyError, ValueError):
+    except (PageError, TimeoutError, OSError, KeyError, ValueError) as exc:
+        _COPY_ERROR = str(exc)[:180]
         return b""
     finally:
         try:
@@ -589,6 +604,7 @@ def _copied_png(page: DevTools, width: int) -> bytes:
         except (PageError, OSError):
             pass
         _close_tab(target)
+        _activate()
 
 
 def _live_frame(page: DevTools, width: int = 0) -> bytes:
@@ -605,23 +621,15 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             event = page.next_event("Page.screencastFrame", 0.6)
         except (PageError, TimeoutError):
             event = None
-        # An idle page does not paint, so the cast stays silent. Resize while it is
-        # listening; the resize paint is the frame. A bare animation frame is not.
+        # An idle page does not paint, so the cast stays silent. Ask for one frame.
         if event is None and not _PAUSED:
-            if width:
-                try:
-                    page.call("Emulation.clearDeviceMetricsOverride")
-                except PageError:
-                    pass
-                _window(page, width, 900)
-            else:
-                try:
-                    _eval(
-                        page,
-                        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                    )
-                except (PageError, TimeoutError, OSError):
-                    pass
+            try:
+                _eval(
+                    page,
+                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                )
+            except (PageError, TimeoutError, OSError):
+                pass
             try:
                 event = page.next_event("Page.screencastFrame", 4)
             except (PageError, TimeoutError):
@@ -640,20 +648,13 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
                     if nudged or (chosen not in _SEEN and chosen != _LAST):
                         break
                     nudged = True
-                    if width:
-                        try:
-                            page.call("Emulation.clearDeviceMetricsOverride")
-                        except PageError:
-                            pass
-                        _window(page, width, 900)
-                    else:
-                        try:
-                            _eval(
-                                page,
-                                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                            )
-                        except (PageError, TimeoutError, OSError):
-                            break
+                    try:
+                        _eval(
+                            page,
+                            "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+                        )
+                    except (PageError, TimeoutError, OSError):
+                        break
                     continue
                 _ack_frame(page, later)
                 fresh = _frame_png(later)
@@ -700,6 +701,7 @@ def _intel_photo(
                 fresh.call("Page.enable")
                 fresh.call("Runtime.enable")
             if not _PAUSED:
+                _activate()
                 _window(fresh, wanted, height_px)
                 try:
                     if motion:
@@ -738,9 +740,11 @@ def _intel_photo(
                         data = alt
                         break
                     if stale or got == wanted:
-                        raise PageError(f"{name} repeated the previous picture")
+                        raise PageError(f"{name} repeated the previous picture {_COPY_ERROR}")
                     screen = 0 if _PAUSED else _screen_width(fresh)
-                    raise PageError(f"{name} is {got}px wide, wanted {wanted}, screen {screen}")
+                    raise PageError(
+                        f"{name} is {got}px wide, wanted {wanted}, screen {screen} {_COPY_ERROR} {_BOUNDS}"
+                    )
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
             limit = height or height_px
