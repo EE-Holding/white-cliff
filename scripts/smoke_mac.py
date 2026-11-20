@@ -1089,7 +1089,22 @@ def _born_shot(
         try:
             return _commit_live_frame(directory, name, data, width, height)
         except PageError as exc:
-            fail(str(exc))
+            # A second visit to the same page can paint the same pixels. Scroll
+            # the new window and require a frame that is not that picture.
+            # A stuck cast does not change when the page scrolls.
+            if "repeated a previous screencast frame" not in str(exc):
+                fail(str(exc))
+            _eval(shot, "window.scrollBy(0, 160)")
+            mark("scroll")
+            _paint(shot)
+            scrolled = _painted_frame(shot, 1.5, previous=data)
+            if not scrolled:
+                fail(str(exc))
+            mark(f"frame {_png_width(scrolled)}")
+            try:
+                return _commit_live_frame(directory, name, scrolled, width, height)
+            except PageError as again:
+                fail(str(again))
     finally:
         if shot is not None:
             _close_loading_target(shot)

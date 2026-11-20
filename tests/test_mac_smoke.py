@@ -426,6 +426,78 @@ def test_a_wider_result_picture_comes_from_a_new_window(tmp_path, monkeypatch):
     assert "Page.captureScreenshot" not in order
 
 
+def test_a_repeated_result_scrolls_the_new_window(tmp_path, monkeypatch):
+    """The same page can paint the same pixels. A scroll must produce a new frame."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 60, 2, 8, rows)
+
+    seen = picture(3)
+    fresh = picture(4)
+    order: list[str] = []
+    phase = {"before": 0, "after": 0, "scrolled": False}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            if "scrollBy" in expression:
+                phase["scrolled"] = True
+                order.append("scroll")
+            return {}
+
+        def next_event(self, method, timeout):
+            if not phase["scrolled"]:
+                phase["before"] += 1
+                if phase["before"] == 1:
+                    raw = __import__("base64").b64encode(seen).decode("ascii")
+                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
+                raise driver.PageError(method)
+            phase["after"] += 1
+            if phase["after"] == 1:
+                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 2}}
+            raise driver.PageError(method)
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(
+        driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied"))
+    )
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(Source(), tmp_path, "smoke-x86_64-8-result-1100.png", width=1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert path.read_bytes() == fresh
+    assert order == ["scroll"]
+
+
 def test_the_filing_request_waits_until_the_loading_shot_releases():
     """The second sec.gov page stays unanswered until the shot releases it."""
     driver = _driver()
