@@ -707,23 +707,37 @@ def _frame_after_resize(page: DevTools, width: int) -> bytes:
     picture, and pausing first leaves the Intel cast with nothing to send.
     """
     page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
-    prior = b""
-    try:
+
+    def take(timeout: float) -> bytes:
         try:
-            queued = page.next_event("Page.screencastFrame", 0.2)
+            event = page.next_event("Page.screencastFrame", timeout)
         except (PageError, TimeoutError):
-            queued = None
-        _ack_frame(page, queued)
-        seen = _frame_png(queued)
-        if (
-            seen
-            and _png_width(seen) == width
-            and seen not in _SEEN
-            and seen != _LAST
-        ):
-            prior = seen
-        # The bounds are already this width. Apply them again while the cast is
-        # listening, then paint, and prefer a frame that arrives after that.
+            return b""
+        _ack_frame(page, event)
+        return _frame_png(event)
+
+    def good(data: bytes) -> bool:
+        return bool(
+            data
+            and _png_width(data) == width
+            and data not in _SEEN
+            and data != _LAST
+        )
+
+    chosen = b""
+    try:
+        # The window is already this wide. Paint after the cast starts, and
+        # keep a frame from that paint. Resize again only when it is not.
+        try:
+            _eval(
+                page,
+                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
+        chosen = take(1)
+        if good(chosen):
+            return chosen
         _window(page, width, 900)
         try:
             _eval(
@@ -734,20 +748,13 @@ def _frame_after_resize(page: DevTools, width: int) -> bytes:
             pass
         deadline = time.time() + 2.5
         while time.time() < deadline:
-            try:
-                event = page.next_event("Page.screencastFrame", 0.4)
-            except (PageError, TimeoutError):
+            fresh = take(0.4)
+            if not fresh:
                 continue
-            _ack_frame(page, event)
-            fresh = _frame_png(event)
-            if (
-                fresh
-                and _png_width(fresh) == width
-                and fresh not in _SEEN
-                and fresh != _LAST
-            ):
+            chosen = fresh
+            if good(fresh):
                 return fresh
-        return prior
+        return chosen
     finally:
         try:
             page.call("Page.stopScreencast")
