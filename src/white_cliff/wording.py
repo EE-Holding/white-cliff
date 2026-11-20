@@ -2221,9 +2221,19 @@ def build_additions(
                 if label2 not in names_for:
                     names_for.append(label2)
             names = ", ".join(names_for)
+            note_id = f"{control}-note"
+            note = _parts_html("SECTION", _section_parts(names, sentence, company, form_words, fact))
+            note = note.replace(
+                '<p data-template="SECTION">',
+                f'<p id="{html.escape(note_id, quote=True)}" data-template="SECTION" hidden>',
+                1,
+            )
             headings[control] = (
-                f'<h2 id="{html.escape(control, quote=True)}">{html.escape(statement)}</h2>\n'
-                + _parts_html("SECTION", _section_parts(names, sentence, company, form_words, fact))
+                f'<h2 id="{html.escape(control, quote=True)}">'
+                f'<button type="button" class="tap" aria-expanded="false" '
+                f'aria-controls="{html.escape(note_id, quote=True)}">{html.escape(statement)}</button>'
+                f"</h2>\n"
+                + note
             )
         measure = "money"
         if role in {"shares", "diluted"} or fact.unit.split()[0] == "shares":

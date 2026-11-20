@@ -1417,6 +1417,73 @@ def _layout(page: DevTools, *, columns: int, width: float | None) -> None:
         return
 
 
+def _aligned(page: DevTools) -> None:
+    """The disclaimer, the header column, and the cards share one centred column."""
+    measured = _eval(
+        page,
+        """(() => {
+          const node = document.querySelector(".disclaimer");
+          const box = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          const contentLeft = box.left + parseFloat(style.paddingLeft);
+          const contentRight = box.right - parseFloat(style.paddingRight);
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const textLeft = range.getBoundingClientRect().left;
+          const card = document.querySelector("article.card").getBoundingClientRect();
+          const last = document.querySelectorAll("article.card")[1].getBoundingClientRect();
+          const input = document.querySelector("#query").getBoundingClientRect();
+          const button = document.querySelector("body.result form.search button").getBoundingClientRect();
+          const section = document.querySelector('p[data-template="SECTION"]');
+          const heading = getComputedStyle(document.querySelector("h2 button.tap"));
+          const zero = getComputedStyle(document.querySelector(".bar-track"), "::after").content;
+          return {
+            contentLeft,
+            contentRight,
+            textLeft,
+            card: card.left,
+            cardRight: last.right,
+            input: input.width,
+            inputTop: input.top,
+            buttonTop: button.top,
+            hidden: section.hidden,
+            sectionSize: getComputedStyle(section).fontSize,
+            headingSize: heading.fontSize,
+            headingWeight: heading.fontWeight,
+            zero,
+          };
+        })()""",
+    )
+    if not isinstance(measured, dict):
+        raise PageError("the column edges were not measured")
+    if abs(float(measured["textLeft"]) - float(measured["contentLeft"])) > 1:
+        raise PageError(
+            f"the disclaimer text starts at {measured['textLeft']} and the column at {measured['contentLeft']}"
+        )
+    if abs(float(measured["card"]) - float(measured["contentLeft"])) > 1:
+        raise PageError(
+            f"the result starts at {measured['card']} and the disclaimer at {measured['contentLeft']}"
+        )
+    if abs(float(measured["cardRight"]) - float(measured["contentRight"])) > 1:
+        raise PageError(
+            f"the grid ends at {measured['cardRight']} and the column at {measured['contentRight']}"
+        )
+    if float(measured["input"]) < 360:
+        raise PageError(f"the search input is {measured['input']}px")
+    if abs(float(measured["inputTop"]) - float(measured["buttonTop"])) > 1:
+        raise PageError("the Explain button is not aligned with the search")
+    if measured.get("hidden") is not True:
+        raise PageError("the section note is open")
+    if measured.get("sectionSize") != "18px":
+        raise PageError(f"the section note is {measured.get('sectionSize')}")
+    if measured.get("headingSize") != "22px" or str(measured.get("headingWeight")) != "600":
+        raise PageError(
+            f"the section heading is {measured.get('headingSize')} weight {measured.get('headingWeight')}"
+        )
+    if measured.get("zero") not in ("none", "normal"):
+        raise PageError(f"the zero tick reads {measured.get('zero')}")
+
+
 def _eval(page: DevTools, expression: str):
     result = page.call(
         "Runtime.evaluate",
@@ -1932,6 +1999,7 @@ def drive(
         )
         if abs(float(text_left) - 92) > 4:
             raise PageError(f"the disclaimer text starts at {text_left}")
+        _aligned(page)
         _shot(page, out_dir, f"smoke-{ARCH}-9-result-1280.png", width=1280, height=2200, full=True)
         # Printing leaves the Intel layout near 957px, so keep the English page
         # and print it after the other pictures have used the live window.
@@ -1941,6 +2009,7 @@ def drive(
             _print_preview(page, out_dir, shot=print_shot)
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
+        _aligned(page)
         _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
         _fit(page, 640, 1600)
         _layout(page, columns=1, width=None)

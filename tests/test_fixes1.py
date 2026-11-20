@@ -144,9 +144,9 @@ def test_a_chart_label_does_not_end_in_two_periods():
     assert 'aria-label="' in html_text
 
 
-def test_the_result_column_stops_at_680_and_only_percents_are_underlined():
+def test_the_result_grid_fills_the_column_and_only_percents_are_underlined():
     style = search_page("t").split("</style>", 1)[0]
-    assert "minmax(0, 680px)" in style
+    assert "grid-template-columns: 1fr 1fr" in style
     assert 'grid-template-areas: "head value" "date date"' in style
     assert "align-items: last baseline" in style
     assert ".change-line a { color: #0a4b8f; text-decoration: none;" in style

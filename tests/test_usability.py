@@ -87,7 +87,7 @@ def test_company_choices_are_clear_rows_with_the_closest_first():
 
 
 def test_each_statement_has_one_heading_and_one_id(nvidia_page):
-    headings = re.findall(r"<h2[^>]*>([^<]+)</h2>", nvidia_page)
+    headings = re.findall(r"<h2[^>]*>(?:<button[^>]*>)?([^<]+)", nvidia_page)
     assert headings.count("Income statement") == 1
     assert headings.count("Balance sheet") == 1
     ids = re.findall(r'id="(section-[^"]+)"', nvidia_page)
@@ -110,15 +110,12 @@ def test_revenue_keeps_the_year_over_year_explain_and_margins_show_the_change(nv
     assert 'class="cmp"' in gross
 
 
-def test_negatives_use_a_minus_sign_and_the_zero_tick_is_labelled():
+def test_negatives_use_a_minus_sign_and_the_zero_tick_has_no_numeral():
     assert shown_amount("-4767 USD millions") == "\u2212$4,767 million"
     css_page = choices_page(SEVERAL, [], "t", "")
-    # The zero label is on result charts. The stylesheet is shared.
-    assert 'content: "0"' in css_page
-    assert ".bar-track::after" in css_page
-    rule = css_page.split(".bar-track::after {", 1)[1].split("}", 1)[0]
-    assert "font-size: 18px" in rule
-    assert "#555559" in rule
+    assert 'content: "0"' not in css_page
+    assert ".bar-track::after" not in css_page
+    assert ".bar-track::before" in css_page
 
 
 def test_cash_flow_check_leads_with_the_period(nvidia_page):
