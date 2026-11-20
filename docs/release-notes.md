@@ -6,16 +6,16 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 ## Files
 
-- WhiteCliff-Mac-Apple-silicon.zip for a Mac with an Apple chip
-- WhiteCliff-Mac-Intel.zip for a Mac with an Intel chip
-- WhiteCliff-Windows.zip for Windows
-- SHA256SUMS lists a SHA-256 checksum for each zip
+- White-Cliff-Mac-Apple-silicon.zip for a Mac with an Apple chip
+- White-Cliff-Mac-Intel.zip for a Mac with an Intel chip
+- White-Cliff-Windows.exe for Windows
+- SHA256SUMS.txt lists one long number for each download
 - how-to-open.md says which button to press when the computer warns that the file is not signed
-- how-to-open-de.md is the German guide. It needs a native review. It is not a certified translation.
+- The German guide is inside the Mac download. It needs a native review. It is not a certified translation.
 
 ## Check the download
 
-Match each zip to the line of the same name in SHA256SUMS.
+Match each file to the line of the same name in SHA256SUMS.txt.
 
 ## Open the program
 

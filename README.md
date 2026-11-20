@@ -2,17 +2,31 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 # white-cliff
 
+## Download
+
+The latest files are on this page:
+
+https://github.com/EE-Holding/white-cliff/releases/latest
+
+Pick the file for the computer. A Mac with an Apple chip uses White-Cliff-Mac-Apple-silicon.zip. An older Mac with an Intel chip uses White-Cliff-Mac-Intel.zip. A Windows computer uses White-Cliff-Windows.exe.
+
+The file is not signed. The computer shows a warning before it opens. The steps are in [how to open the program](docs/how-to-open.md).
+
+SHA256SUMS.txt lists one long number for each file. Anyone can check that their download matches that number.
+
 white-cliff explains a public company filing in plain language. It reads the inline XBRL figures in a US EDGAR annual report or quarterly report and shows revenue, margins, cash flow, debt, and share count. Every figure points back to the filing. The tool does not recommend buying, selling, or holding any security.
 
 Figures come from the inline XBRL tags in that report. A filing of another form, or one with no tagged money figures, is shown without numbers. The tool does not use prices, estimates, news, or any other source. It does not compute price multiples. Explanations use fixed sentences.
 
-## Install
+## For developers
+
+### Install
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-## Commands
+### Commands
 
 Explain a local filing, or write the static pages, with no User-Agent:
 

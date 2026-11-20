@@ -8,7 +8,7 @@ Dieser deutsche Text braucht noch eine Prüfung durch eine Person mit Deutsch al
 
 # White Cliff öffnen
 
-White Cliff ist quelloffen. Jede Person kann das Programm lesen. Die Datei SHA256SUMS nennt eine lange Zahl für jede heruntergeladene Datei. Jede Person kann prüfen, ob die Datei zu dieser Zahl passt.
+White Cliff ist quelloffen. Jede Person kann das Programm lesen. Die Datei SHA256SUMS.txt nennt eine lange Zahl für jede heruntergeladene Datei. Jede Person kann prüfen, ob die Datei zu dieser Zahl passt.
 
 Die erste Abfrage ist die erste echte Abfrage. Das Programm wurde mit gespeicherten Berichten geprüft.
 
@@ -16,11 +16,11 @@ Die Datei ist nicht signiert. Der Computer kennt den Hersteller nicht und zeigt 
 
 ## Welche Datei
 
-1. Ein Mac mit einem Apple-Chip, zum Beispiel M1, M2, M3 oder M4: WhiteCliff-Mac-Apple-silicon.zip
-2. Ein älterer Mac mit einem Intel-Chip: WhiteCliff-Mac-Intel.zip
-3. Ein Windows-Computer: WhiteCliff-Windows.zip
+1. Ein Mac mit einem Apple-Chip, zum Beispiel M1, M2, M3 oder M4: White-Cliff-Mac-Apple-silicon.zip
+2. Ein älterer Mac mit einem Intel-Chip: White-Cliff-Mac-Intel.zip
+3. Ein Windows-Computer: White-Cliff-Windows.exe
 
-Die Datei entpacken. Es ist nichts weiter zu installieren.
+Auf einem Mac die Datei entpacken. Unter Windows ist die heruntergeladene Datei das Programm. Es ist nichts weiter zu installieren.
 
 ## Mac
 
@@ -34,7 +34,7 @@ Die Schaltfläche Dennoch öffnen bleibt etwa eine Stunde nach dem Doppelklick. 
 
 ## Windows
 
-1. White Cliff.exe doppelklicken.
+1. White-Cliff-Windows.exe doppelklicken.
 2. Das blaue Fenster lesen. Der Titel sagt, dass Windows den PC geschützt hat.
 3. Auf Weitere Informationen klicken.
 4. Auf Trotzdem ausführen klicken.

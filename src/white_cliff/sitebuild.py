@@ -125,7 +125,7 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
     (output / "index.html").write_text(index, encoding="utf-8")
     (output / ".nojekyll").write_text("", encoding="utf-8")
     data = Path(__file__).with_name("data")
-    for name in ("how-to-open.md", "how-to-open-de.md"):
+    for name in ("how-to-open.md", "how-to-open-de.md", "release-notes.md"):
         guide = data / name
         (output / name).write_bytes(guide.read_bytes())
     return output

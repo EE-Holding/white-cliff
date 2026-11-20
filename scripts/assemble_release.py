@@ -16,11 +16,12 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-ASSETS = (
-    "WhiteCliff-Mac-Apple-silicon.zip",
-    "WhiteCliff-Mac-Intel.zip",
-    "WhiteCliff-Windows.zip",
+CI_MAC = (
+    ("WhiteCliff-Mac-Apple-silicon.zip", "White-Cliff-Mac-Apple-silicon.zip"),
+    ("WhiteCliff-Mac-Intel.zip", "White-Cliff-Mac-Intel.zip"),
 )
+CI_WINDOWS = "WhiteCliff-Windows.zip"
+RELEASE_WINDOWS = "White-Cliff-Windows.exe"
 
 
 class AssembleError(Exception):
@@ -57,28 +58,45 @@ def _named(archive: Path, filename: str) -> bytes:
     raise AssembleError(f"{filename} was not in the zip")
 
 
+def _exe(archive: Path) -> bytes:
+    with zipfile.ZipFile(archive) as zipped:
+        for name in zipped.namelist():
+            if Path(name).name.lower().endswith(".exe"):
+                return zipped.read(name)
+    raise AssembleError("the Windows program was not in the zip")
+
+
 def assemble(downloaded: Path, dest: Path, *, version: str, date: str, template: Path) -> None:
+    if not version.strip() or not date.strip():
+        raise AssembleError("the version and the date are empty")
     if dest.exists() and any(dest.iterdir()):
         raise AssembleError("the output folder is not empty")
+    checked: list[Path] = []
+    for ci_name, _release_name in CI_MAC:
+        checked.append(_find(downloaded, ci_name))
+    windows = _find(downloaded, CI_WINDOWS)
+    for archive in (*checked, windows):
+        _check(archive)
+    if not template.is_file():
+        raise AssembleError("the notes file is missing")
     dest.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = []
-    first: Path | None = None
-    for name in ASSETS:
-        archive = _find(downloaded, name)
-        digest = _check(archive)
-        target = dest / name
+    written: list[Path] = []
+    first = checked[0]
+    for archive, (_ci_name, release_name) in zip(checked, CI_MAC):
+        target = dest / release_name
         target.write_bytes(archive.read_bytes())
-        lines.append(f"{digest}  {name}")
-        if first is None:
-            first = target
-    (dest / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    if first is None:
-        raise AssembleError("no files were copied")
-    (dest / "how-to-open.md").write_bytes(_named(first, "how-to-open.md"))
-    (dest / "how-to-open-de.md").write_bytes(_named(first, "how-to-open-de.md"))
-    text = template.read_text(encoding="utf-8")
-    text = text.replace("{version}", version).replace("{date}", date)
-    (dest / "release-notes.md").write_text(text, encoding="utf-8")
+        written.append(target)
+    program = dest / RELEASE_WINDOWS
+    program.write_bytes(_exe(windows))
+    written.append(program)
+    note = dest / "how-to-open.md"
+    note.write_bytes(_named(first, "how-to-open.md"))
+    written.append(note)
+    lines = [
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+        for path in written
+    ]
+    (dest / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def download_run(run_id: str, dest: Path) -> None:
@@ -97,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--date", required=True)
     args = parser.parse_args(argv)
-    template = Path(__file__).resolve().parents[1] / "release-notes-template.md"
+    template = Path(__file__).resolve().parents[1] / "docs" / "release-notes.md"
     try:
         with tempfile.TemporaryDirectory() as tmp:
             downloaded = Path(tmp)

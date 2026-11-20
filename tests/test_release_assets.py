@@ -15,11 +15,12 @@ ASSETS = (
     "WhiteCliff-Mac-Intel.zip",
     "WhiteCliff-Windows.zip",
 )
-RELEASE_NAMES = ASSETS + (
-    "SHA256SUMS",
+RELEASE_ASSETS = (
+    "White-Cliff-Mac-Apple-silicon.zip",
+    "White-Cliff-Mac-Intel.zip",
+    "White-Cliff-Windows.exe",
+    "SHA256SUMS.txt",
     "how-to-open.md",
-    "how-to-open-de.md",
-    "release-notes.md",
 )
 
 
@@ -36,6 +37,8 @@ def _zip(path: Path, note: bytes, german: bytes | None = None) -> None:
         archive.writestr("how-to-open.md", note)
         archive.writestr("how-to-open-de.md", note if german is None else german)
         archive.writestr("program.txt", path.name.encode("ascii"))
+        if "Windows" in path.name:
+            archive.writestr("WhiteCliff-Windows/White Cliff.exe", b"windows-program")
 
 
 def test_the_five_jobs_publish_plain_names_and_checksums():
@@ -63,8 +66,6 @@ def test_the_note_names_the_files_and_the_warning_buttons():
     docs = (ROOT / "docs" / "how-to-open.md").read_text(encoding="utf-8")
     bundled = (ROOT / "src" / "white_cliff" / "data" / "how-to-open.md").read_text(encoding="utf-8")
     assert docs == bundled
-    for name in ASSETS:
-        assert name in docs
     for phrase in (
         "Move to Trash",
         "Open Anyway",
@@ -74,9 +75,14 @@ def test_the_note_names_the_files_and_the_warning_buttons():
         "Right-click",
         "Privacy & Security",
         "open source",
-        "SHA256SUMS",
+        "SHA256SUMS.txt",
+        "White-Cliff-Mac-Apple-silicon.zip",
+        "White-Cliff-Mac-Intel.zip",
+        "White-Cliff-Windows.exe",
     ):
         assert phrase in docs
+    for old in ASSETS:
+        assert old not in docs
     assert re.search(r"(?m)^1\. ", docs)
     for jargon in ("Gatekeeper", "SmartScreen", "safe", "trusted"):
         assert jargon not in docs
@@ -105,9 +111,14 @@ def test_the_german_guide_needs_native_review_and_is_not_certified():
         "Trotzdem ausführen",
         "nicht signiert",
         "quelloffen",
-        "SHA256SUMS",
+        "SHA256SUMS.txt",
+        "White-Cliff-Mac-Apple-silicon.zip",
+        "White-Cliff-Mac-Intel.zip",
+        "White-Cliff-Windows.exe",
     ):
         assert phrase in docs
+    for old in ASSETS:
+        assert old not in docs
     assert re.search(r"(?m)^1\. ", docs)
 
 
@@ -132,22 +143,86 @@ def test_the_assembler_writes_the_release_files_and_does_not_publish(tmp_path: P
         dest,
         version="1",
         date="23 November 2026",
-        template=ROOT / "release-notes-template.md",
+        template=ROOT / "docs" / "release-notes.md",
     )
-    assert tuple(sorted(path.name for path in dest.iterdir())) == tuple(sorted(RELEASE_NAMES))
-    lines = (dest / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-    assert [line.split()[-1] for line in lines] == list(ASSETS)
+    assert tuple(sorted(path.name for path in dest.iterdir())) == tuple(sorted(RELEASE_ASSETS))
+    lines = (dest / "SHA256SUMS.txt").read_text(encoding="utf-8").splitlines()
+    assert [line.split()[-1] for line in lines] == [
+        "White-Cliff-Mac-Apple-silicon.zip",
+        "White-Cliff-Mac-Intel.zip",
+        "White-Cliff-Windows.exe",
+        "how-to-open.md",
+    ]
     for line in lines:
         digest, name = line.split()
         assert hashlib.sha256((dest / name).read_bytes()).hexdigest() == digest
     assert (dest / "how-to-open.md").read_bytes() == note
-    assert (dest / "how-to-open-de.md").read_bytes() == german
-    notes = (dest / "release-notes.md").read_text(encoding="utf-8")
-    assert "White Cliff 1" in notes
-    assert "23 November 2026" in notes
-    assert "{version}" not in notes
+    assert (dest / "White-Cliff-Windows.exe").read_bytes() == b"windows-program"
+    notes = (ROOT / "docs" / "release-notes.md").read_text(encoding="utf-8")
+    assert notes.startswith(
+        "This tool explains the numbers in a public company filing. "
+        "It does not recommend buying, selling or holding any security, "
+        "and it is not investment advice."
+    )
+    for name in RELEASE_ASSETS:
+        if name != "how-to-open.md":
+            assert name in notes
     assert "needs a native review" in notes
     assert "not a certified translation" in notes
+
+
+def test_release_workflow_cannot_create_or_publish():
+    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert re.search(r"release:\n\s+types:\s*\[created\]", text)
+    assert "workflow_dispatch:" in text
+    assert "tag:" in text
+    assert "github.event.release.tag_name || inputs.tag" in text
+    assert "contents: write" in text
+    assert "github.token" in text
+    assert "secrets." not in text
+    assert text.count('python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"') == 2
+    assert "gh release view" in text
+    assert "gh release upload" in text
+    for name in RELEASE_ASSETS:
+        assert name in text
+    lowered = text.lower()
+    for banned in (
+        "gh release create",
+        "release create",
+        "git tag",
+        "create_release",
+        "create-release",
+        "action-gh-release",
+        "gh release edit",
+        "draft: false",
+        "--draft",
+        "softprops",
+        "codesign",
+        "notarize",
+        "notarytool",
+        "productsign",
+        "signtool",
+    ):
+        assert banned not in lowered
+
+
+def test_the_readme_puts_download_ahead_of_the_developer_commands():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.startswith(
+        "This tool explains the numbers in a public company filing. "
+        "It does not recommend buying, selling or holding any security, "
+        "and it is not investment advice."
+    )
+    download = readme.find("## Download")
+    developers = readme.find("## For developers")
+    install = readme.find("pip install")
+    command = readme.find("white-cliff explain pinned")
+    assert 0 < download < developers < install < command
+    assert developers < install
+    assert developers < command
+    assert "https://github.com/EE-Holding/white-cliff/releases/latest" in readme
+    assert "docs/how-to-open.md" in readme
+    assert "Dieses Werkzeug" not in readme
 
 
 def test_the_rendered_guide_uses_large_type():
@@ -176,7 +251,7 @@ def test_a_checksum_mismatch_is_not_assembled(tmp_path: Path):
             tmp_path / "release",
             version="1",
             date="23 November 2026",
-            template=ROOT / "release-notes-template.md",
+            template=ROOT / "docs" / "release-notes.md",
         )
     except assembler.AssembleError as exc:
         assert "WhiteCliff-Windows.zip" in str(exc)

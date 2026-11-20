@@ -2,7 +2,7 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 # How to open White Cliff
 
-White Cliff is open source. Anyone can read the program. The file SHA256SUMS lists one long number for each download. Anyone can check that their file matches that number.
+White Cliff is open source. Anyone can read the program. The file SHA256SUMS.txt lists one long number for each download. Anyone can check that their file matches that number.
 
 The first lookup is the first live one; the app was tested with saved filings.
 
@@ -10,11 +10,11 @@ The download is not signed. The computer does not know who made the program, so 
 
 ## Which file
 
-1. A Mac with an Apple chip, such as M1, M2, M3, or M4: WhiteCliff-Mac-Apple-silicon.zip
-2. An older Mac with an Intel chip: WhiteCliff-Mac-Intel.zip
-3. A Windows computer: WhiteCliff-Windows.zip
+1. A Mac with an Apple chip, such as M1, M2, M3, or M4: White-Cliff-Mac-Apple-silicon.zip
+2. An older Mac with an Intel chip: White-Cliff-Mac-Intel.zip
+3. A Windows computer: White-Cliff-Windows.exe
 
-Unzip the file. There is nothing else to install.
+On a Mac, unzip the file. On Windows, the download is the program. There is nothing else to install.
 
 ## Mac
 
@@ -28,7 +28,7 @@ The Open Anyway button stays for about an hour after the double-click. If the bu
 
 ## Windows
 
-1. Double-click White Cliff.exe.
+1. Double-click White-Cliff-Windows.exe.
 2. Read the blue window. The title is "Windows protected your PC".
 3. Click More info.
 4. Click Run anyway.

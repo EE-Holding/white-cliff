@@ -1,0 +1,163 @@
+name: release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the release that already exists
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package-apple-silicon:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
+            --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi \
+            scripts/desktop_entry.py
+          stage="White-Cliff-Mac-Apple-silicon"
+          mkdir -p "$stage"
+          cp -R "dist/White Cliff.app" "$stage/"
+          cp docs/how-to-open.md "$stage/how-to-open.md"
+          cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
+          ditto -c -k --keepParent "$stage" "$stage.zip"
+      - name: Show the old certificate failure
+        run: |
+          saved_file="${SSL_CERT_FILE-}"
+          saved_dir="${SSL_CERT_DIR-}"
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 -c 'import ssl; print(ssl.get_default_verify_paths())'
+          python3 scripts/prove_old_tls.py "$saved_file" "$saved_dir"
+      - name: Smoke
+        timeout-minutes: 12
+        run: |
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: White-Cliff-Mac-Apple-silicon.zip
+          path: White-Cliff-Mac-Apple-silicon.zip
+          retention-days: 7
+
+  package-intel-mac:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
+            --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi \
+            scripts/desktop_entry.py
+          stage="White-Cliff-Mac-Intel"
+          mkdir -p "$stage"
+          cp -R "dist/White Cliff.app" "$stage/"
+          cp docs/how-to-open.md "$stage/how-to-open.md"
+          cp docs/how-to-open-de.md "$stage/how-to-open-de.md"
+          ditto -c -k --keepParent "$stage" "$stage.zip"
+      - name: Show the old certificate failure
+        run: |
+          saved_file="${SSL_CERT_FILE-}"
+          saved_dir="${SSL_CERT_DIR-}"
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 -c 'import ssl; print(ssl.get_default_verify_paths())'
+          python3 scripts/prove_old_tls.py "$saved_file" "$saved_dir"
+      - name: Smoke
+        timeout-minutes: 12
+        run: |
+          unset SSL_CERT_FILE
+          unset SSL_CERT_DIR
+          unset REQUESTS_CA_BUNDLE
+          unset CURL_CA_BUNDLE
+          python3 scripts/smoke_mac.py "dist/White Cliff.app/Contents/MacOS/White Cliff"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: White-Cliff-Mac-Intel.zip
+          path: White-Cliff-Mac-Intel.zip
+          retention-days: 7
+
+  package-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name "White Cliff" --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi scripts/desktop_entry.py
+          Copy-Item "dist/White Cliff.exe" "White-Cliff-Windows.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: White-Cliff-Windows.exe
+          path: White-Cliff-Windows.exe
+          retention-days: 7
+
+  upload:
+    needs:
+      - package-apple-silicon
+      - package-intel-mac
+      - package-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Upload the existing release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          cp docs/how-to-open.md how-to-open.md
+          sha256sum \
+            White-Cliff-Mac-Apple-silicon.zip \
+            White-Cliff-Mac-Intel.zip \
+            White-Cliff-Windows.exe \
+            how-to-open.md \
+            > SHA256SUMS.txt
+          gh release view "$RELEASE_TAG" --json tagName > /dev/null
+          gh release upload "$RELEASE_TAG" \
+            White-Cliff-Mac-Apple-silicon.zip \
+            White-Cliff-Mac-Intel.zip \
+            White-Cliff-Windows.exe \
+            SHA256SUMS.txt \
+            how-to-open.md \
+            --clobber
