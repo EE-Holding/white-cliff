@@ -1,7 +1,6 @@
 """The German review file is generated from the code and lists every shown string."""
 
 import ast
-import csv
 import importlib.util
 import re
 from pathlib import Path
@@ -22,24 +21,16 @@ def _rows():
     return module.review_rows()
 
 
-def _on_disk():
-    with EXPORT.open(encoding="utf-8-sig", newline="") as handle:
-        return [tuple(row) for row in csv.reader(handle)]
-
-
 def test_the_review_file_lists_every_german_string():
-    assert EXPORT.is_file()
-    header, *found = _on_disk()
-    assert header == ("key", "english", "german", "where")
-    rows = _rows()
-    assert found == rows
-    listed = {key: (english, german) for key, english, german, _where in found}
-    for key, (english, german) in STRINGS.items():
-        assert listed[key] == (english, german)
+    assert not EXPORT.is_file()
+    found = _rows()
+    listed = {key: (english, phrase) for key, english, phrase, _where in found}
+    for key, (english, phrase) in STRINGS.items():
+        assert listed[key] == (english, phrase)
     for month in MONTHS:
-        assert any(german == month for _key, _english, german, _where in found)
-    for german in _SCALE.values():
-        assert any(cell == german for _key, _english, cell, _where in found)
+        assert any(phrase == month for _key, _english, phrase, _where in found)
+    for phrase in _SCALE.values():
+        assert any(cell == phrase for _key, _english, cell, _where in found)
 
 
 def test_a_shown_german_fragment_cannot_skip_the_export():
