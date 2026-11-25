@@ -14,6 +14,14 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: python -m pip install -e ".[dev]"
+      - name: Install the print-test browser
+        run: |
+          version=157.0.8103.50
+          curl -fsSL -o chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${version}/linux64/chrome-linux64.zip"
+          unzip -q chrome.zip -d "$RUNNER_TEMP/chrome"
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -s "$RUNNER_TEMP/chrome/chrome-linux64/chrome" "$RUNNER_TEMP/bin/google-chrome"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Test
         run: python -m pytest
         env:
@@ -38,18 +46,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Render the open guides
+        run: python3 scripts/render_guides.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: how-to-open-guides
+          path: how-to-open-en.png
+          retention-days: 7
+          if-no-files-found: error
       - name: Install
-        run: python -m pip install . pyinstaller
+        run: python -m pip install . "pyinstaller==6.22.3"
       - name: Build
         run: |
           python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
             --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi \
             scripts/desktop_entry.py
-          stage="White Cliff for Apple silicon Mac"
+          stage="WhiteCliff-Mac-Apple-silicon"
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
+          cp docs/how-to-*.png "$stage/"
           ditto -c -k --keepParent "$stage" "$stage.zip"
+          shasum -a 256 "$stage.zip" > SHA256SUMS
       - name: Show the old certificate failure
         run: |
           saved_file="${SSL_CERT_FILE-}"
@@ -77,9 +96,11 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: White Cliff for Apple silicon Mac
-          path: White Cliff for Apple silicon Mac.zip
-          retention-days: 7
+          name: WhiteCliff-Mac-Apple-silicon
+          path: |
+            WhiteCliff-Mac-Apple-silicon.zip
+            SHA256SUMS
+          retention-days: 90
 
   package-intel-mac:
     runs-on: macos-15-intel
@@ -89,17 +110,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install . pyinstaller
+        run: python -m pip install . "pyinstaller==6.22.3"
       - name: Build
         run: |
           python -m PyInstaller --noconfirm --clean --windowed --name "White Cliff" \
             --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi \
             scripts/desktop_entry.py
-          stage="White Cliff for Intel Mac"
+          stage="WhiteCliff-Mac-Intel"
           mkdir -p "$stage"
           cp -R "dist/White Cliff.app" "$stage/"
           cp docs/how-to-open.md "$stage/how-to-open.md"
+          cp docs/how-to-*.png "$stage/"
           ditto -c -k --keepParent "$stage" "$stage.zip"
+          shasum -a 256 "$stage.zip" > SHA256SUMS
       - name: Show the old certificate failure
         run: |
           saved_file="${SSL_CERT_FILE-}"
@@ -127,9 +150,11 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: White Cliff for Intel Mac
-          path: White Cliff for Intel Mac.zip
-          retention-days: 7
+          name: WhiteCliff-Mac-Intel
+          path: |
+            WhiteCliff-Mac-Intel.zip
+            SHA256SUMS
+          retention-days: 90
 
   package-windows:
     runs-on: windows-latest
@@ -139,15 +164,23 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install . pyinstaller
+        run: python -m pip install . "pyinstaller==6.22.3"
       - name: Build
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name "White Cliff" --collect-submodules white_cliff --collect-data white_cliff --collect-data certifi scripts/desktop_entry.py
+          $stage = "WhiteCliff-Windows"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "dist/White Cliff.exe" (Join-Path $stage "White Cliff.exe")
+          Copy-Item "docs/how-to-open.md" (Join-Path $stage "how-to-open.md")
+          Copy-Item "docs/how-to-*.png" $stage
+          Compress-Archive -Path $stage -DestinationPath "WhiteCliff-Windows.zip"
+          $hash = (Get-FileHash "WhiteCliff-Windows.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "SHA256SUMS" -Value "$hash  WhiteCliff-Windows.zip" -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: White Cliff for Windows
+          name: WhiteCliff-Windows
           path: |
-            dist/White Cliff.exe
-            docs/how-to-open.md
-          retention-days: 7
+            WhiteCliff-Windows.zip
+            SHA256SUMS
+          retention-days: 90

@@ -1,0 +1,72 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the release that already exists
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Upload the tested assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)
+          if [ "$draft" != "true" ]; then
+            echo "the release is not a draft" >&2
+            exit 1
+          fi
+          sha=$(git rev-parse HEAD)
+          run_id=$(gh run list --workflow ci.yml --commit "$sha" --json databaseId,conclusion,headSha --jq '[.[] | select(.conclusion=="success" and .headSha=="'"$sha"'")][0].databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "CI artifacts for $sha are missing or expired" >&2
+            exit 1
+          fi
+          if ! gh run download "$run_id" --name WhiteCliff-Mac-Apple-silicon --dir apple \
+            || ! gh run download "$run_id" --name WhiteCliff-Mac-Intel --dir intel \
+            || ! gh run download "$run_id" --name WhiteCliff-Windows --dir windows; then
+            echo "CI artifacts for $sha are missing or expired" >&2
+            exit 1
+          fi
+          cp apple/WhiteCliff-Mac-Apple-silicon.zip WhiteCliff-Mac-Apple-silicon.zip
+          cp intel/WhiteCliff-Mac-Intel.zip WhiteCliff-Mac-Intel.zip
+          cp windows/WhiteCliff-Windows.zip WhiteCliff-Windows.zip
+          for name in \
+            WhiteCliff-Mac-Apple-silicon.zip \
+            WhiteCliff-Mac-Intel.zip \
+            WhiteCliff-Windows.zip
+          do
+            if [ ! -s "$name" ]; then
+              echo "CI artifacts for $sha are missing or expired" >&2
+              exit 1
+            fi
+          done
+          cp docs/how-to-open.md how-to-open.md
+          cp docs/how-to-*.png .
+          files=(
+            WhiteCliff-Mac-Apple-silicon.zip
+            WhiteCliff-Mac-Intel.zip
+            WhiteCliff-Windows.zip
+            how-to-open.md
+          )
+          while IFS= read -r picture; do
+            files+=("$picture")
+          done < <(printf '%s\n' how-to-*.png | sort)
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" \
+            "${files[@]}" \
+            SHA256SUMS.txt
