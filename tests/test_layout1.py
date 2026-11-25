@@ -554,6 +554,61 @@ def test_the_printed_disclaimer_is_body_size_with_a_top_margin(tmp_path):
     assert 18 <= size <= 21
 
 
+def test_print_starts_12mm_below_the_page_top(tmp_path):
+    import subprocess
+
+    from tests.test_print_summary import _print_chrome
+
+    page = _page("en")
+    html_path = tmp_path / "result.html"
+    pdf_path = tmp_path / "result.pdf"
+    html_path.write_text(page, encoding="utf-8")
+    subprocess.run(
+        [
+            "timeout",
+            "40",
+            _print_chrome(),
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    insets = _printed_top_insets_mm(pdf_path.read_bytes())
+    assert insets
+    # The text matrix stays inside the content box. The page inset is the box origin.
+    assert all(abs(item - 12) <= 0.5 for item in insets)
+
+
+def _printed_top_insets_mm(data: bytes) -> list[float]:
+    from tests.test_print_summary import _driver
+
+    objects = _driver()._pdf_objects(data)
+    insets: list[float] = []
+    for dictionary, _stream in objects.values():
+        if re.search(rb"/Type\s*/Page(?!s)", dictionary) is None:
+            continue
+        array = re.search(rb"/Contents\s*\[([^\]]*)\]", dictionary)
+        if array is not None:
+            contents = [int(item) for item in re.findall(rb"(\d+)\s+\d+\s+R", array.group(1))]
+        else:
+            single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
+            contents = [int(single.group(1))] if single else []
+        blob = b"\n".join(objects[item][1] or b"" for item in contents)
+        scale = re.search(rb"([\d.]+) 0 0 -[\d.]+ 0 [\d.]+ cm", blob)
+        origin = re.search(rb"[\d.]+ 0 0 [\d.]+ [\d.]+ ([\d.]+) cm", blob)
+        if scale is None or origin is None:
+            continue
+        points = float(origin.group(1)) * float(scale.group(1))
+        insets.append(points / 72 * 25.4)
+    return insets
+
+
 def _first_printed_font_size(data: bytes) -> float:
     from tests.test_print_summary import _driver
 
