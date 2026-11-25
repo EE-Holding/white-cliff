@@ -471,7 +471,8 @@ def test_a_collapsed_section_note_does_not_hold_a_row(tmp_path):
               return card.top - heading.bottom;
             })()""",
         )
-        assert closed < 52
+        # The heading's own margin is 16px. A gap past that tolerance still includes the row gap.
+        assert closed <= 18
         opened = _eval(
             page,
             """(() => {
@@ -491,3 +492,174 @@ def test_a_collapsed_section_note_does_not_hold_a_row(tmp_path):
         chrome.wait(timeout=5)
         if not stderr_file.closed:
             stderr_file.close()
+
+
+def test_the_printed_disclaimer_is_body_size_with_a_top_margin(tmp_path):
+    import base64
+
+    from tests.test_desktop_app import _chrome_binary, _chrome_page, _eval
+
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    html_path = tmp_path / "result.html"
+    html_path.write_text(_page("en"), encoding="utf-8")
+    chrome, stderr_file, page = _chrome_page(binary, tmp_path / "profile", tmp_path / "chrome.txt")
+    try:
+        page.call("Page.enable")
+        page.call("Runtime.enable")
+        page.call("Emulation.setEmulatedMedia", {"media": "print"})
+        page.call("Page.navigate", {"url": html_path.as_uri()})
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _eval(page, "document.querySelector('.print-head .disclaimer') !== null"):
+                break
+            time.sleep(0.05)
+        page.call("Emulation.setEmulatedMedia", {"media": "print"})
+        measured = _eval(
+            page,
+            """(() => {
+              const disclaimer = getComputedStyle(document.querySelector('.print-head .disclaimer'));
+              const caption = getComputedStyle(document.querySelector('.caption'));
+              return {
+                font: parseFloat(disclaimer.fontSize),
+                marginTop: parseFloat(disclaimer.marginTop),
+                caption: parseFloat(caption.fontSize)
+              };
+            })()""",
+        )
+        printed = page.call(
+            "Page.printToPDF",
+            {
+                "printBackground": True,
+                "displayHeaderFooter": False,
+                "paperWidth": 8.27,
+                "paperHeight": 11.69,
+                "marginTop": 0,
+                "marginBottom": 0,
+                "marginLeft": 0,
+                "marginRight": 0,
+            },
+        )
+    finally:
+        page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
+    assert 18 <= measured["font"] <= 21
+    assert measured["font"] != measured["caption"]
+    assert measured["marginTop"] >= 16
+    size = _first_printed_font_size(base64.b64decode(printed["data"]))
+    assert 18 <= size <= 21
+
+
+def _first_printed_font_size(data: bytes) -> float:
+    from tests.test_print_summary import _driver
+
+    objects = _driver()._pdf_objects(data)
+    for dictionary, _stream in objects.values():
+        if re.search(rb"/Type\s*/Page(?!s)", dictionary) is None:
+            continue
+        array = re.search(rb"/Contents\s*\[([^\]]*)\]", dictionary)
+        if array is not None:
+            contents = [int(item) for item in re.findall(rb"(\d+)\s+\d+\s+R", array.group(1))]
+        else:
+            single = re.search(rb"/Contents\s+(\d+)\s+\d+\s+R", dictionary)
+            contents = [int(single.group(1))] if single else []
+        blob = b"\n".join(objects[item][1] or b"" for item in contents)
+        found = re.search(rb"/[A-Za-z0-9]+\s+([\d.]+)\s+Tf", blob)
+        if found:
+            return float(found.group(1))
+    raise AssertionError("the printed page has no text")
+
+
+def test_the_share_count_fits_at_360px(tmp_path):
+    from tests.test_desktop_app import _chrome_binary, _chrome_page, _eval
+
+    binary = _chrome_binary()
+    if binary is None:
+        pytest.skip("chrome is not installed")
+    html_path = tmp_path / "result.html"
+    html_path.write_text(_page("en"), encoding="utf-8")
+    chrome, stderr_file, page = _chrome_page(binary, tmp_path / "profile", tmp_path / "chrome.txt")
+    narrow = {"width": 360, "height": 900, "deviceScaleFactor": 1, "mobile": False}
+    try:
+        page.call("Page.enable")
+        page.call("Runtime.enable")
+        page.call("Emulation.setDeviceMetricsOverride", narrow)
+        page.call("Page.navigate", {"url": html_path.as_uri()})
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _eval(page, "document.querySelector('a.figure') !== null"):
+                break
+            time.sleep(0.05)
+        page.call("Emulation.setDeviceMetricsOverride", narrow)
+        time.sleep(0.4)
+        box = _eval(
+            page,
+            """(() => {
+              const link = [...document.querySelectorAll('.big a.figure')]
+                .find((item) => item.textContent.includes('24,190 million shares'));
+              const shown = link.getBoundingClientRect();
+              const root = document.documentElement;
+              return {
+                viewport: window.innerWidth,
+                text: link.textContent,
+                right: shown.right,
+                scroll: root.scrollWidth,
+                client: root.clientWidth
+              };
+            })()""",
+        )
+    finally:
+        page.close()
+        chrome.kill()
+        chrome.wait(timeout=5)
+        if not stderr_file.closed:
+            stderr_file.close()
+    assert box["viewport"] == 360
+    assert "24,190 million shares" in box["text"]
+    assert box["scroll"] <= box["client"] + 1
+    assert box["right"] <= box["viewport"] + 1
+
+
+def test_printed_source_urls_break_only_at_delimiters(tmp_path):
+    import subprocess
+
+    from tests.test_print_summary import _pdf_lines, _print_chrome
+
+    page = _page("en")
+    html_path = tmp_path / "result.html"
+    pdf_path = tmp_path / "result.pdf"
+    html_path.write_text(page, encoding="utf-8")
+    subprocess.run(
+        [
+            "timeout",
+            "40",
+            _print_chrome(),
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    flat = [line.strip() for lines in _pdf_lines(pdf_path.read_bytes()) for line in lines]
+    wraps = []
+    for left, right in zip(flat, flat[1:]):
+        if not _url_piece(left) or not _url_piece(right) or right.startswith("https://"):
+            continue
+        if "sec.gov" not in left and "/" not in left:
+            continue
+        wraps.append((left, right))
+        assert left[-1] in "/?&=._#:-" or right[0] in "/?&=._#:-", (left, right)
+    assert wraps
+
+
+def _url_piece(line: str) -> bool:
+    return bool(line) and " " not in line and re.fullmatch(r"[A-Za-z0-9/?&=._:#%-]+", line) is not None

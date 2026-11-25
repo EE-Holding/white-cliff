@@ -165,7 +165,7 @@ def test_sec_urls_are_visible_text_for_the_filing_and_each_fact():
     assert sources is not None
     block = sources.group(1)
     assert f"<h2>{SOURCES}</h2>" in block
-    visible = html.unescape(re.sub(r"<[^>]+>", " ", block))
+    visible = html.unescape(re.sub(r"<[^>]+>", " ", block.replace("<wbr>", "")))
     assert filing.url in visible
     hrefs = [
         html.unescape(item)
@@ -236,7 +236,7 @@ def test_the_printed_summary_has_no_personal_data_and_no_new_words():
     assert "IDENTITYMARKER" not in " ".join(hidden.values)
     assert "example.com" not in " ".join(hidden.values)
     sources = re.search(r'<section class="sources">(.*?)</section>', page, re.S).group(1)
-    visible = html.unescape(re.sub(r"<[^>]+>", " ", sources))
+    visible = html.unescape(re.sub(r"<[^>]+>", " ", sources.replace("<wbr>", "")))
     assert re.sub(r"\s+", " ", _SEC.sub(" ", visible)).strip() == SOURCES
     figures = re.findall(r'<a class="figure" href="[^"]*"[^>]*>(.*?)</a>', page)
     assert figures
@@ -631,7 +631,7 @@ def _folded(text: str) -> str:
 
 
 def test_a_sec_url_is_not_split_across_printed_pages():
-    """Each source URL is one unbreakable line. No browser and no PDF reader."""
+    """A source URL stays on one page. A line may break only beside a delimiter."""
     _filing, page = _page()
     css = _print_css(page)
     rule = re.search(r"\.sources li \{[^}]*\}", css)
@@ -643,8 +643,13 @@ def test_a_sec_url_is_not_split_across_printed_pages():
     items = re.findall(r"<li>(.*?)</li>", block.group(1), re.S)
     assert items
     for item in items:
-        assert "<" not in item
-        url = html.unescape(item).strip()
+        parts = item.split("<wbr>")
+        assert all("<" not in part for part in parts)
+        assert all(
+            html.unescape(left)[-1] in "/?&=._#:-" or html.unescape(right)[:1] in "/?&=._#:-"
+            for left, right in zip(parts, parts[1:])
+        )
+        url = html.unescape("".join(parts)).strip()
         assert url.startswith("https://www.sec.gov/")
         assert " " not in url
         assert "\n" not in url

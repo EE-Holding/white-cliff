@@ -431,6 +431,9 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "width: 100%; min-width: 0; height: 48px; }\n"
         "  .lang button { min-width: 92px; }\n"
         "}\n"
+        "@media (max-width: 360px) {\n"
+        "  .big a, .big a.figure { white-space: normal; }\n"
+        "}\n"
         "@media (prefers-reduced-motion: reduce) {\n"
         "  .column, html[data-lang-set] .column, .failure, .steps, .steps.open, .steps.leave, "
         "  body.result .hero, .card, .fill, "
@@ -448,9 +451,10 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "margin-left: auto; margin-right: auto; "
         "border-collapse: collapse; border-spacing: 0; }\n"
         "table.print-sheet > tbody { display: grid; grid-template-columns: 1fr 1fr; "
-        "gap: 24px; align-items: stretch; }\n"
+        "column-gap: 24px; row-gap: 0; align-items: stretch; }\n"
+        "table.print-sheet > tbody > tr:not(.wide) { margin-bottom: 24px; }\n"
         "table.print-sheet > tbody > tr, table.print-sheet > tbody > tr > td { display: block; "
-        "min-width: 0; }\n"
+        "min-width: 0; padding: 0; }\n"
         "table.print-sheet > tbody > tr.wide { grid-column: 1 / -1; }\n"
         'table.print-sheet > tbody > tr:has(p[data-template="SECTION"][hidden]) { display: none; }\n'
         "@media (max-width: 900px) {\n"
@@ -459,7 +463,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "thead.print-head { display: none; }\n"
         "button.print { min-height: 64px; min-width: 280px; padding: 18px 32px; font-size: 24px; }\n"
         ".sources { margin-top: 40px; }\n"
-        ".sources li { overflow-wrap: anywhere; margin-top: 8px; }\n"
+        ".sources li { overflow-wrap: normal; word-break: normal; margin-top: 8px; }\n"
         ".limit-once { display: none; }\n"
         "@media print {\n"
         "  *, *::before, *::after { animation: none !important; transition: none !important; }\n"
@@ -478,9 +482,10 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "  input { display: none !important; }\n"
         "  p[data-template=\"LIMIT\"] { display: none; }\n"
         "  p.limit-once { display: block; }\n"
-        "  .print-head .disclaimer { padding-top: 0; padding-bottom: 24px; "
+        "  .print-head .disclaimer { margin-top: 16px; padding-top: 0; padding-bottom: 24px; "
         "padding-left: 48px; padding-right: 48px; max-width: none; "
-        "font-size: 21px; line-height: 27px; }\n"
+        "font-size: 21px; line-height: 24px; }\n"
+        "  .print-head .disclaimer + .disclaimer { margin-top: 4px; padding-top: 0; }\n"
         "  .sources li { break-inside: avoid; page-break-inside: avoid; }\n"
         "  article.card { break-inside: avoid; page-break-inside: avoid; }\n"
         "  section.check { break-inside: avoid; page-break-inside: avoid; }\n"
@@ -501,7 +506,6 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "  .bh, .bd { font-size: 12px; line-height: 15px; }\n"
         "  .bv a { min-height: 0; padding: 0; font-size: 12px; line-height: 16px; }\n"
         "  .bar-track { height: 8px; margin-top: 2px; }\n"
-        "  .print-head .disclaimer { font-size: 12px; line-height: 15px; }\n"
         "  h3, .marker, .explain, .quality { font-size: 13px; line-height: 16px; }\n"
         "  .sources { margin-top: 10px; }\n"
         "  .filing a, .change a { min-height: 0; padding: 0; font-size: 12px; line-height: 16px; }\n"
@@ -1301,6 +1305,14 @@ def _with_print_limit(quality: str) -> str:
     return quality[:at] + "\n" + extra + quality[at:]
 
 
+_URL_BREAK = re.compile(r"([/?&=._#:-])")
+
+
+def _breakable_url(url: str) -> str:
+    """Escape a source URL and allow a line break only beside a delimiter."""
+    return "<wbr>".join(html.escape(part) for part in _URL_BREAK.split(url) if part)
+
+
 def _source_section(filing_url: str, *chunks: str) -> str:
     """The filing and every shown fact, as visible sec.gov text."""
     urls: list[str] = []
@@ -1317,7 +1329,7 @@ def _source_section(filing_url: str, *chunks: str) -> str:
     if not urls:
         return ""
     title = phrase("PRINT.sources")
-    items = "".join(f"<li>{html.escape(url)}</li>\n" for url in urls)
+    items = "".join(f"<li>{_breakable_url(url)}</li>\n" for url in urls)
     return (
         '<section class="sources">\n'
         f"<h2>{html.escape(title)}</h2>\n"
