@@ -124,6 +124,11 @@ def build_site(output: Path, pinned: Path | None = None) -> Path:
     check_index(index)
     (output / "index.html").write_text(index, encoding="utf-8")
     (output / ".nojekyll").write_text("", encoding="utf-8")
-    guide = Path(__file__).with_name("data") / "how-to-open.md"
-    (output / "how-to-open.md").write_bytes(guide.read_bytes())
+    data = Path(__file__).with_name("data")
+    for name in ("how-to-open.md", "release-notes.md"):
+        guide = data / name
+        (output / name).write_bytes(guide.read_bytes())
+    docs = Path(__file__).resolve().parents[2] / "docs"
+    for picture in sorted(docs.glob("how-to-*.png")):
+        (output / picture.name).write_bytes(picture.read_bytes())
     return output

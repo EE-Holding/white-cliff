@@ -157,6 +157,17 @@ def test_german_disclaimer_is_the_next_printed_line():
     header = re.search(r'<thead class="print-head">(.*?)</thead>', page, re.S).group(1)
     between = header[header.index(DISCLAIMER) + len(DISCLAIMER) : header.index(GERMAN)]
     assert re.sub(r"<[^>]+>", "", between).strip() == ""
+    assert "<hr" not in between.lower()
+    screen = page.split("@media print", 1)[0]
+    gap = screen.split(".disclaimer + .disclaimer {", 1)[1].split("}", 1)[0]
+    assert "padding-top: 0" in gap
+    assert "margin-top: 0" in gap
+    assert "border" not in gap
+    printed = page.split("@media print", 1)[1]
+    follow = printed.split(".disclaimer + .disclaimer {", 1)[1].split("}", 1)[0]
+    assert "margin-top: 0" in follow
+    assert "padding-top: 0" in follow
+    assert "border" not in follow
 
 
 def test_sec_urls_are_visible_text_for_the_filing_and_each_fact():
@@ -577,10 +588,16 @@ def test_the_smoke_compares_the_disclaimer_byte_for_byte():
 
 
 def test_print_tests_name_the_chrome_they_need():
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
     assert f"Google Chrome {PRINT_CHROME_MAJOR}" in readme
     assert _chrome_major("Google Chrome 157.0.8103.50") == PRINT_CHROME_MAJOR
     assert _chrome_major("Google Chrome 120.0.6099.109") != PRINT_CHROME_MAJOR
+    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    version = "157.0.8103.50"
+    assert version in workflow
+    assert workflow.index(version) < workflow.index("python -m pytest")
+    assert "google-chrome" in workflow
 
 
 def _chrome_major(version: str) -> str:

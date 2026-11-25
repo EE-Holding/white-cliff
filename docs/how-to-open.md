@@ -2,38 +2,52 @@ This tool explains the numbers in a public company filing. It does not recommend
 
 # How to open White Cliff
 
-Download one zip on a Mac, or one program on Windows. Unzip the Mac file. Double-click White Cliff. There is nothing else to install.
-
-The first time, a page asks for your name and your email. After that, type a company name or ticker and press Explain.
+White Cliff is open source. Anyone can read the program. The file SHA256SUMS.txt lists one long number for each download. Anyone can check that their file matches that number.
 
 The first lookup is the first live one; the app was tested with saved filings.
 
-The download is not signed. macOS and Windows ask you to confirm before it opens.
+The download is not signed. A Mac with an Apple chip uses WhiteCliff-Mac-Apple-silicon.zip. An older Mac uses WhiteCliff-Mac-Intel.zip. A Windows computer uses WhiteCliff-Windows.zip. Each step has one picture. A yellow box means the picture is a drawing, not a screenshot.
 
 ## Mac
 
-Use "White Cliff for Apple silicon Mac" on an Apple silicon Mac. Use "White Cliff for Intel Mac" on an Intel Mac. Unzip it. Move White Cliff.app into Applications if you like. Double-click White Cliff.app.
+1. Unzip the Mac file shown in the picture.
 
-macOS shows a warning that it cannot verify the app, or that the app was not opened. Click Done. Do not click Move to Trash.
+![Drawing, not a screenshot: the file names.](how-to-files.png)
 
-Then open the Apple menu, choose System Settings, and click Privacy & Security. Scroll down to Security. Click Open Anyway. Confirm with your password or Touch ID. If a second warning appears, click Open.
+2. Double-click White Cliff.
 
-Apple's guide says the Open Anyway button is there for about an hour after you try to open the app. If the button is missing, double-click the app again, then go back to Privacy & Security.
+![Drawing, not a screenshot: the White Cliff icon.](how-to-mac-icon.png)
 
-The exact warning words differ by macOS version. The current path is System Settings, Privacy & Security, and Open Anyway. On macOS Sonoma and earlier, Control-click and Open was another path. On the current macOS, use Open Anyway.
+3. Click Done, and do not click Move to Trash.
 
-After this, double-clicking White Cliff opens it. Your browser shows a private page on this computer. Opening White Cliff again opens the page that is already running. The page closes after 30 minutes with no use.
+![Drawing, not a screenshot: the Mac message, with Done marked.](how-to-mac-warning.png)
+
+4. Right-click White Cliff and click Open.
+
+![Drawing, not a screenshot: the Open command.](how-to-mac-open.png)
+
+5. Click Privacy & Security, then click Open Anyway.
+
+![Drawing, not a screenshot: Privacy & Security, with Open Anyway marked.](how-to-mac-settings.png)
+
+6. The browser shows a page that runs only on this computer.
+
+![Screenshot from the Mac build: a page that runs only on this computer.](how-to-app.png)
 
 ## Windows
 
-Double-click White Cliff.exe.
+1. Double-click the Windows file shown in the picture.
 
-Windows shows a blue window titled "Windows protected your PC". Click More info. The window names the program and says Unknown publisher. Click Run anyway.
+![Drawing, not a screenshot: the Windows file.](how-to-windows-file.png)
 
-Your browser shows a private page on this computer. Opening White Cliff again opens the page that is already running. The page closes after 30 minutes with no use.
+2. Click More info.
 
-If Smart App Control is turned on, the window can say the app was blocked and show no Run anyway button. The More info path above is the usual SmartScreen window.
+![Drawing, not a screenshot: the Windows message, with More info marked.](how-to-windows-more-info.png)
 
-## What you see in the page
+3. Click Run anyway.
 
-Large type. The disclaimer is at the top. The first time, the page asks for your name and your email and says why. After you save, there is one box, "Company name or ticker", and an Explain button.
+![Drawing, not a screenshot: the Windows message, with Run anyway marked.](how-to-windows-run.png)
+
+4. The browser shows a page that runs only on this computer.
+
+![Screenshot from the Mac build: a page that runs only on this computer.](how-to-app.png)

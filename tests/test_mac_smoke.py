@@ -6,6 +6,7 @@ import re
 import signal
 import struct
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,1411 @@ def test_intel_photo_shows_the_card_beside_the_first(tmp_path, monkeypatch):
     assert _ink(driver, data, 700, 40)
 
 
+def test_a_missing_or_stale_screencast_is_not_a_live_photo(tmp_path, monkeypatch):
+    """A copied document must not stand in for a frame the window did not paint."""
+    driver = _driver()
+    page = object()
+    def picture(seed: int) -> bytes:
+        rows = [
+            bytes((seed + x + y * 3) % 256 for x in range(1100 * 3))
+            for y in range(40)
+        ]
+        return driver._png_bytes(1100, 40, 2, 8, rows)
+
+    copy = picture(1)
+    stale = picture(90)
+    monkeypatch.setattr(driver, "_copied_png", lambda page, width: copy)
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    try:
+        driver._PAUSED = True
+        driver._LAST = b""
+        driver._SEEN = set()
+        monkeypatch.setattr(driver, "_live_frame", lambda page, width=0: b"")
+        with pytest.raises(driver.PageError, match="no screencast frame"):
+            driver._intel_photo(
+                page, tmp_path, "missing.png", 1100, 400, keep_scroll=False, reveal=False
+            )
+        assert not (tmp_path / "missing.png").exists()
+        driver._LAST = stale
+        driver._SEEN = {stale}
+        monkeypatch.setattr(driver, "_live_frame", lambda page, width=0: stale)
+        with pytest.raises(driver.PageError, match="previous screencast frame"):
+            driver._intel_photo(
+                page, tmp_path, "stale.png", 1100, 400, keep_scroll=False, reveal=False
+            )
+        assert not (tmp_path / "stale.png").exists()
+        narrow_rows = [
+            bytes((7 + x + y * 3) % 256 for x in range(800 * 3))
+            for y in range(40)
+        ]
+        narrow = driver._png_bytes(800, 40, 2, 8, narrow_rows)
+        monkeypatch.setattr(
+            driver,
+            "_copied_png",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied")),
+        )
+        monkeypatch.setattr(driver, "_live_frame", lambda page, width=0: narrow)
+        driver._LAST = b""
+        driver._SEEN = set()
+        with pytest.raises(driver.PageError, match="800px wide, wanted 1100"):
+            driver._intel_photo(
+                page, tmp_path, "narrow.png", 1100, 400, keep_scroll=False, reveal=False
+            )
+        assert not (tmp_path / "narrow.png").exists()
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+
+
+def test_a_repeated_frame_clears_the_stuck_window(monkeypatch):
+    """The Intel override can leave the old picture in place. Clearing it reaches the next size."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(8):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 20, 2, 8, rows)
+
+    stale = picture(2)
+    fresh = picture(5)
+    calls: list[tuple] = []
+    sent = {"n": 0}
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            if method == "Emulation.clearDeviceMetricsOverride":
+                calls.append(("clear",))
+            if method == "Emulation.setDeviceMetricsOverride":
+                calls.append(("metrics", (params or {}).get("width")))
+            if method == "Page.startScreencast":
+                calls.append(("cast",))
+            return {}
+
+        def next_event(self, method, timeout):
+            sent["n"] += 1
+            payload = stale if sent["n"] == 1 else fresh
+            raw = __import__("base64").b64encode(payload).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": sent["n"]}}
+
+    monkeypatch.setattr(
+        driver,
+        "_fit_window",
+        lambda page, width, height: calls.append(("bounds", width)),
+    )
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._PAUSED = False
+    driver._LAST = b""
+    driver._SEEN = {stale}
+    try:
+        data = driver._live_frame(Page(), 1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert data == fresh
+    assert ("clear",) in calls
+    assert ("metrics", 1100) in calls
+    assert ("bounds", 1100) in calls
+    assert ("cast",) in calls[calls.index(("metrics", 1100)) :]
+
+
+def test_the_result_picture_does_not_wait_on_the_renderer(tmp_path, monkeypatch):
+    """Waiting for a paint holds the renderer, so a resized window repeats the last frame."""
+    driver = _driver()
+    waited: list[bool] = []
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if "requestAnimationFrame" in expression:
+                waited.append(bool(params.get("awaitPromise")))
+            return {}
+
+        def next_event(self, method, timeout):
+            rows = []
+            for y in range(8):
+                row = bytearray(1100 * 3)
+                for x in range(1100 * 3):
+                    row[x] = (4 * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+                rows.append(bytes(row))
+            raw = __import__("base64").b64encode(driver._png_bytes(1100, 20, 2, 8, rows)).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_activate", lambda: None)
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._PAUSED = False
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        driver._intel_photo(Page(), tmp_path, "result.png", 1100, 400, keep_scroll=False, reveal=False)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert waited
+    assert waited == [False] * len(waited)
+
+
+def test_a_wider_result_picture_comes_from_a_new_window(tmp_path, monkeypatch):
+    """A wider result is a new window. Resizing the open window keeps the old bitmap."""
+    driver = _driver()
+
+    def picture(seed: int, width: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(width * 3)
+            for x in range(width * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(width, 60, 2, 8, rows)
+
+    fresh = picture(6, 1280)
+    order: list[str] = []
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def call(self, method, params=None, timeout=20):
+            order.append(method)
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if method == "Emulation.setEmulatedMedia":
+                features = params.get("features") or [{}]
+                order.append("media " + str(features[0].get("value")))
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            if "requestAnimationFrame" in expression:
+                order.append("paint")
+            return {}
+
+        def next_event(self, method, timeout):
+            if "paint" not in order or getattr(self, "sent", False):
+                raise driver.PageError(method)
+            self.sent = True
+            raw = __import__("base64").b64encode(fresh).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(
+        driver,
+        "_fresh_target",
+        lambda width, height: order.append(f"createTarget {width}x{height}") or Shot(),
+    )
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(
+        driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied"))
+    )
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: order.append("close"))
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._shot(
+            Source(), tmp_path, "smoke-x86_64-9-result-1280.png", width=1280, height=2200, full=True
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert path.read_bytes() == fresh
+    assert order.index("createTarget 1280x900") < order.index("Page.startScreencast")
+    assert order.index("Page.startScreencast") < order.index("Page.navigate")
+    assert order.index("media reduce") < order.index("Page.navigate")
+    assert "resize" not in order
+    assert "Page.captureScreenshot" not in order
+
+
+def test_a_silent_cast_opens_one_more_window(tmp_path, monkeypatch):
+    """A window whose cast sends nothing is opened once more. A repeat is not."""
+    driver = _driver()
+
+    def picture() -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 60, 2, 8, rows)
+
+    seed = 8
+    fresh = picture()
+    opened = {"n": 0}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/"}}
+            return {}
+
+    class Silent:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            raise driver.PageError(method)
+
+    class Talking(Silent):
+        def next_event(self, method, timeout):
+            if getattr(self, "sent", False):
+                raise driver.PageError(method)
+            self.sent = True
+            raw = __import__("base64").b64encode(fresh).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    def fresh_target(width, height):
+        opened["n"] += 1
+        return Silent() if opened["n"] == 1 else Talking()
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", fresh_target)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._shot(Source(), tmp_path, "smoke-x86_64-1-first-run.png", width=1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert opened["n"] == 2
+    assert path.read_bytes() == fresh
+
+
+def test_a_blank_cast_opens_one_more_window(tmp_path, monkeypatch):
+    """A 420 window whose only frame is blank is opened once more."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(420 * 3)
+            for x in range(420 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(420, 60, 2, 8, rows)
+
+    blank = driver._png_bytes(420, 60, 2, 8, [b"\xff" * (420 * 3)] * 60)
+    fresh = picture(4)
+    assert driver._blank(blank)
+    assert not driver._blank(fresh)
+    opened = {"n": 0}
+    sent = {"blank": False}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Blank:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if sent["blank"]:
+                raise TimeoutError(method)
+            sent["blank"] = True
+            raw = __import__("base64").b64encode(blank).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    class Talking(Blank):
+        def next_event(self, method, timeout):
+            if getattr(self, "sent", False):
+                raise TimeoutError(method)
+            self.sent = True
+            raw = __import__("base64").b64encode(fresh).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 2}}
+
+    def fresh_target(width, height):
+        opened["n"] += 1
+        return Blank() if opened["n"] == 1 else Talking()
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", fresh_target)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._shot(
+            Source(), tmp_path, "smoke-x86_64-7-result-420.png", width=420, height=1800, full=True
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert opened["n"] == 2
+    assert path.read_bytes() == fresh
+
+
+def test_a_second_blank_cast_uses_the_live_view(tmp_path, monkeypatch):
+    """Two blank casts are not a picture. The second window's live view is."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 60, 2, 8, rows)
+
+    blank = driver._png_bytes(1100, 60, 2, 8, [b"\xff" * (1100 * 3)] * 60)
+    fresh = picture(9)
+    assert driver._blank(blank)
+    assert not driver._blank(fresh)
+    opened = {"n": 0}
+    views: list[int] = []
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/"}}
+            return {}
+
+    class Blank:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            if method == "Page.captureScreenshot":
+                views.append(opened["n"])
+                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                return {"data": raw}
+            return {}
+
+        def next_event(self, method, timeout):
+            if getattr(self, "sent", False):
+                raise TimeoutError(method)
+            self.sent = True
+            raw = __import__("base64").b64encode(blank).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    def fresh_target(width, height):
+        opened["n"] += 1
+        return Blank()
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", fresh_target)
+    monkeypatch.setattr(
+        driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied"))
+    )
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._shot(Source(), tmp_path, "smoke-x86_64-1-first-run.png", width=1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert opened["n"] == 2
+    assert views == [2]
+    assert path.read_bytes() == fresh
+
+
+def test_a_repeated_result_from_a_new_window_is_rejected(tmp_path, monkeypatch):
+    """A new window that paints the same pixels is still a repeated frame."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1100 * 3)
+            for x in range(1100 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1100, 60, 2, 8, rows)
+
+    seen = picture(3)
+    order: list[str] = []
+    sent = {"n": 0}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            if method == "Page.startScreencast" and sent["n"]:
+                order.append("second-cast")
+            return {}
+
+        def next_event(self, method, timeout):
+            sent["n"] += 1
+            if sent["n"] == 1:
+                raw = __import__("base64").b64encode(seen).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 1}}
+            raise driver.PageError(method)
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(
+        driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied"))
+    )
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        with pytest.raises(driver.PageError, match="repeated a previous screencast frame"):
+            driver._shot(Source(), tmp_path, "smoke-x86_64-8-result-1100.png", width=1100)
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert "resize" not in order
+    assert "second-cast" not in order
+
+
+def test_a_panel_cast_replaces_a_repeated_frame_without_a_second_cast(tmp_path, monkeypatch):
+    """The checks picture is a new window at the shot size.
+
+    Its one cast starts after the section is in view. The first frame can still
+    be an earlier picture. One shift on that same cast replaces it.
+    """
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1280 * 3)
+            for x in range(1280 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1280, 60, 2, 8, rows)
+
+    seen = picture(3)
+    fresh = picture(9)
+    order: list[str] = []
+    sent = {"seen": 0, "fresh": False}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def call(self, method, params=None, timeout=20):
+            order.append(method)
+            expression = str((params or {}).get("expression") or "")
+            if "scrollBy" in expression:
+                order.append("nudge")
+            if method == "Page.startScreencast" and order.count("Page.startScreencast") > 1:
+                order.append("second-cast")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if method != "Page.screencastFrame":
+                raise driver.PageError(method)
+            if "nudge" not in order:
+                if sent["seen"] == 0:
+                    sent["seen"] = 1
+                    raw = __import__("base64").b64encode(seen).decode("ascii")
+                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
+                raise TimeoutError(method)
+            if not sent["fresh"]:
+                sent["fresh"] = True
+                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 2}}
+            raise TimeoutError(method)
+
+    def prepare(shot):
+        order.append("prepare")
+        return None
+
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(
+        driver,
+        "_fresh_target",
+        lambda width, height: order.append(f"createTarget {width}x{height}") or Shot(),
+    )
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(
+        driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied"))
+    )
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: order.append("close"))
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-19-de-checks-1280.png",
+            width=1280,
+            height=900,
+            prepare=prepare,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert path.read_bytes() == fresh
+    assert order.count("createTarget 1280x900") == 1
+    assert order.index("createTarget 1280x900") < order.index("Page.startScreencast")
+    assert order.index("prepare") < order.index("Page.startScreencast")
+    assert order.index("Page.startScreencast") < order.index("nudge")
+    assert order.count("Page.startScreencast") == 1
+    assert "second-cast" not in order
+    assert "resize" not in order
+    assert "Page.captureScreenshot" not in order
+
+
+def test_a_silent_nudge_restarts_the_cast_after_the_viewport(tmp_path, monkeypatch):
+    """A shift that draws nothing restarts the one window's cast after the viewport changes."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1280 * 3)
+            for x in range(1280 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1280, 60, 2, 8, rows)
+
+    seen = picture(3)
+    fresh = picture(9)
+    order: list[str] = []
+    opened = {"n": 0}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def __init__(self) -> None:
+            self.sent_seen = False
+            self.sent_fresh = False
+            self.casts = 0
+
+        def call(self, method, params=None, timeout=20):
+            order.append(method)
+            expression = str((params or {}).get("expression") or "")
+            if "scrollBy" in expression:
+                order.append("nudge")
+            if method == "Emulation.setDeviceMetricsOverride":
+                order.append(f"metrics {params.get('width')}x{params.get('height')}")
+            if method == "Page.startScreencast":
+                self.casts += 1
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if self.casts < 2:
+                if not self.sent_seen:
+                    self.sent_seen = True
+                    raw = __import__("base64").b64encode(seen).decode("ascii")
+                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
+                raise TimeoutError(method)
+            if not self.sent_fresh:
+                self.sent_fresh = True
+                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 2}}
+            raise TimeoutError(method)
+
+    def prepare(shot):
+        order.append("prepare")
+        return None
+
+    def fresh_target(width, height):
+        opened["n"] += 1
+        order.append(f"createTarget {width}x{height}")
+        return Shot()
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", fresh_target)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-20-de-explain-1280.png",
+            width=1280,
+            height=900,
+            prepare=prepare,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert opened["n"] == 1
+    assert path.read_bytes() == fresh
+    assert order.count("Page.startScreencast") == 2
+    assert order.index("nudge") < order.index("metrics 1280x900")
+    assert order.index("metrics 1280x900") < order.index("Page.startScreencast", order.index("nudge"))
+    assert "resize" not in order
+    assert "Page.captureScreenshot" not in order
+
+
+def test_a_restarted_cast_skips_its_first_repeated_frame(tmp_path, monkeypatch):
+    """The frame from before the restart is not the picture. The next one is."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1280 * 3)
+            for x in range(1280 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1280, 60, 2, 8, rows)
+
+    seen = picture(3)
+    fresh = picture(11)
+    sent = {"restarted": 0}
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def __init__(self) -> None:
+            self.sent_seen = False
+            self.casts = 0
+
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if method == "Page.startScreencast":
+                self.casts += 1
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if self.casts < 2:
+                if not self.sent_seen:
+                    self.sent_seen = True
+                    raw = __import__("base64").b64encode(seen).decode("ascii")
+                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
+                raise TimeoutError(method)
+            sent["restarted"] += 1
+            blob = seen if sent["restarted"] == 1 else fresh
+            if sent["restarted"] > 2:
+                raise TimeoutError(method)
+            raw = __import__("base64").b64encode(blob).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": sent["restarted"]}}
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-20-de-explain-1280.png",
+            width=1280,
+            height=900,
+            prepare=lambda shot: None,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert path.read_bytes() == fresh
+
+
+def test_a_stuck_panel_uses_the_live_view(tmp_path, monkeypatch):
+    """When the restarted cast never leaves the old bitmap, save the live view."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1280 * 3)
+            for x in range(1280 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1280, 60, 2, 8, rows)
+
+    seen = picture(3)
+    fresh = picture(13)
+    shots: list[dict] = []
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def __init__(self) -> None:
+            self.sent_seen = False
+            self.casts = 0
+
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if method == "Page.startScreencast":
+                self.casts += 1
+            if method == "Page.captureScreenshot":
+                shots.append(dict(params or {}))
+                raw = __import__("base64").b64encode(fresh).decode("ascii")
+                return {"data": raw}
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if self.casts < 1 or self.sent_seen:
+                raise TimeoutError(method)
+            self.sent_seen = True
+            raw = __import__("base64").b64encode(seen).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("resize")))
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-19-de-checks-1280.png",
+            width=1280,
+            height=900,
+            prepare=lambda shot: None,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert path.read_bytes() == fresh
+    assert shots == [{"format": "png", "optimizeForSpeed": True}]
+
+
+def test_a_double_scale_view_is_saved_at_the_shot_width(tmp_path, monkeypatch):
+    """A 2x view is reduced to the width the shot asked for."""
+    driver = _driver()
+
+    def picture(width: int, seed: int) -> bytes:
+        rows = []
+        for y in range(120):
+            row = bytearray(width * 3)
+            for x in range(width * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(width, 120, 2, 8, rows)
+
+    seen = picture(1280, 3)
+    wide = picture(2560, 15)
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def __init__(self) -> None:
+            self.sent_seen = False
+            self.casts = 0
+
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if method == "Page.startScreencast":
+                self.casts += 1
+            if method == "Page.captureScreenshot":
+                raw = __import__("base64").b64encode(wide).decode("ascii")
+                return {"data": raw}
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if self.casts < 1 or self.sent_seen:
+                raise TimeoutError(method)
+            self.sent_seen = True
+            raw = __import__("base64").b64encode(seen).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-16-de-shares-1280.png",
+            width=1280,
+            height=900,
+            prepare=lambda shot: 280,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert path.read_bytes() == driver._halve_png(wide)
+    assert driver._png_width(path.read_bytes()) == 1280
+
+
+def test_a_repeated_view_is_taken_again_after_the_window_is_fitted(tmp_path, monkeypatch):
+    """A view that is the old bitmap is taken once more after the window bounds are set."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(60):
+            row = bytearray(1280 * 3)
+            for x in range(1280 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1280, 60, 2, 8, rows)
+
+    seen = picture(3)
+    fresh = picture(17)
+    taken: list[bytes] = []
+    calls: list[dict] = []
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def __init__(self) -> None:
+            self.sent_seen = False
+            self.casts = 0
+
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if method == "Page.startScreencast":
+                self.casts += 1
+            if method == "Page.captureScreenshot":
+                calls.append(dict(params or {}))
+                blob = seen if not taken else fresh
+                taken.append(blob)
+                raw = __import__("base64").b64encode(blob).decode("ascii")
+                return {"data": raw}
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if self.casts < 1 or self.sent_seen:
+                raise TimeoutError(method)
+            self.sent_seen = True
+            raw = __import__("base64").b64encode(seen).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-16-de-shares-1280.png",
+            width=1280,
+            height=900,
+            prepare=lambda shot: 280,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert taken and taken[0] == seen
+    assert path.read_bytes() == fresh
+    assert "clip" not in calls[0]
+    assert calls[1]["clip"] == {"x": 0, "y": 0, "width": 1280, "height": 899, "scale": 1}
+
+
+def test_a_blank_view_is_replaced_by_the_clipped_view(tmp_path, monkeypatch):
+    """A white view is not the picture. The clipped view of the same window is."""
+    driver = _driver()
+
+    def picture(seed: int) -> bytes:
+        rows = []
+        for y in range(120):
+            row = bytearray(1280 * 3)
+            for x in range(1280 * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(1280, 120, 2, 8, rows)
+
+    seen = picture(3)
+    white = driver._png_bytes(1280, 120, 2, 8, [b"\xff" * (1280 * 3)] * 120)
+    fresh = picture(19)
+    assert driver._blank(white)
+    taken: list[bytes] = []
+
+    class Source:
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if expression == "location.href":
+                return {"result": {"value": "http://127.0.0.1:9/result"}}
+            return {}
+
+    class Shot:
+        def __init__(self) -> None:
+            self.sent_seen = False
+            self.casts = 0
+
+        def call(self, method, params=None, timeout=20):
+            expression = str((params or {}).get("expression") or "")
+            if method == "Page.startScreencast":
+                self.casts += 1
+            if method == "Page.captureScreenshot":
+                blob = white if not taken else fresh
+                taken.append(blob)
+                raw = __import__("base64").b64encode(blob).decode("ascii")
+                return {"data": raw}
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "innerText" in expression:
+                return {"result": {"value": 80}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if self.casts < 1 or self.sent_seen:
+                raise TimeoutError(method)
+            self.sent_seen = True
+            raw = __import__("base64").b64encode(seen).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    clock = {"t": 1000.0}
+
+    def warped():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_intel", lambda: True)
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Shot())
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    paused, last, saved = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = {seen}
+    try:
+        path = driver._shot(
+            Source(),
+            tmp_path,
+            "smoke-x86_64-19-de-checks-1280.png",
+            width=1280,
+            height=900,
+            prepare=lambda shot: None,
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = saved
+    assert taken[0] == white
+    assert path.read_bytes() == fresh
+
+
+def test_the_filing_request_waits_until_the_loading_shot_releases():
+    """The second sec.gov page stays unanswered until the shot releases it."""
+    driver = _driver()
+    hold = driver._SecHold()
+    hold.arm()
+    hold.wait("www.sec.gov")
+    hold.wait("data.sec.gov")
+    started = []
+
+    def second():
+        started.append(time.monotonic())
+        hold.wait("www.sec.gov")
+        started.append("done")
+
+    thread = threading.Thread(target=second)
+    thread.start()
+    thread.join(0.2)
+    assert thread.is_alive()
+    assert started == [started[0]]
+    hold.release()
+    thread.join(1)
+    assert started[-1] == "done"
+
+
+def test_the_narrow_loading_picture_comes_from_a_new_window(tmp_path, monkeypatch):
+    """A loading shot is a new window at that size, cast before it navigates."""
+    driver = _driver()
+
+    def picture(seed: int, width: int) -> bytes:
+        rows = []
+        for y in range(8):
+            row = bytearray(width * 3)
+            for x in range(width * 3):
+                row[x] = (seed * 131 + x * 17 + y * 91 + (x * y) % 251) & 255
+            rows.append(bytes(row))
+        return driver._png_bytes(width, 20, 2, 8, rows)
+
+    old = picture(3, 1280)
+    fresh = picture(9, 420)
+    order: list[str] = []
+    sent = {"old": False, "fresh": False}
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            order.append(method)
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if method == "Emulation.setEmulatedMedia":
+                features = params.get("features") or [{}]
+                order.append("media " + str(features[0].get("value")))
+            if method == "Emulation.setDeviceMetricsOverride":
+                order.append(f"viewport {params.get('width')}")
+            if "requestAnimationFrame" in expression:
+                order.append("paint")
+            if "document.readyState" in expression:
+                order.append("ready")
+                return {"result": {"value": "complete"}}
+            if "requestSubmit" in expression:
+                order.append("requestSubmit")
+                return {"result": {"value": True}}
+            if "steps.hidden" in expression:
+                order.append("view")
+                return {"result": {"value": "hidden=true active=0 arc=missing reduce=false"}}
+            if "column" in expression and "opacity" in expression:
+                order.append("opaque")
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if method != "Page.screencastFrame":
+                raise driver.PageError(method)
+            if "paint" not in order:
+                if "Page.startScreencast" in order and not sent["old"]:
+                    sent["old"] = True
+                    raw = __import__("base64").b64encode(old).decode("ascii")
+                    return {"method": method, "params": {"data": raw, "sessionId": 1}}
+                raise driver.PageError(method)
+            if not sent["fresh"]:
+                sent["fresh"] = True
+                wanted = 420
+                for item in reversed(order):
+                    if item.startswith("createTarget "):
+                        wanted = int(item.split()[1].split("x")[0])
+                        break
+                payload = fresh if wanted == 420 else picture(wanted, wanted)
+                raw = __import__("base64").b64encode(payload).decode("ascii")
+                return {"method": method, "params": {"data": raw, "sessionId": 2}}
+            raise driver.PageError(method)
+
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: order.append(f"createTarget {width}x{height}") or Page())
+    monkeypatch.setattr(driver, "_window", lambda *args, **kwargs: order.append("resize"))
+    monkeypatch.setattr(driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied")))
+    monkeypatch.setattr(driver, "_wait_node", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_fill", lambda *args, **kwargs: order.append("fill"))
+    monkeypatch.setattr(driver, "_press", lambda *args, **kwargs: order.append("click"))
+    monkeypatch.setattr(driver, "_steps_visible", lambda page: True)
+    monkeypatch.setattr(driver, "_reduced_steps", lambda page: True)
+    monkeypatch.setattr(driver, "_loading", lambda page: True)
+    monkeypatch.setattr(driver, "_spinning", lambda page: True)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: order.append("close"))
+    monkeypatch.setattr(driver._sec_hold, "arm", lambda everything=False: order.append("hold"))
+    monkeypatch.setattr(driver._sec_hold, "release", lambda: order.append("release"))
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._loading_shot(
+            tmp_path, "smoke-x86_64-15-de-loading-420.png", 420, "http://127.0.0.1:9/", "NVDA"
+        )
+        assert path.read_bytes() == fresh
+        assert path.read_bytes() != old
+        assert order.index("hold") < order.index("Page.startScreencast")
+        assert order.index("Page.startScreencast") < order.index("Page.navigate")
+        assert order.index("media no-preference") < order.index("Page.navigate")
+        assert order.index("viewport 420") < order.index("Page.startScreencast")
+        assert order.index("ready") < order.index("requestSubmit")
+        assert order.index("opaque") < order.index("paint")
+        assert order.index("createTarget 420x900") < order.index("Page.startScreencast")
+        assert "resize" not in order
+        assert "Page.captureScreenshot" not in order
+        assert order.index("release") > order.index("Page.navigate")
+        order.clear()
+        sent["old"] = False
+        sent["fresh"] = False
+        driver._LAST = b""
+        driver._SEEN = set()
+        driver._loading_shot(
+            tmp_path, "smoke-x86_64-5-reduced.png", 1100, "http://127.0.0.1:9/", "NVDA", reduced=True
+        )
+        assert order.index("media reduce") < order.index("Page.navigate")
+        assert "viewport 1100" not in order
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+
+
+def test_a_loading_shot_waits_until_the_steps_are_in_the_frame(tmp_path, monkeypatch):
+    """The Intel cast can send the search form after the steps are in the document."""
+    driver = _driver()
+
+    def solid(width: int, height: int, ink: bool) -> bytes:
+        rows = []
+        for y in range(height):
+            row = bytearray([255, 255, 255] * width)
+            if ink and int(height * 0.45) <= y < int(height * 0.80):
+                for x in range(0, width, 4):
+                    row[x * 3 : x * 3 + 3] = b"\x11\x11\x11"
+            rows.append(bytes(row))
+        return driver._png_bytes(width, height, 2, 8, rows)
+
+    form = solid(1100, 200, False)
+    loaded = solid(1100, 200, True)
+    sent = {"after": 0}
+    order: list[str] = []
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if "requestAnimationFrame" in expression:
+                order.append("paint")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "requestSubmit" in expression:
+                return {"result": {"value": True}}
+            if "column" in expression and "opacity" in expression:
+                return {"result": {"value": True}}
+            return {}
+
+        def next_event(self, method, timeout):
+            if method != "Page.screencastFrame":
+                raise driver.PageError(method)
+            payload = form
+            if "paint" in order:
+                sent["after"] += 1
+                if sent["after"] >= 3:
+                    payload = loaded
+            raw = __import__("base64").b64encode(payload).decode("ascii")
+            return {"method": method, "params": {"data": raw, "sessionId": 1}}
+
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Page())
+    monkeypatch.setattr(driver, "_wait_node", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_fill", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_steps_visible", lambda page: True)
+    monkeypatch.setattr(driver, "_spinning", lambda page: True)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    monkeypatch.setattr(driver._sec_hold, "arm", lambda everything=False: None)
+    monkeypatch.setattr(driver._sec_hold, "release", lambda: None)
+    monkeypatch.setattr(driver, "_copied_png", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("copied")))
+    paused, last, seen = driver._PAUSED, driver._LAST, set(driver._SEEN)
+    driver._LAST = b""
+    driver._SEEN = set()
+    try:
+        path = driver._loading_shot(
+            tmp_path, "smoke-x86_64-4-loading.png", 1100, "http://127.0.0.1:9/", "NVDA"
+        )
+    finally:
+        driver._PAUSED = paused
+        driver._LAST = last
+        driver._SEEN = seen
+    assert path.read_bytes() == loaded
+    assert path.read_bytes() != form
+
+
+def test_a_missing_loading_panel_reports_the_page_state(tmp_path, monkeypatch):
+    """A shot that never shows the steps says what the document was doing."""
+    driver = _driver()
+    order: list[str] = []
+
+    class Page:
+        def call(self, method, params=None, timeout=20):
+            params = params or {}
+            expression = str(params.get("expression") or "")
+            if "document.readyState" in expression:
+                return {"result": {"value": "complete"}}
+            if "requestSubmit" in expression:
+                order.append("requestSubmit")
+                return {"result": {"value": True}}
+            if "steps.hidden" in expression:
+                return {"result": {"value": "hidden=true active=0 arc=missing reduce=true"}}
+            return {}
+
+        def next_event(self, method, timeout):
+            raise driver.PageError(method)
+
+    monkeypatch.setattr(driver, "_fresh_target", lambda width, height: Page())
+    monkeypatch.setattr(driver, "_wait_node", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_fill", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "_steps_visible", lambda page: False)
+    monkeypatch.setattr(driver, "_spinning", lambda page: False)
+    monkeypatch.setattr(driver, "_close_loading_target", lambda page: None)
+    monkeypatch.setattr(driver._sec_hold, "arm", lambda everything=False: None)
+    monkeypatch.setattr(driver._sec_hold, "release", lambda: None)
+    ticks = {"n": 0}
+
+    def warped():
+        ticks["n"] += 1
+        return 1000.0 if ticks["n"] < 30 else 10000.0
+
+    monkeypatch.setattr(driver.time, "time", warped)
+    monkeypatch.setattr(driver.time, "sleep", lambda *_args, **_kwargs: None)
+    with pytest.raises(driver.PageError, match="hidden=true active=0 arc=missing reduce=true"):
+        driver._loading_shot(tmp_path, "smoke-x86_64-4-loading.png", 1100, "http://127.0.0.1:9/", "NVDA")
+    assert "requestSubmit" in order
+
+
 def test_the_settled_pair_is_not_exempt(tmp_path):
     """The 1100 result is not allowed to be a copy of the first result picture."""
     driver = _driver()
@@ -250,6 +1656,7 @@ def test_smoke_driver_clicks_save_and_explain(monkeypatch, tmp_path):
     if driver.chrome_binary() is None:
         pytest.skip("chrome is not installed")
     transport = _Transport()
+    transport.hold = driver._sec_hold.wait_url
     app = _app(monkeypatch, tmp_path, transport)
     server = make_server(app)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

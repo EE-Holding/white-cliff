@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import select
 import shutil
 import signal
 import socket
@@ -15,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -27,6 +29,50 @@ from white_cliff.lexicon import STRINGS
 TEST_NAME = "White Cliff Test"
 GERMAN_DISCLAIMER = STRINGS["§1.DISCLAIMER"][1]
 ARCH = platform.machine()
+_SEC_HOSTS = frozenset({"www.sec.gov", "data.sec.gov", "efts.sec.gov"})
+
+
+class _SecHold:
+    """The smoke stub. The filing download waits until the shot releases it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._release = threading.Event()
+        self._release.set()
+        self._armed = False
+        self._all = False
+        self._www = 0
+
+    def arm(self, everything: bool = False) -> None:
+        with self._lock:
+            self._www = 0
+            self._armed = True
+            self._all = everything
+            self._release.clear()
+
+    def release(self) -> None:
+        with self._lock:
+            self._armed = False
+            self._all = False
+        self._release.set()
+
+    def wait(self, host: str) -> None:
+        with self._lock:
+            armed = self._armed
+            block_all = getattr(self, "_all", False)
+            if host == "www.sec.gov":
+                self._www += 1
+                hold = armed and (block_all or self._www >= 2)
+            else:
+                hold = armed and block_all
+        if hold:
+            self._release.wait()
+
+    def wait_url(self, url: str) -> None:
+        self.wait(urllib.parse.urlsplit(url).hostname or "")
+
+
+_sec_hold = _SecHold()
 
 
 def test_email() -> str:
@@ -282,6 +328,8 @@ def _png_rows(data: bytes) -> tuple[int, int, int, int, list[bytes]]:
     index = 0
     previous = bytearray(stride)
     for _ in range(height):
+        if index >= len(raw):
+            raise PageError("the picture is truncated")
         filter_type = raw[index]
         index += 1
         row = bytearray(raw[index : index + stride])
@@ -326,6 +374,29 @@ def _png_bytes(width: int, height: int, color: int, bit_depth: int, rows: list[b
         + chunk(b"IDAT", zlib.compress(raw, 6))
         + chunk(b"IEND", b"")
     )
+
+
+def _halve_png(data: bytes) -> bytes:
+    """Drop a 2x backing-store screenshot to the CSS size the shot asked for."""
+    width, height, color, bit_depth, rows = _png_rows(data)
+    if width % 2 or height % 2:
+        return data
+    channels = {0: 1, 2: 3, 6: 4}[color]
+    halved: list[bytes] = []
+    for y in range(0, height, 2):
+        top, bottom = rows[y], rows[y + 1]
+        row = bytearray((width // 2) * channels)
+        for x in range(0, width, 2):
+            for channel in range(channels):
+                total = (
+                    top[x * channels + channel]
+                    + top[(x + 1) * channels + channel]
+                    + bottom[x * channels + channel]
+                    + bottom[(x + 1) * channels + channel]
+                )
+                row[(x // 2) * channels + channel] = total // 4
+        halved.append(bytes(row))
+    return _png_bytes(width // 2, height // 2, color, bit_depth, halved)
 
 
 def _crop_png(data: bytes, height: int) -> bytes:
@@ -636,6 +707,82 @@ def _copied_png(page: DevTools, width: int) -> bytes:
         _activate()
 
 
+def _fitted_view(page: DevTools, width: int) -> tuple[bytes, str]:
+    """A view at the shot width. Halve a 2x image. Refit once when the view is the old bitmap."""
+
+    def usable(raw: bytes) -> tuple[bytes, str]:
+        if not raw:
+            return b"", "empty"
+        got = _png_width(raw)
+        if got == width * 2:
+            try:
+                raw = _halve_png(raw)
+            except PageError:
+                return b"", f"width {got}"
+            got = _png_width(raw)
+        if got != width:
+            return b"", f"width {got}"
+        if raw in _SEEN or raw == _LAST:
+            return b"", "repeat"
+        if _blank(raw):
+            return b"", "blank"
+        return raw, f"{got}"
+
+    view, note = usable(_view_png(page))
+    if view:
+        return view, note
+    # The same arguments return the previous window's bitmap. A clip misses that cache.
+    try:
+        _fit_window(page, width, 900)
+    except PageError:
+        pass
+    again, again_note = usable(
+        _view_png(
+            page,
+            {"x": 0, "y": 0, "width": int(width), "height": 899, "scale": 1},
+        )
+    )
+    return again, f"{note} then {again_note}"
+
+
+def _view_png(page: DevTools, clip: dict | None = None) -> bytes:
+    """The live view. The surface repeats the previous page and is not used."""
+    params: dict = {"format": "png", "optimizeForSpeed": True}
+    if clip:
+        params["clip"] = clip
+    try:
+        result = page.call(
+            "Page.captureScreenshot",
+            params,
+            timeout=8,
+        )
+    except (PageError, TimeoutError, OSError):
+        return b""
+    encoded = result.get("data") if isinstance(result, dict) else ""
+    if not isinstance(encoded, str) or not encoded:
+        return b""
+    try:
+        return base64.b64decode(encoded)
+    except ValueError:
+        return b""
+
+
+def _paint(page: DevTools) -> None:
+    """Ask for a frame without waiting. Waiting holds the renderer, so the cast repeats the last picture."""
+    try:
+        page.call(
+            "Runtime.evaluate",
+            {
+                "expression": "requestAnimationFrame(() => requestAnimationFrame(() => {}))",
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+            1,
+        )
+    except (PageError, TimeoutError, OSError):
+        pass
+
+
 def _live_frame(page: DevTools, width: int = 0) -> bytes:
     """One frame of this window.
 
@@ -652,13 +799,7 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             event = None
         # An idle page does not paint, so the cast stays silent. Ask for one frame.
         if event is None and not _PAUSED:
-            try:
-                _eval(
-                    page,
-                    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                )
-            except (PageError, TimeoutError, OSError):
-                pass
+            _paint(page)
             try:
                 event = page.next_event("Page.screencastFrame", 4)
             except (PageError, TimeoutError):
@@ -673,7 +814,31 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
             or chosen in _SEEN
             or chosen == _LAST
         ):
-            _window(page, width, 900)
+            # The open cast keeps sending the previous bitmap after the window moves.
+            # Stop it, set the viewport, and listen again.
+            try:
+                page.call("Page.stopScreencast")
+            except PageError:
+                pass
+            try:
+                page.call("Emulation.clearDeviceMetricsOverride")
+            except PageError:
+                pass
+            try:
+                # Width only. Adding a screen size leaves the previous bitmap in place.
+                page.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
+            _fit_window(page, width, 900)
+            page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
             later_deadline = time.time() + 2.5
             while time.time() < later_deadline:
                 try:
@@ -698,6 +863,92 @@ def _live_frame(page: DevTools, width: int = 0) -> bytes:
         except (PageError, TimeoutError, OSError):
             pass
     return chosen
+
+
+def _frame_after_resize(page: DevTools, width: int) -> bytes:
+    """A frame painted after the window is already this wide.
+
+    The cast starts after the resize. A frame already queued is the previous
+    picture, and pausing first leaves the Intel cast with nothing to send.
+    """
+    page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+
+    def take(timeout: float) -> bytes:
+        try:
+            event = page.next_event("Page.screencastFrame", timeout)
+        except (PageError, TimeoutError):
+            return b""
+        _ack_frame(page, event)
+        return _frame_png(event)
+
+    def good(data: bytes) -> bool:
+        return bool(
+            data
+            and _png_width(data) == width
+            and data not in _SEEN
+            and data != _LAST
+        )
+
+    def nudge() -> None:
+        # Do not await the paint. Awaiting it holds the renderer, and this
+        # loading page then navigates before a frame is sent.
+        try:
+            page.call(
+                "Runtime.evaluate",
+                {
+                    "expression": "requestAnimationFrame(() => requestAnimationFrame(() => {}))",
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                1,
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
+
+    try:
+        # The window is already this wide. Paint after the cast starts, and
+        # keep a frame from that paint. Resize again only when it is not.
+        nudge()
+        fresh = take(0.6)
+        if good(fresh):
+            return fresh
+        _window(page, width, 900)
+        nudge()
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            fresh = take(0.3)
+            if good(fresh):
+                return fresh
+        return b""
+    finally:
+        try:
+            page.call("Page.stopScreencast")
+        except (PageError, TimeoutError, OSError):
+            pass
+
+
+def _commit_live_frame(
+    directory: Path, name: str, data: bytes, wanted: int, height: int
+) -> Path:
+    """Save one live frame. A missing or repeated frame fails, and is not copied."""
+    global _LAST
+    got = _png_width(data)
+    stale = bool(data) and (data == _LAST or data in _SEEN)
+    if not data or stale:
+        why = "had no screencast frame" if not data else "repeated a previous screencast frame"
+        raise PageError(f"{name} is not a live window picture: it {why}")
+    if len(data) < 1000 or got != wanted:
+        raise PageError(f"{name} is {got}px wide, wanted {wanted}")
+    height_px = min(int(height or 900), 900)
+    limit = height or height_px
+    png_height = int.from_bytes(data[20:24], "big") if len(data) >= 24 else 0
+    saved = _crop_png(data, limit) if png_height > limit else data
+    _LAST = data
+    _SEEN.add(data)
+    path = directory / name
+    path.write_bytes(saved)
+    print(f"screenshot {path}", flush=True)
+    return path
 
 
 def _png_width(data: bytes) -> int:
@@ -738,10 +989,7 @@ def _intel_photo(
                     if not keep_scroll:
                         _eval(fresh, "window.scrollTo(0, 0)")
                     _settled(fresh)
-                    _eval(
-                        fresh,
-                        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-                    )
+                    _paint(fresh)
                 except (PageError, TimeoutError, OSError):
                     pass
             # The layout can already say 1100 while the pictured window is still
@@ -756,25 +1004,22 @@ def _intel_photo(
                 if len(data) >= 1000 and got == wanted and not stale:
                     break
                 if _PAUSED or not data or time.time() >= deadline:
-                    # One copy, after the window has had its chance to resize.
-                    # Copying the main window sticks the next layout near 906px.
-                    alt = _copied_png(fresh, wanted)
-                    alt_w = _png_width(alt)
-                    if (
-                        len(alt) >= 1000
-                        and alt_w == wanted
-                        and alt != data
-                        and alt not in _SEEN
-                        and alt != _LAST
-                    ):
-                        data = alt
-                        break
-                    if stale or got == wanted:
-                        raise PageError(f"{name} repeated the previous picture copy {alt_w} {_COPY_ERROR}")
+                    # A copied document is not the live window. A missing or repeated
+                    # frame must fail here instead of passing as that copy.
+                    if not data or stale:
+                        why = (
+                            "had no screencast frame"
+                            if not data
+                            else "repeated a previous screencast frame"
+                        )
+                        raise PageError(
+                            f"{name} is not a live window picture: it {why} ({got}px) {_BOUNDS}"
+                        )
+                    # A fresh frame of the wrong width is not the live window.
+                    # A copied document must not stand in for it.
                     screen = 0 if _PAUSED else _screen_width(fresh)
                     raise PageError(
-                        f"{name} is {got}px wide, wanted {wanted}, screen {screen} "
-                        f"copy {alt_w} {_COPY_ERROR} {_BOUNDS}"
+                        f"{name} is {got}px wide, wanted {wanted}, screen {screen} {_BOUNDS}"
                     )
                 _window(fresh, wanted, height_px)
                 time.sleep(0.25)
@@ -795,6 +1040,231 @@ def _intel_photo(
     raise PageError(last)
 
 
+def _page_url(page: DevTools) -> str:
+    """The address a new window should open. A result drawn in place lives at /result."""
+    href = _eval(page, "location.href")
+    if not isinstance(href, str) or not href.startswith("http"):
+        raise PageError("the page had no address")
+    parts = urllib.parse.urlsplit(href)
+    if parts.path.rstrip("/") == "/result":
+        return href
+    is_result = _eval(page, "document.body && document.body.className.indexOf('result') !== -1")
+    if is_result is True:
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/result", "", ""))
+    return href
+
+
+def _painted_frame(page: DevTools, seconds: float, previous: bytes = b"") -> tuple[bytes, str]:
+    """The newest screencast frame that has ink and is not the frame from before a scroll."""
+    best = b""
+    saw = blank = empty = 0
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            event = page.next_event("Page.screencastFrame", 0.3)
+        except (PageError, TimeoutError):
+            if best:
+                break
+            continue
+        _ack_frame(page, event)
+        data = _frame_png(event)
+        saw += 1
+        if not data:
+            empty += 1
+            continue
+        if data == previous or _blank(data):
+            blank += 1
+            continue
+        best = data
+    return best, f"frames {saw} blank {blank} empty {empty}"
+
+
+def _open_born_shot(
+    directory: Path,
+    name: str,
+    width: int,
+    height: int,
+    url: str,
+    *,
+    reduced: bool = False,
+    prepare=None,
+    allow_view: bool = False,
+) -> Path:
+    """Photograph a window created at this width. The window already on screen is not resized."""
+    trace: list[str] = []
+    started = time.monotonic()
+
+    def mark(step: str) -> None:
+        trace.append(f"{int((time.monotonic() - started) * 1000)} {step}")
+
+    def fail(message: str) -> None:
+        detail = "\n".join(trace)
+        raise PageError(f"{message}\n{detail}" if detail else message) from None
+
+    shot = None
+    try:
+        shot = _fresh_target(width, 900)
+        mark(f"Target.createTarget {width}x900")
+        shot.call("Page.enable")
+        mark("Page.enable")
+        shot.call("Runtime.enable")
+        mark("Runtime.enable")
+        if width < 500:
+            try:
+                shot.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
+            mark(f"Emulation.setDeviceMetricsOverride {width}x900")
+        if reduced:
+            _motion(shot, "reduce")
+            mark("Emulation.setEmulatedMedia")
+        # A cast started before the page is ready sends a real frame. A second
+        # cast, after a scroll, sends one blank frame and then stops. Scroll
+        # first when the picture is a section, then start the only cast.
+        if prepare is None:
+            shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+            mark("Page.startScreencast")
+        shot.call("Page.navigate", {"url": url})
+        mark("Page.navigate")
+        _wait_ready(shot, 30)
+        deadline = time.time() + 20
+        ready = False
+        while time.time() < deadline:
+            try:
+                length = _eval(shot, "document.body ? document.body.innerText.length : 0") or 0
+                ready = int(length) > 20 and _column_shown(shot)
+            except (PageError, TypeError, ValueError):
+                ready = False
+            if ready:
+                break
+            time.sleep(0.05)
+        if not ready:
+            fail("the page did not paint")
+        mark("paint-ready")
+        if prepare is not None:
+            crop = prepare(shot)
+            if isinstance(crop, int) and crop > 0:
+                height = crop
+            mark("prepare")
+            shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+            mark("Page.startScreencast")
+        _paint(shot)
+        data, note = _painted_frame(shot, 4.0)
+        mark(note)
+        if not data and allow_view:
+            # The cast sent one blank frame and stopped. The page is on screen.
+            view, view_note = _fitted_view(shot, int(width))
+            mark(f"view {view_note}")
+            if view:
+                data = view
+        if not data:
+            fail("the page did not paint")
+        mark("painted")
+        # The first frame of a section can still be an earlier picture. Shift
+        # once on this same cast. A shift that draws nothing means the cast
+        # is stuck on that bitmap: stop it, set the viewport, and listen again.
+        if prepare is not None and (data in _SEEN or data == _LAST):
+            stale = data
+            _eval(shot, "window.scrollBy(0, 8)")
+            mark("nudge")
+            _paint(shot)
+            data, note = _painted_frame(shot, 4.0, previous=stale)
+            mark(note)
+            if not data or data in _SEEN or data == _LAST:
+                try:
+                    shot.call("Page.stopScreencast")
+                except PageError:
+                    pass
+                mark("Page.stopScreencast")
+                try:
+                    shot.call("Emulation.clearDeviceMetricsOverride")
+                except PageError:
+                    pass
+                shot.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+                mark(f"Emulation.setDeviceMetricsOverride {width}x900")
+                _paint(shot)
+                shot.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+                mark("Page.startScreencast")
+                # The restarted cast's first frame is still the old bitmap.
+                # Keep listening until a different one arrives.
+                data, note = _painted_frame(shot, 4.0, previous=stale)
+                mark(note)
+            if not data or data in _SEEN or data == _LAST:
+                # The cast is stuck on the old bitmap. The view of this window is the page.
+                # A 2x backing store is reduced to the shot width. A repeated view is taken
+                # once more after the window bounds are set, which drops the cached bitmap.
+                view, view_note = _fitted_view(shot, int(width))
+                mark(f"view {view_note}")
+                if view:
+                    data = view
+            if not data or data in _SEEN or data == _LAST:
+                fail(f"{name} is not a live window picture: it repeated a previous screencast frame")
+        mark(f"frame {_png_width(data)}")
+        try:
+            return _commit_live_frame(directory, name, data, width, height)
+        except PageError as exc:
+            # A second cast sends one blank frame and then stops. Do not start one.
+            fail(str(exc))
+    finally:
+        if shot is not None:
+            _close_loading_target(shot)
+
+
+def _cast_had_no_ink(message: str) -> bool:
+    """True when the last cast sent no ink, including a shift that drew nothing."""
+    matches = list(re.finditer(r"frames (\d+) blank (\d+) empty (\d+)", message))
+    if not matches:
+        return False
+    frames, blank, empty = (int(matches[-1].group(index)) for index in range(1, 4))
+    return blank + empty == frames
+
+
+def _born_shot(
+    directory: Path,
+    name: str,
+    width: int,
+    height: int,
+    url: str,
+    *,
+    reduced: bool = False,
+    prepare=None,
+) -> Path:
+    """One new window. If its cast sends no ink, open one more window."""
+    try:
+        return _open_born_shot(
+            directory, name, width, height, url, reduced=reduced, prepare=prepare
+        )
+    except PageError as exc:
+        if not _cast_had_no_ink(str(exc)):
+            raise
+        return _open_born_shot(
+            directory,
+            name,
+            width,
+            height,
+            url,
+            reduced=reduced,
+            prepare=prepare,
+            allow_view=True,
+        )
+
+
 def _shot(
     page: DevTools,
     directory: Path,
@@ -803,15 +1273,13 @@ def _shot(
     height: int = 2200,
     *,
     full: bool = False,
+    prepare=None,
 ) -> Path:
     if _intel():
-        if full:
-            try:
-                _motion(page, "reduce")
-            except PageError:
-                pass
-        _window(page, width, height)
-        return _intel_photo(page, directory, name, width, height, keep_scroll=False, reveal=full)
+        # The open window's cast stays at the size it first painted. A new window does not.
+        return _born_shot(
+            directory, name, width, height, _page_url(page), reduced=full, prepare=prepare
+        )
     last: Exception | None = None
     asked = height
     for _ in range(2):
@@ -947,7 +1415,7 @@ def _same_line(text: str) -> str:
 
 
 def _disclaimer_text(text: str) -> str:
-    """The disclaimer compared byte for byte, with whitespace collapsed and nothing else changed."""
+    """The disclaimer compared byte for byte, with whitespace collapsed."""
     return " ".join(text.split())
 
 
@@ -1527,6 +1995,51 @@ def _press(page: DevTools, selector: str) -> None:
     )
 
 
+def _wait_ready(page: DevTools, timeout: float) -> None:
+    """The submit handler is in a script after the form. Wait until it has run."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if _eval(page, "document.readyState") == "complete":
+                return
+        except PageError:
+            pass
+        time.sleep(0.05)
+    raise PageError("the page did not finish loading")
+
+
+def _submit_form(page: DevTools, selector: str) -> None:
+    """Start the form through its own submit handler."""
+    _wait_node(page, selector + " button", 20)
+    shown = json.dumps(selector)
+    _eval(
+        page,
+        "(() => { const form = document.querySelector("
+        + shown
+        + "); form.requestSubmit(form.querySelector('button')); return true; })()",
+    )
+
+
+def _loading_view(page: DevTools) -> str:
+    """Structural facts only. No field values."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const steps = document.getElementById("steps");
+          const arc = document.querySelector("li.active .arc");
+          return [
+            "hidden=" + (steps ? String(steps.hidden) : "missing"),
+            "active=" + (steps ? steps.querySelectorAll("li.active").length : 0),
+            "arc=" + (arc ? getComputedStyle(arc).display : "missing"),
+            "reduce=" + window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ].join(" ");
+        })()
+        """,
+    )
+    return str(raw)
+
+
 def _click(page: DevTools, selector: str) -> None:
     node = _wait_node(page, selector, 20)
     page.call("DOM.focus", {"nodeId": node})
@@ -1669,6 +2182,27 @@ def _grab(
     raise PageError(last)
 
 
+def _loading_paint(data: bytes) -> bool:
+    """The steps are drawn under the search box. A short test picture is not judged."""
+    try:
+        width, height, color, _depth, rows = _png_rows(data)
+    except PageError:
+        return True
+    if height < 100:
+        return True
+    channels = {0: 1, 2: 3, 6: 4}.get(color)
+    if channels is None:
+        return False
+    dark = sampled = 0
+    for row in rows[int(height * 0.45) : int(height * 0.80) : 4]:
+        for column in range(0, width, 4):
+            pixel = row[column * channels : column * channels + min(3, channels)]
+            sampled += 1
+            if pixel and min(pixel) < 170:
+                dark += 1
+    return sampled > 0 and dark * 80 >= sampled
+
+
 def _blank(data: bytes) -> bool:
     """A picture with almost no ink above the bottom edge. A black bar there does not count."""
     try:
@@ -1718,6 +2252,40 @@ def _loading(page: DevTools) -> bool:
           const active = items.filter((item) => item.className === "active").length;
           const done = items.filter((item) => item.className === "done").length;
           return active === 1 && done >= 1;
+        })()
+        """,
+    )
+    return raw is True
+
+
+def _column_shown(page: DevTools) -> bool:
+    """The second-language column fades in. A frame during that fade is the empty top of the page."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const column = document.querySelector(".column");
+          if (!column) return true;
+          const opacity = parseFloat(getComputedStyle(column).opacity || "1");
+          const running = typeof column.getAnimations === "function"
+            && column.getAnimations().some((item) => item.playState === "running");
+          return opacity > 0.98 && !running;
+        })()
+        """,
+    )
+    return raw is True
+
+
+def _steps_visible(page: DevTools) -> bool:
+    """The steps panel is open. The first step is enough; the filing reply is still held."""
+    raw = _eval(
+        page,
+        """
+        (() => {
+          const panel = document.getElementById("steps");
+          if (!panel || panel.hidden) return false;
+          const active = panel.querySelectorAll("li.active").length;
+          return active === 1;
         })()
         """,
     )
@@ -1980,8 +2548,9 @@ def drive(
         _wait_node(page, "#query", 20)
         _shot(page, out_dir, f"smoke-{ARCH}-2-search.png")
         _fill(page, "#query", query)
+        _loading_shot(out_dir, f"smoke-{ARCH}-4-loading.png", 1100, url, query)
         _click(page, 'form[action="/explain"] button')
-        _wait_result(page, out_dir, heading, suffix, loading=True)
+        _wait_result(page, out_dir, heading, suffix, loading=False)
         loading_shot = out_dir / f"smoke-{ARCH}-4-loading.png"
         result_shot = out_dir / f"smoke-{ARCH}-3-nvda.png"
         if loading_shot.read_bytes() == result_shot.read_bytes():
@@ -2009,8 +2578,13 @@ def drive(
             _print_preview(page, out_dir, shot=print_shot)
         _fit(page, 1100, 2200)
         _layout(page, columns=2, width=None)
-        _aligned(page)
-        _shot(page, out_dir, f"smoke-{ARCH}-8-result-1100.png", full=True)
+        _shot(
+            page,
+            out_dir,
+            f"smoke-{ARCH}-8-result-1100.png",
+            full=True,
+            prepare=lambda shot: _eval(shot, "window.scrollBy(0, 24)"),
+        )
         _fit(page, 640, 1600)
         _layout(page, columns=1, width=None)
         _shot(page, out_dir, f"smoke-{ARCH}-6-result-640.png", width=640, height=1600, full=True)
@@ -2022,18 +2596,10 @@ def drive(
         if _eval(page, "window.matchMedia('(prefers-reduced-motion: reduce)').matches") is not True:
             raise PageError("reduced motion was not emulated")
         _fill(page, "#query", query)
+        _loading_shot(
+            out_dir, f"smoke-{ARCH}-5-reduced.png", 1100, url, query, reduced=True
+        )
         _click(page, 'form[action="/explain"] button')
-        reduced_deadline = time.time() + 60
-        while time.time() < reduced_deadline:
-            try:
-                if _reduced_steps(page):
-                    _grab_steps(page, out_dir, f"smoke-{ARCH}-5-reduced.png", motion="reduce")
-                    break
-            except PageError:
-                _release(page)
-            time.sleep(0.02)
-        else:
-            raise PageError("the reduced-motion steps were not shown")
         _wait_result(page, out_dir, heading, suffix, loading=False, capture=False)
         _german_shots(page, out_dir, url, query, heading)
         if english:
@@ -2079,15 +2645,7 @@ def _wait_text(page: DevTools, needle: str, timeout: float = 20) -> None:
     raise PageError(last[:400] or "the expected text did not appear")
 
 
-def _share_card(page: DevTools, directory: Path, name: str, width: int, height: int) -> None:
-    """One named picture of the German share-count card at this width."""
-    deadline = time.time() + 8
-    while time.time() < deadline:
-        _window(page, width, max(height, 1100))
-        if _wide(page, width):
-            break
-        time.sleep(0.1)
-    _eval(page, "window.scrollTo(0, 0)")
+def _share_box(page: DevTools) -> dict:
     box = _eval(
         page,
         """
@@ -2104,9 +2662,316 @@ def _share_card(page: DevTools, directory: Path, name: str, width: int, height: 
             page,
             "JSON.stringify([...document.querySelectorAll('h3.label')].map((item) => item.textContent))",
         )
-        raise PageError(f"the German share card was not on the page: {labels}")
+        raise PageError(f"the share card was not on the page: {labels}")
+    return box
+
+
+_NET_CASH = json.dumps(STRINGS["U9.lbl.net_debt"][1])
+_PANEL_SCRIPT = {
+    "balance": f"""
+        (() => {{
+          const card = [...document.querySelectorAll("article.card")].find((item) =>
+            item.textContent.includes({_NET_CASH}));
+          if (!card) return false;
+          const heading = card.querySelector("h3") || card;
+          const top = heading.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(top - 24, 0));
+          return true;
+        }})()
+    """,
+    "checks": """
+        (() => {
+          const section = document.querySelector('section.check[data-check="C8"]');
+          if (!section) return false;
+          const hits = [section, ...section.querySelectorAll("*")].filter((item) =>
+            (item.textContent || "").includes("Die Ertragsteuer lag"));
+          hits.sort((a, b) => a.textContent.length - b.textContent.length);
+          const node = hits[0] || section;
+          const top = node.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(top - 24, 0));
+          window.scrollBy(0, 32);
+          return true;
+        })()
+    """,
+    "explain": """
+        (() => {
+          const hits = [...document.querySelectorAll("body *")].filter((item) =>
+            (item.textContent || "").includes("Formel:"));
+          if (!hits.length) return false;
+          hits.sort((a, b) => a.textContent.length - b.textContent.length);
+          const top = hits[0].getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(top - 24, 0));
+          window.scrollBy(0, 16);
+          return true;
+        })()
+    """,
+}
+
+
+def _share_card(page: DevTools, directory: Path, name: str, width: int, height: int) -> None:
+    """One named picture of the second-language share-count card at this width."""
+    if _intel():
+
+        def prepare(shot: DevTools) -> int:
+            _eval(shot, "window.scrollTo(0, 0)")
+            box = _share_box(shot)
+            _eval(shot, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
+            _eval(shot, "window.scrollBy(0, 16)")
+            return max(int(box["height"]) + 16, 280)
+
+        _born_shot(directory, name, width, height, _page_url(page), prepare=prepare)
+        return
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        _window(page, width, max(height, 1100))
+        if _wide(page, width):
+            break
+        time.sleep(0.1)
+    _eval(page, "window.scrollTo(0, 0)")
+    box = _share_box(page)
     _eval(page, f"window.scrollTo(0, {max(int(box['top']) - 8, 0)})")
     _grab(page, directory, name, 0, max(int(box["height"]) + 16, 280))
+
+
+def _fresh_target(width: int, height: int) -> DevTools:
+    """A new window created at this size. Nothing resizes it afterwards."""
+    if _BROWSER is None or not _DEBUG_PORT:
+        raise PageError("the browser has no debugging socket")
+    created = _BROWSER.call(
+        "Target.createTarget",
+        {
+            "url": "about:blank",
+            "left": 0,
+            "top": 0,
+            "width": int(width),
+            "height": int(height),
+            "newWindow": True,
+        },
+        timeout=8,
+    )
+    target_id = str(created.get("targetId") or "")
+    if not target_id:
+        raise PageError("the loading window was not created")
+    info = None
+    deadline = time.time() + 4
+    while time.time() < deadline and info is None:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{_DEBUG_PORT}/json/list", timeout=0.5
+            ) as response:
+                tabs = json.loads(response.read().decode("utf-8"))
+            for tab in tabs:
+                if tab.get("id") == target_id and tab.get("webSocketDebuggerUrl"):
+                    info = tab
+                    break
+        except (OSError, json.JSONDecodeError):
+            pass
+        if info is None:
+            time.sleep(0.05)
+    if not info:
+        raise PageError("the loading window did not open a debugging socket")
+    page = DevTools(info["webSocketDebuggerUrl"])
+    page.target_id = target_id
+    return page
+
+
+def _close_loading_target(page: DevTools) -> None:
+    try:
+        page.call("Page.stopScreencast")
+    except (PageError, TimeoutError, OSError):
+        pass
+    target_id = str(getattr(page, "target_id", "") or "")
+    try:
+        page.close()
+    except (PageError, TimeoutError, OSError):
+        pass
+    if _BROWSER is not None and target_id:
+        try:
+            _BROWSER.call("Target.closeTarget", {"targetId": target_id}, timeout=2)
+        except (PageError, TimeoutError, OSError):
+            pass
+
+
+def _discard_queued_frames(page: DevTools) -> None:
+    """Drop frames already queued. Stop even if a spinning page keeps sending them."""
+    deadline = time.time() + 0.15
+    while time.time() < deadline:
+        try:
+            event = page.next_event("Page.screencastFrame", 0.05)
+        except (PageError, TimeoutError):
+            return
+        _ack_frame(page, event)
+
+
+def _loading_shot(
+    directory: Path,
+    name: str,
+    width: int,
+    url: str,
+    query: str,
+    *,
+    alt_lang: bool = False,
+    reduced: bool = False,
+) -> Path:
+    """One loading picture from a window born at this width.
+
+    The cast starts before navigation. The filing download stays held until
+    the frame is in hand, so the steps cannot be replaced by the result.
+    """
+    trace: list[str] = []
+    started = time.monotonic()
+
+    def mark(step: str) -> None:
+        trace.append(f"{int((time.monotonic() - started) * 1000)} {step}")
+
+    def fail(message: str) -> None:
+        detail = "\n".join(trace)
+        raise PageError(f"{message}\n{detail}" if detail else message) from None
+
+    page = None
+    _sec_hold.arm(everything=not reduced)
+    mark("hold")
+    try:
+        page = _fresh_target(width, 900)
+        mark(f"Target.createTarget {width}x900")
+        page.call("Page.enable")
+        mark("Page.enable")
+        page.call("Runtime.enable")
+        mark("Runtime.enable")
+        if width < 500:
+            # Mac will not open a browser window narrower than 500. The viewport still can be.
+            try:
+                page.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
+            mark(f"Emulation.setDeviceMetricsOverride {width}x900")
+        page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+        mark("Page.startScreencast")
+        # The main window asks for motion before it loads. A new window does too,
+        # or a machine that prefers less motion hides the arc and the shot waits forever.
+        _motion(page, "reduce" if reduced else "no-preference")
+        mark("Emulation.setEmulatedMedia")
+        page.call("Page.navigate", {"url": url})
+        mark("Page.navigate")
+        _wait_node(page, "#query", 30)
+        _wait_ready(page, 30)
+        if alt_lang and _eval(page, "document.documentElement.lang") != "de":
+            _press(page, 'button[lang="de"]')
+            _wait_node(page, "#query", 20)
+            _wait_ready(page, 20)
+        _fill(page, "#query", query)
+
+        def cast_frame(limit: float) -> bytes:
+            try:
+                event = page.next_event("Page.screencastFrame", limit)
+            except (PageError, TimeoutError):
+                return b""
+            _ack_frame(page, event)
+            return _frame_png(event)
+
+        form = cast_frame(0.4)
+        _submit_form(page, 'form[action="/explain"]')
+        mark("click")
+        deadline = time.time() + 90
+        ready = False
+        while time.time() < deadline:
+            try:
+                ready = _reduced_steps(page) if reduced else _steps_visible(page)
+            except PageError:
+                ready = False
+            if ready and not reduced:
+                try:
+                    ready = _spinning(page)
+                except PageError:
+                    ready = False
+            if ready:
+                try:
+                    ready = _column_shown(page)
+                except PageError:
+                    ready = False
+            if ready:
+                break
+            time.sleep(0.05)
+        if not ready:
+            try:
+                state = _loading_view(page)
+            except PageError:
+                state = "view failed"
+            fail(f"the loading steps were not shown\n{state}")
+        mark("steps")
+        _discard_queued_frames(page)
+        try:
+            page.call(
+                "Runtime.evaluate",
+                {
+                    "expression": "requestAnimationFrame(() => {})",
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                1,
+            )
+        except (PageError, TimeoutError, OSError):
+            pass
+        mark("paint")
+
+        def later_frame() -> bytes:
+            deadline = time.time() + 4
+            while time.time() < deadline:
+                data = cast_frame(0.4)
+                if (
+                    data
+                    and data != form
+                    and _png_width(data) == int(width)
+                    and _loading_paint(data)
+                ):
+                    return data
+            return b""
+
+        data = later_frame()
+        if not data:
+            try:
+                page.call("Page.stopScreencast")
+            except (PageError, TimeoutError, OSError):
+                pass
+            try:
+                page.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": int(width),
+                        "height": 900,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+            except PageError:
+                pass
+            page.call("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+            mark("restart")
+            data = later_frame()
+        if not data:
+            view, view_note = _fitted_view(page, int(width))
+            mark(f"view {view_note}")
+            if view and view != form and _loading_paint(view):
+                data = view
+        if not data:
+            fail("the loading picture was still the search form")
+        mark(f"frame {_png_width(data)}")
+        try:
+            return _commit_live_frame(directory, name, data, width, 900)
+        except PageError as exc:
+            fail(str(exc))
+    finally:
+        _sec_hold.release()
+        if page is not None:
+            _close_loading_target(page)
 
 
 def _grab_steps(
@@ -2134,6 +2999,27 @@ def _grab_steps(
             )
         except (PageError, TimeoutError, OSError):
             pass
+        if motion:
+            try:
+                _motion(page, motion)
+            except PageError:
+                pass
+        _activate()
+        wanted = int(width or 0)
+        if wanted <= 0:
+            try:
+                wanted = int(_css_width(page) or 1100)
+            except (PageError, TimeoutError, OSError, TypeError, ValueError):
+                wanted = 1100
+        _window(page, wanted, int(height or 900))
+        data = _frame_after_resize(page, wanted)
+        if data:
+            _hold(page)
+            try:
+                return _commit_live_frame(directory, name, data, wanted, int(height or 0))
+            finally:
+                _release(page)
+        # No frame yet. Pausing flushes a picture that was already composited.
     _hold(page)
     try:
         return _grab(page, directory, name, width, height, motion=motion)
@@ -2163,7 +3049,33 @@ def _loading_at(page: DevTools, out_dir: Path, name: str, width: int, height: in
 
 
 def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: str) -> None:
-    """One German panel at 1280. Scroll the named line into the viewport, then photograph it."""
+    """One second-language panel at this width. Scroll the named line into the viewport, then photograph it."""
+    if _intel():
+        url = _page_url(page)
+
+        def prepare(shot: DevTools) -> None:
+            if kind == "explain":
+                opened = _eval(
+                    shot,
+                    """
+                    (() => {
+                      const card = [...document.querySelectorAll("article.card")].find((item) =>
+                        item.textContent.includes("Formel:"));
+                      if (!card) return false;
+                      const button = card.querySelector("button.explain");
+                      if (button) button.click();
+                      return true;
+                    })()
+                    """,
+                )
+                if opened is not True:
+                    raise PageError("the second-language formula line was not on the page")
+                _wait_text(shot, "Formel:")
+            if _eval(shot, _PANEL_SCRIPT[kind]) is not True:
+                raise PageError(f"the second-language {kind} picture was not on the page")
+
+        _born_shot(directory, name, width, 900, url, prepare=prepare)
+        return
     _fit(page, width, 900)
     if kind == "explain":
         opened = _eval(
@@ -2180,46 +3092,10 @@ def _panel_shot(page: DevTools, directory: Path, name: str, width: int, kind: st
             """,
         )
         if opened is not True:
-            raise PageError("the German formula line was not on the page")
+            raise PageError("the second-language formula line was not on the page")
         _wait_text(page, "Formel:")
-    script = {
-        "balance": """
-            (() => {
-              const card = [...document.querySelectorAll("article.card")].find((item) =>
-                item.textContent.includes("abzüglich Zahlungsmittel"));
-              if (!card) return false;
-              const heading = card.querySelector("h3") || card;
-              heading.scrollIntoView({block: "start", inline: "nearest"});
-              window.scrollBy(0, -24);
-              return true;
-            })()
-        """,
-        "checks": """
-            (() => {
-              const section = document.querySelector('section.check[data-check="C8"]');
-              if (!section) return false;
-              const hits = [section, ...section.querySelectorAll("*")].filter((item) =>
-                (item.textContent || "").includes("Die Ertragsteuer lag"));
-              hits.sort((a, b) => a.textContent.length - b.textContent.length);
-              (hits[0] || section).scrollIntoView({block: "start", inline: "nearest"});
-              window.scrollBy(0, -24);
-              return true;
-            })()
-        """,
-        "explain": """
-            (() => {
-              const hits = [...document.querySelectorAll("body *")].filter((item) =>
-                (item.textContent || "").includes("Formel:"));
-              if (!hits.length) return false;
-              hits.sort((a, b) => a.textContent.length - b.textContent.length);
-              hits[0].scrollIntoView({block: "start", inline: "nearest"});
-              window.scrollBy(0, -24);
-              return true;
-            })()
-        """,
-    }[kind]
-    if _eval(page, script) is not True:
-        raise PageError(f"the German {kind} picture was not on the page")
+    if _eval(page, _PANEL_SCRIPT[kind]) is not True:
+        raise PageError(f"the second-language {kind} picture was not on the page")
     _grab(page, directory, name, 0, 0)
 
 
@@ -2270,16 +3146,18 @@ def _german_shots(page: DevTools, out_dir: Path, url: str, query: str, heading: 
     _click(page, 'form[action="/identity"] button')
     _wait_node(page, "#query", 20)
     _fill(page, "#query", query)
-    _fit(page, 1280, 1800)
+    _loading_shot(
+        out_dir, f"smoke-{ARCH}-14-de-loading-1280.png", 1280, url, query, alt_lang=True
+    )
     _click(page, 'form[action="/explain"] button')
-    _loading_at(page, out_dir, f"smoke-{ARCH}-14-de-loading-1280.png", 1280, 1800)
     _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
     page.call("Page.navigate", {"url": url})
     _wait_text(page, "Unternehmensname oder Tickersymbol")
     _fill(page, "#query", query)
-    _fit(page, 420, 1800)
+    _loading_shot(
+        out_dir, f"smoke-{ARCH}-15-de-loading-420.png", 420, url, query, alt_lang=True
+    )
     _click(page, 'form[action="/explain"] button')
-    _loading_at(page, out_dir, f"smoke-{ARCH}-15-de-loading-420.png", 420, 1800)
     _wait_result(page, out_dir, heading, "USD", loading=False, capture=False)
 
 
@@ -2350,6 +3228,86 @@ def launch(binary: str) -> tuple[subprocess.Popen, str, object]:
     return _start(binary)
 
 
+def _proxy_tunnel(left: socket.socket, right: socket.socket) -> None:
+    pair = [left, right]
+    try:
+        while True:
+            readable, _, _ = select.select(pair, [], [], 60)
+            if not readable:
+                return
+            for sock in readable:
+                other = right if sock is left else left
+                chunk = sock.recv(65536)
+                if not chunk:
+                    return
+                other.sendall(chunk)
+    except OSError:
+        return
+    finally:
+        for sock in pair:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def _proxy_client(client: socket.socket) -> None:
+    client.settimeout(30)
+    upstream = None
+    try:
+        data = b""
+        while b"\r\n\r\n" not in data and len(data) < 8192:
+            chunk = client.recv(4096)
+            if not chunk:
+                return
+            data += chunk
+        line = data.split(b"\r\n", 1)[0].decode("latin1", "replace")
+        parts = line.split(" ")
+        if len(parts) < 2 or parts[0].upper() != "CONNECT":
+            client.sendall(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n")
+            return
+        host, _, port_text = parts[1].partition(":")
+        if host not in _SEC_HOSTS:
+            client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            return
+        _sec_hold.wait(host)
+        upstream = socket.create_connection((host, int(port_text or "443")), timeout=30)
+        client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        client.settimeout(None)
+        upstream.settimeout(None)
+        _proxy_tunnel(client, upstream)
+        upstream = None
+        client = None
+    except (OSError, ValueError, TimeoutError):
+        return
+    finally:
+        for sock in (client, upstream):
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+
+def _proxy_serve(sock: socket.socket) -> None:
+    while True:
+        try:
+            client, _addr = sock.accept()
+        except OSError:
+            return
+        threading.Thread(target=_proxy_client, args=(client,), daemon=True).start()
+
+
+def _start_sec_proxy() -> int:
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(32)
+    port = sock.getsockname()[1]
+    threading.Thread(target=_proxy_serve, args=(sock,), daemon=True).start()
+    return port
+
+
 def _start(binary: str, home: Path | None = None) -> tuple[subprocess.Popen, str, object]:
     binary = str(Path(binary).resolve())
     if home is None:
@@ -2373,6 +3331,10 @@ def _start(binary: str, home: Path | None = None) -> tuple[subprocess.Popen, str
     env["USERPROFILE"] = str(home)
     env["URL_FILE"] = str(url_file)
     env["BROWSER"] = str(recorder)
+    proxy_port = _start_sec_proxy()
+    env["https_proxy"] = f"http://127.0.0.1:{proxy_port}"
+    env["http_proxy"] = env["https_proxy"]
+    env["no_proxy"] = "127.0.0.1,localhost"
     log = open(home / "app.log", "wb")
     port_file = home / "Library" / "Application Support" / "White Cliff" / "instance.port"
     proc = subprocess.Popen(
