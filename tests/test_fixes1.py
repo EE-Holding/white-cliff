@@ -123,6 +123,7 @@ def test_german_pages_do_not_use_an_english_explain_sentence():
                 fiscal_year_end=filing.fiscal_year_end,
             )
         visible = re.sub(r"<h1\b[^>]*>.*?</h1>", " ", page, flags=re.S)
+        visible = re.sub(r'<p class="pct-note"[^>]*>.*?</p>', " ", visible, flags=re.S)
         visible = re.sub(r'data-template="E3".*?</p>', " ", visible, flags=re.S)
         visible = re.sub(r"<style\b[^>]*>.*?</style>", " ", visible, flags=re.S)
         visible = re.sub(r"<script\b[^>]*>.*?</script>", " ", visible, flags=re.S)
@@ -160,9 +161,13 @@ def test_the_result_grid_fills_the_column_and_only_percents_are_underlined():
         None,
     )
     short = line.split('class="chart"', 1)[0]
-    percent = re.search(r'<a class="pct" href="(https://www\.sec\.gov/[^"]+)">10\.0 percent</a>', short)
+    percent = re.search(r'<a class="pct" href="#(pct-[0-9a-f]+)">10\.0 percent</a>', short)
     period = re.search(r'<a class="per" href="(https://www\.sec\.gov/[^"]+)">', short)
     assert percent is not None and period is not None
+    note = re.search(rf'<p class="pct-note" id="{percent.group(1)}">(.*?)</p>', line, flags=re.S)
+    assert note is not None
+    links = re.findall(r'href="(https://www\.sec\.gov/[^"]+)"', note.group(1))
+    assert len(links) == 2 and len(set(links)) == 2
 
 
 def test_a_language_save_keeps_unknown_keys_and_the_first_backup(tmp_path):

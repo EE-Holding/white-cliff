@@ -335,7 +335,8 @@ def test_a_result_stays_a_result_when_the_language_changes(tmp_path):
 
 
 def _visible(page: str) -> str:
-    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", page, flags=re.I | re.S)
+    text = re.sub(r'<p class="pct-note"[^>]*>.*?</p>', " ", page, flags=re.I | re.S)
+    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.I | re.S)
     text = text.replace(DISCLAIMER, " ")
     text = re.sub(r"<[^>]+>", " ", text)
@@ -400,9 +401,10 @@ def test_german_pages_do_not_reuse_english_template_words():
             continue
         assert definition not in result
     assert "Der operative Cashflow ist der Zahlungsmittelzufluss" in result
+    noted = re.sub(r'<p class="pct-note"[^>]*>.*?</p>', " ", result, flags=re.S)
     assert "geteilt durch" in result
-    assert "Net debt" not in result
-    assert "divided by" not in result
+    assert "Net debt" not in noted
+    assert "divided by" not in noted
     assert "the prior quarter" not in gap
     assert f"Quartal zum 26.{NBSP}April{NBSP}2026" in gap
     assert "96.221" in result

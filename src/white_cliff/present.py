@@ -178,7 +178,14 @@ def _language_control(token: str) -> str:
     )
 
 
-def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "") -> str:
+def _shell(
+    inner: str,
+    *,
+    result: bool = False,
+    token: str = "",
+    search: str = "",
+    names: tuple[str, ...] = (),
+) -> str:
     closed = html.escape(shown_copy(CLOSED), quote=True)
     looking = html.escape(shown_copy(LOOKING), quote=True)
     finding = html.escape(shown_copy(FINDING), quote=True)
@@ -353,8 +360,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         ".change-line { margin: 12px 0 0; font-size: 18px; line-height: 27px; color: #3a3a3c; "
         "font-weight: 400; }\n"
         ".change-line a { color: #0a4b8f; text-decoration: none; white-space: nowrap; }\n"
-        ".pct-note { display: none; margin: 8px 0 0; font-size: 18px; line-height: 27px; }\n"
-        ".pct-note:target { display: block; }\n"
+        ".pct-note { display: block; margin: 8px 0 0; font-size: 18px; line-height: 27px; }\n"
         ".pct-note a + a { margin-left: 16px; }\n"
         ".detail { display: grid; grid-template-rows: 0fr; opacity: 0; "
         "transition: grid-template-rows 300ms var(--ease-standard), opacity 300ms var(--ease-standard); }\n"
@@ -511,6 +517,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
         "  h3, .marker, .explain, .quality { font-size: 13px; line-height: 16px; }\n"
         "  .sources { margin-top: 10px; }\n"
         "  .filing a, .change a { min-height: 0; padding: 0; font-size: 12px; line-height: 16px; }\n"
+        "  .pct-note { display: block !important; }\n"
         "}\n"
         "</style>\n"
         f"{_print_sheet(inner, disclaimer) if result else _column(inner)}"
@@ -691,7 +698,7 @@ def _shell(inner: str, *, result: bool = False, token: str = "", search: str = "
     from white_cliff.wording import page_terms
 
     page = _blank_sec(page)
-    found = page_terms(page)
+    found = page_terms(page, names)
     if found:
         raise OutputRefused(found)
     return page
@@ -1427,9 +1434,20 @@ def result_page(
         + _change_link()
         + "</div>\n"
     )
+    filed_names: list[str] = []
+    for raw in (company,):
+        cleaned = " ".join(raw.split())
+        if " " in cleaned:
+            filed_names.append(cleaned)
+    chip_match = re.search(r'<a class="registrant-chip"[^>]*>(.*?)</a>', explained.html, re.S)
+    if chip_match is not None:
+        chip = " ".join(html.unescape(_TAG.sub("", chip_match.group(1))).split())
+        if " " in chip and chip not in filed_names:
+            filed_names.append(chip)
     return _shell(
         inner,
         result=True,
         token=token,
         search=_search_form(token, focus=False, steps=False),
+        names=tuple(filed_names),
     )

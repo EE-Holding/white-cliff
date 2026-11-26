@@ -1,5 +1,6 @@
 """Comparison math: percent rules, prior-quarter selection, and pinned figures."""
 
+import html
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -568,6 +569,36 @@ def test_heads_keep_a_caption_and_the_missing_quarter_keeps_its_head():
     assert any(head.startswith("Year ended ") for head in _column_heads(apple))
 
 
+def test_every_percent_note_shows_a_label_a_date_and_the_formula():
+    """A note that is only two amounts, or that drops the label, date, or formula, fails."""
+    import json
+
+    from white_cliff.wording import percent_note_gaps
+
+    manifest = json.loads((ROOT / "pinned" / "manifest.json").read_text(encoding="utf-8"))
+    checked = 0
+    for item in manifest["filings"]:
+        directory = PINNED / item["accession"]
+        if not directory.is_dir():
+            continue
+        filing = load_directory(directory)
+        page = result_page(
+            explain_filing(filing),
+            form=filing.form,
+            period=filing.period_end or "",
+            filed=item.get("period_of_report") or "",
+            url=filing.url,
+            company=filing.filer,
+            focus=filing.focus,
+            fiscal_year_end=filing.fiscal_year_end,
+        )
+        for note in re.findall(r'<p class="pct-note"[^>]*>(.*?)</p>', page, flags=re.S):
+            gaps = percent_note_gaps(note)
+            assert not gaps, (item["accession"], gaps, re.sub(r"<[^>]+>", "", note)[:240])
+            checked += 1
+    assert checked == 134
+
+
 def test_every_percent_link_resolves_to_both_of_its_inputs():
     """A percent opens one note, and that note links this figure and the earlier figure."""
     page = _nvidia_page()
@@ -606,5 +637,169 @@ def test_every_percent_link_resolves_to_both_of_its_inputs():
                 assert hrefs[0] == figure.group(1)
                 assert hrefs[1] in priors
                 assert all(href.startswith("https://www.sec.gov/") for href in hrefs)
+                plain_note = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", note.group(1))).strip()
+                assert plain_note.startswith("It is calculated as the change from ")
+                assert ", divided by the " in plain_note
+                assert " figure, using " in plain_note
+                assert plain_note.endswith(".")
                 checked += 1
     assert checked >= 2
+
+
+def test_a_percent_without_a_filing_label_or_date_is_removed():
+    from white_cliff.wording import _percent_tuple, take_percent_note_counts
+
+    take_percent_note_counts()
+    current = make_fact("110", fact_id="gapnow", end="2026-07-26", start="2026-04-27")
+    prior = make_fact("100", fact_id="gapold", end="2026-04-26", start="2026-01-26")
+    current_cell = Cell(
+        True,
+        value=current.value,
+        unit=current.unit,
+        period_end=current.period.end or "",
+        period_start=current.period.start,
+        kind=current.period.kind,
+        fact=current,
+    )
+    prior_cell = Cell(
+        True,
+        value=prior.value,
+        unit=prior.unit,
+        period_end=prior.period.end or "",
+        period_start=prior.period.start,
+        kind=prior.period.kind,
+        fact=prior,
+    )
+    assert _percent_tuple("100", current_cell, prior_cell, "10.0 percent") is None
+    undated = Cell(
+        True,
+        value=prior.value,
+        unit=prior.unit,
+        period_end="",
+        period_start=prior.period.start,
+        kind=prior.period.kind,
+        fact=prior,
+    )
+    assert _percent_tuple("Revenue", current_cell, undated, "10.0 percent") is None
+    noted, removed = take_percent_note_counts()
+    assert noted == 0
+    assert removed == 2
+
+
+def test_a_percent_note_missing_a_label_or_a_date_or_the_formula_fails():
+    from white_cliff.wording import percent_note_gaps
+
+    bare = (
+        '<p class="pct-note" id="pct-bare">'
+        '<a href="https://www.sec.gov/a">$100 million</a>'
+        '<a href="https://www.sec.gov/b">$80 million</a>'
+        "</p>"
+    )
+    assert percent_note_gaps(bare) == {"label", "date", "formula"}
+    no_label = (
+        "It is calculated as the change from April 26, 2026 to July 26, 2026, "
+        "divided by the April 26, 2026 figure, using of $110 million for July 26, 2026 "
+        "and of $100 million for April 26, 2026."
+    )
+    assert percent_note_gaps(no_label) == {"label"}
+    no_date = (
+        "It is calculated as the change from the prior quarter to this quarter, "
+        "divided by the prior quarter figure, using Revenue of $110 million for this quarter "
+        "and Revenue of $100 million for the prior quarter."
+    )
+    assert percent_note_gaps(no_date) == {"date"}
+    no_formula = (
+        "Revenue of $110 million for July 26, 2026 and Revenue of $100 million for April 26, 2026."
+    )
+    assert percent_note_gaps(no_formula) == {"formula", "label"}
+
+
+def test_a_change_percent_states_the_formula_and_links_both_amounts():
+    from white_cliff.i18n import using
+    from white_cliff.wording import label_for, long_date, show_measure, take_percent_note_counts
+    from tests.test_cards import _column, _html, _quarter
+
+    take_percent_note_counts()
+    current = _quarter("110", "notenow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "notelast")
+    html_text = _html(current, _column(last), None)
+    label = label_for("revenue", current)
+    period = long_date(current.period.end or "")
+    period_prior = long_date(last.period.end or "")
+    current_amount = show_measure(current.value, current.unit)
+    prior_amount = show_measure(last.value, last.unit)
+    expected = (
+        "It is calculated as the change from "
+        f"{period_prior} to {period}, divided by the {period_prior} figure, using "
+        f"{label} of {current_amount} for {period} and "
+        f"{label} of {prior_amount} for {period_prior}."
+    )
+    note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', html_text, flags=re.S)
+    assert note is not None
+    assert re.sub(r"<[^>]+>", "", note.group(1)) == expected
+    links = re.findall(r'<a href="([^"]+)">([^<]+)</a>', note.group(1))
+    assert [text for _href, text in links] == [current_amount, prior_amount]
+    assert links[0][0].startswith("https://www.sec.gov/")
+    assert links[1][0].startswith("https://www.sec.gov/")
+    assert links[0][0] != links[1][0]
+    noted, removed = take_percent_note_counts()
+    assert noted == 1
+    assert removed == 0
+    with using("de"):
+        take_percent_note_counts()
+        page_de = _html(current, _column(last), None)
+        note_de = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', page_de, flags=re.S)
+        assert note_de is not None
+        assert re.sub(r"<[^>]+>", "", note_de.group(1)) == expected
+        take_percent_note_counts()
+
+
+def test_a_percent_without_two_filing_links_is_removed():
+    from dataclasses import replace
+
+    from white_cliff.wording import take_percent_note_counts
+    from tests.test_cards import _column, _html, _quarter
+
+    take_percent_note_counts()
+    current = _quarter("110", "dropnow", "2026-04-27", "2026-07-26")
+    last = _quarter("100", "droplast")
+    shared = replace(last, id=current.id, source=current.source)
+    html_text = _html(current, _column(shared), None)
+    assert "10.0 percent" not in re.sub(r"<[^>]+>", " ", html_text)
+    assert "pct-note" not in html_text
+    noted, removed = take_percent_note_counts()
+    assert noted == 0
+    assert removed >= 1
+
+
+def test_the_note_uses_the_values_the_percent_was_computed_from():
+    """The amount in the note is the table value that was divided, not another reading of the fact."""
+    from white_cliff.wording import fact_href
+
+    current = make_fact("110", fact_id="samecur", end="2026-07-26", start="2026-04-27")
+    prior_fact = make_fact("50", fact_id="sameold", end="2026-04-26", start="2026-01-26")
+    prior = Cell(
+        True,
+        value=Decimal("100"),
+        unit=prior_fact.unit,
+        period_end=prior_fact.period.end or "",
+        period_start=prior_fact.period.start,
+        kind=prior_fact.period.kind,
+        fact=prior_fact,
+    )
+    face, lines = _comparison_block(
+        "revenue", current, prior, None, "money", "quarterly report", "2026-08-01"
+    )
+    note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', face + lines, flags=re.S)
+    assert note is not None
+    links = [
+        (html.unescape(href), label)
+        for href, label in re.findall(r'<a href="([^"]+)">([^<]+)</a>', note.group(1))
+    ]
+    assert len(links) == 2
+    assert "110" in links[0][1]
+    assert "100" in links[1][1]
+    assert "50" not in links[1][1]
+    assert links[0][0] == fact_href(current)
+    assert links[1][0] == fact_href(prior_fact)
+    assert links[1][0].startswith("https://www.sec.gov/")

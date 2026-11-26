@@ -123,6 +123,57 @@ def test_print_css_and_the_print_button_call_the_local_dialog():
     assert "button.print { min-height: 64px;" in page
 
 
+def test_the_percent_note_is_on_the_screen_and_in_the_print():
+    filing, page = _page()
+    css = _print_css(page)
+    assert ".pct-note { display: block !important; }" in css
+    assert ".pct-note { display: none" not in page
+    face = re.search(r'<div class="cmp-slot">(.*?)</div>', page, flags=re.S)
+    assert face is not None
+    note = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', face.group(1), flags=re.S)
+    assert note is not None
+    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html.unescape(note.group(1)))).strip()
+    assert plain.startswith("It is calculated as the change from ")
+    assert ", divided by the " in plain
+    assert " figure, using " in plain
+    links = re.findall(r'href="(https://www\.sec\.gov/[^"]+)"', note.group(1))
+    assert len(links) == 2
+    assert len(set(html.unescape(item) for item in links)) == 2
+    printed = _printed(page).text()
+    assert "It is calculated as the change from " in printed
+    assert "divided by the " in printed
+    from tests.test_full_index import _harness
+
+    harness = _harness()
+    assert harness.percent_mismatches(page) == []
+    from white_cliff.i18n import using
+
+    with using("de"):
+        page_de = result_page(
+            explain_filing(filing),
+            form=filing.form,
+            period=filing.period_end or "",
+            filed="2026-11-01",
+            url=filing.url,
+            company=filing.filer,
+            focus=filing.focus,
+            fiscal_year_end=filing.fiscal_year_end,
+        )
+    face_de = re.search(r'<div class="cmp-slot">(.*?)</div>', page_de, flags=re.S)
+    assert face_de is not None
+    note_de = re.search(r'<p class="pct-note"[^>]*>(.*?)</p>', face_de.group(1), flags=re.S)
+    assert note_de is not None
+    plain_de = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html.unescape(note_de.group(1)))).strip()
+    assert plain_de.startswith("It is calculated as the change from ")
+    assert ", divided by the " in plain_de
+    assert " figure, using " in plain_de
+    links_de = re.findall(r'href="(https://www\.sec\.gov/[^"]+)"', note_de.group(1))
+    assert len(links_de) == 2
+    assert len(set(html.unescape(item) for item in links_de)) == 2
+    assert "It is calculated as the change from " in _printed(page_de).text()
+    assert harness.percent_mismatches(page_de) == []
+
+
 def test_the_disclaimer_is_the_first_printed_text_above_any_number():
     _filing, page = _page()
     printed = _printed(page).text()
