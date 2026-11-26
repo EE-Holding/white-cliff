@@ -1421,12 +1421,13 @@ def run_sec(limit: int | None, tickers: list[str] | None = None) -> dict:
     )
     pending.sort(key=lambda item: (item["cik"], item["filing_date"], item["accession"]))
     print(f"sec scope {len(scope)} pending {len(pending)} statements {len(present)}", flush=True)
-    # The statement index is large. Leave it alone while a filing is parsed.
-    gc.disable()
+    # The statement index is large. Freeze it so a later collection does not scan it.
+    gc.collect()
+    gc.freeze()
     try:
         _run_sec_pending(pending, present, index, scope)
     finally:
-        gc.enable()
+        gc.unfreeze()
         gc.collect()
     return write_sec_summary(scope)
 
@@ -1465,8 +1466,6 @@ def _run_sec_pending(pending, present, index, scope) -> None:
             }
         _write_json(_sec_result_path(item["accession"]), record)
         covered += 1
-        if covered % 50 == 0:
-            gc.collect()
         if covered % 100 == 0:
             write_sec_summary(scope)
         print(
