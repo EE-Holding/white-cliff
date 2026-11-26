@@ -14,6 +14,13 @@ FILING = (
 URL = "https://www.sec.gov/Archives/edgar/data/1/000000000100000001/filing.htm"
 
 
+def test_a_repeated_phrase_links_the_earlier_copy():
+    phrase = "The company expects demand to remain steady in the next year."
+    filing = phrase + " Extra words stay here. " + phrase
+    quotes = review_quotes(f'"{phrase}"', filing, URL)
+    assert quotes[0].url.endswith("#quote=0")
+
+
 def test_valid_quote_links_to_sec():
     text = '"The company expects demand to remain steady in the next year."'
     quotes = review_quotes(text, FILING, URL)

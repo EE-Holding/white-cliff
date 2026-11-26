@@ -183,11 +183,16 @@ def _sequence_at(
     width = len(quote_words)
     if width > len(folded):
         return None
-    for index in starts.get(quote_words[0], ()):
-        if index + width > len(folded):
+    rare_offset = min(
+        range(width),
+        key=lambda offset: len(starts.get(quote_words[offset], ())),
+    )
+    for index in starts.get(quote_words[rare_offset], ()):
+        start = index - rare_offset
+        if start < 0 or start + width > len(folded):
             continue
-        if list(folded[index : index + width]) == quote_words:
-            return filing_words[index][1], filing_words[index + width - 1][2]
+        if all(folded[start + offset] == quote_words[offset] for offset in range(width)):
+            return filing_words[start][1], filing_words[start + width - 1][2]
     return None
 
 
