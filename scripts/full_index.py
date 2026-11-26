@@ -8,13 +8,18 @@ This script is not a test and it is not part of CI. Responses stay in
 from __future__ import annotations
 
 import argparse
+import csv
+import gzip
 import hashlib
 import html
+import io
 import json
 import os
 import re
 import time
+import zipfile
 from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 
@@ -28,7 +33,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CONSTITUENTS = ROOT / "pinned" / "sp500-constituents.json"
 CACHE = ROOT / ".full-index-cache"
 SUMMARY = ROOT / "runs" / "full-index-1" / "summary.md"
+SEC_SUMMARY = ROOT / "runs" / "full-index-2" / "summary.md"
+STATEMENTS = ROOT / "pinned" / "sec-statements"
 SCOPE_START = "2020-01-01"
+QUARTER_DAYS = Decimal("91.25")
+QUARTER_TOLERANCE = Decimal("25")
 FORMS = frozenset({"10-K", "10-Q"})
 SCALE_STEPS = (3, 6, 9)
 _SHOWN_ID = re.compile(r"(fact|calc)=((?:fact|calc)[a-z]+)")
@@ -111,6 +120,365 @@ def classify_value(
             return Verdict("REVIEW", "restatement", format_decimal(closest))
     closest = min(same, key=lambda item: abs(item - absolute))
     return Verdict("WRONG", "", format_decimal(closest))
+
+
+def _month_end(year: int, month: int) -> date:
+    if month == 12:
+        following = date(year + 1, 1, 1)
+    else:
+        following = date(year, month + 1, 1)
+    return following - timedelta(days=1)
+
+
+def _nearest_month_end(day: date) -> date:
+    """The data set stores ddate rounded to the nearest month end."""
+    if day.month == 1:
+        previous = _month_end(day.year - 1, 12)
+    else:
+        previous = _month_end(day.year, day.month - 1)
+    current = _month_end(day.year, day.month)
+    if day.month == 12:
+        following = _month_end(day.year + 1, 1)
+    else:
+        following = _month_end(day.year, day.month + 1)
+    return min(
+        (previous, current, following),
+        key=lambda item: (abs((item - day).days), -item.toordinal()),
+    )
+
+
+def sec_period(kind: str, start: str | None, end: str | None) -> tuple[str, int] | None:
+    """Map a filing period onto the data-set end date and quarter count.
+
+    An instant is quarter count 0. A duration uses the nearest whole number of
+    quarters. A span that is not close to that count is left unaligned.
+    The end date is the nearest month end, which is how the data set stores it.
+    """
+    if not end:
+        return None
+    try:
+        end_day = date.fromisoformat(end)
+    except ValueError:
+        return None
+    ddate = _nearest_month_end(end_day).strftime("%Y%m%d")
+    if kind == "instant":
+        return ddate, 0
+    if not start:
+        return None
+    try:
+        start_day = date.fromisoformat(start)
+    except ValueError:
+        return None
+    days = Decimal((end_day - start_day).days)
+    if days <= 0:
+        return None
+    quarters = int((days / QUARTER_DAYS).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
+    if quarters < 1:
+        return None
+    if abs(days - (Decimal(quarters) * QUARTER_DAYS)) > QUARTER_TOLERANCE:
+        return None
+    return ddate, quarters
+
+
+def _dimension(raw: str | None) -> str:
+    text = (raw or "").strip()
+    if text.upper() == "NULL":
+        return ""
+    return text
+
+
+def _qtrs_text(raw: str | None) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    try:
+        number = Decimal(text)
+    except Exception:
+        return text
+    if number == number.to_integral_value():
+        return str(int(number))
+    return text
+
+
+def _decimal_text(raw: str) -> Decimal | None:
+    text = raw.strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except Exception:
+        return None
+
+
+def classify_sec_number(
+    *,
+    accession: str,
+    tag: str,
+    kind: str,
+    start: str | None,
+    end: str | None,
+    unit: str,
+    absolute: Decimal,
+    decimals: int | None,
+    rows: list[dict],
+) -> tuple[str, dict | None]:
+    """MATCH, WRONG, or NOT_COMPARABLE against one SEC source.
+
+    The row must share the tag, the period, the unit, and empty dimensions.
+    A scale gap is WRONG. A disagreeing value stays WRONG and is returned for
+    the review list. Nothing here reclassifies a disagreement.
+    """
+    period = sec_period(kind, start, end)
+    if period is None:
+        return "NOT_COMPARABLE", None
+    ddate, quarters = period
+    base = _base_unit(unit)
+    chosen: list[Decimal] = []
+    for row in rows:
+        if str(row.get("adsh") or "") != accession:
+            continue
+        if str(row.get("tag") or "") != tag:
+            continue
+        if str(row.get("ddate") or "") != ddate:
+            continue
+        if _qtrs_text(str(row.get("qtrs") or "")) != str(quarters):
+            continue
+        if str(row.get("uom") or "") != base:
+            continue
+        if _dimension(row.get("segments")) or _dimension(row.get("coreg")):
+            continue
+        value = _decimal_text(str(row.get("value") or ""))
+        if value is None:
+            continue
+        chosen.append(value)
+    if not chosen:
+        return "NOT_COMPARABLE", None
+    if all(_near(absolute, value, decimals) for value in chosen):
+        return "MATCH", None
+    distinct: list[str] = []
+    for value in chosen:
+        text = format_decimal(value)
+        if text not in distinct:
+            distinct.append(text)
+    return "WRONG", {
+        "filing": accession,
+        "tag": tag,
+        "ours": format_decimal(absolute),
+        "sec": "; ".join(distinct),
+    }
+
+
+def rows_from_companyfacts(index: dict, accession: str) -> list[dict]:
+    """Companyfacts rows in the same shape as a data-set number row."""
+    rows: list[dict] = []
+    for (concept, unit, start, end), pairs in index.items():
+        for row_accession, value in pairs:
+            if row_accession != accession:
+                continue
+            kind = "instant" if not start else "duration"
+            period = sec_period(kind, start or None, end or None)
+            if period is None:
+                continue
+            ddate, quarters = period
+            rows.append(
+                {
+                    "adsh": accession,
+                    "tag": concept,
+                    "ddate": ddate,
+                    "qtrs": str(quarters),
+                    "uom": unit,
+                    "segments": "",
+                    "coreg": "",
+                    "value": format_decimal(value),
+                }
+            )
+    return rows
+
+
+def rows_for_filing(
+    accession: str,
+    present: set[str],
+    statement_rows: list[dict],
+    facts_index: dict,
+) -> tuple[list[dict], str]:
+    """Use the data sets when the filing is in them, otherwise companyfacts."""
+    if accession in present:
+        rows = [row for row in statement_rows if str(row.get("adsh") or "") == accession]
+        return rows, "statements"
+    return rows_from_companyfacts(facts_index, accession), "companyfacts"
+
+
+def _iter_tsv(handle):
+    reader = csv.DictReader(handle, delimiter="\t")
+    if not reader.fieldnames:
+        return
+    reader.fieldnames = [(name or "").strip().lower() for name in reader.fieldnames]
+    for row in reader:
+        if row:
+            yield row
+
+
+def _iter_tsv_bytes(handle):
+    text = io.TextIOWrapper(handle, encoding="utf-8-sig", newline="")
+    try:
+        yield from _iter_tsv(text)
+    finally:
+        text.detach()
+
+
+def _zip_member(archive: zipfile.ZipFile, suffix: str) -> str:
+    wanted = suffix.lower()
+    for name in archive.namelist():
+        if name.lower().endswith(wanted) and not name.endswith("/"):
+            return name
+    raise ValueError(f"missing {suffix}")
+
+
+def _read_statement_zip(path: Path, allowed: set[str]) -> tuple[set[str], list[dict], list[dict]]:
+    kept_adsh: set[str] = set()
+    numbers: list[dict] = []
+    submissions: list[dict] = []
+    with zipfile.ZipFile(path) as archive:
+        with archive.open(_zip_member(archive, "sub.txt")) as handle:
+            for row in _iter_tsv_bytes(handle):
+                adsh = (row.get("adsh") or "").strip()
+                if adsh not in allowed:
+                    continue
+                kept_adsh.add(adsh)
+                submissions.append(
+                    {
+                        "adsh": adsh,
+                        "form": (row.get("form") or "").strip(),
+                        "period": (row.get("period") or "").strip(),
+                        "filed": (row.get("filed") or "").strip(),
+                    }
+                )
+        with archive.open(_zip_member(archive, "num.txt")) as handle:
+            for row in _iter_tsv_bytes(handle):
+                adsh = (row.get("adsh") or "").strip()
+                if adsh not in allowed:
+                    continue
+                value = (row.get("value") or "").strip()
+                if value == "":
+                    continue
+                numbers.append(
+                    {
+                        "adsh": adsh,
+                        "tag": (row.get("tag") or "").strip(),
+                        "ddate": (row.get("ddate") or "").strip(),
+                        "qtrs": _qtrs_text(row.get("qtrs")),
+                        "uom": (row.get("uom") or "").strip(),
+                        "segments": _dimension(row.get("segments")),
+                        "coreg": _dimension(row.get("coreg")),
+                        "value": value,
+                    }
+                )
+    return kept_adsh, numbers, submissions
+
+
+def filter_statement_zip(path: Path, allowed: set[str]) -> tuple[set[str], list[dict]]:
+    """Keep number rows for the given filings. Submission names stay out."""
+    kept_adsh, numbers, _submissions = _read_statement_zip(path, allowed)
+    return kept_adsh, numbers
+
+
+def manifest_entry(url: str, downloaded: str, digest: str) -> dict[str, str]:
+    return {"url": url, "downloaded": downloaded, "sha256": digest}
+
+
+def _fixture_file(directory: Path, name: str) -> Path:
+    path = (directory / name).resolve()
+    root = directory.resolve()
+    if path != root and root not in path.parents:
+        raise ValueError("fixture path leaves the directory")
+    return path
+
+
+def load_statements(directory: Path) -> tuple[set[str], dict]:
+    """Read the pinned data-set fixture. Dimensional rows stay in the file only."""
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    present: set[str] = set()
+    index: dict[str, dict[str, list[tuple[str, str, str, str]]]] = {}
+    for item in manifest.get("files") or []:
+        with gzip.open(_fixture_file(directory, item["sub"]), "rt", encoding="utf-8", newline="") as handle:
+            for row in _iter_tsv(handle):
+                adsh = (row.get("adsh") or "").strip()
+                if adsh:
+                    present.add(adsh)
+        with gzip.open(_fixture_file(directory, item["num"]), "rt", encoding="utf-8", newline="") as handle:
+            for row in _iter_tsv(handle):
+                adsh = (row.get("adsh") or "").strip()
+                tag = (row.get("tag") or "").strip()
+                if not adsh or not tag:
+                    continue
+                if _dimension(row.get("segments")) or _dimension(row.get("coreg")):
+                    continue
+                value = (row.get("value") or "").strip()
+                if not value:
+                    continue
+                bucket = index.setdefault(adsh, {}).setdefault(tag, [])
+                bucket.append(
+                    (
+                        (row.get("ddate") or "").strip(),
+                        _qtrs_text(row.get("qtrs")),
+                        (row.get("uom") or "").strip(),
+                        value,
+                    )
+                )
+    return present, index
+
+
+def rows_from_index(index: dict, accession: str, tag: str) -> list[dict]:
+    found = index.get(accession, {}).get(tag, [])
+    return [
+        {
+            "adsh": accession,
+            "tag": tag,
+            "ddate": ddate,
+            "qtrs": quarters,
+            "uom": unit,
+            "segments": "",
+            "coreg": "",
+            "value": value,
+        }
+        for ddate, quarters, unit, value in found
+    ]
+
+
+def render_sec_summary(report: dict) -> str:
+    rows = list(report["review_rows"])
+    lines = [
+        DISCLAIMER,
+        "",
+        "# SEC cross-check",
+        "",
+        "Source: SEC Financial Statement Data Sets (num.txt and sub.txt).",
+        f"Snapshot date: {report['snapshot']}.",
+        "A filing that is not in those quarterly sets is compared with companyfacts JSON.",
+        "These counts are separate from the earlier comparison.",
+        "",
+        f"Filings in scope: {report['filings_in_scope']}",
+        f"Filings read from the data sets: {report['filings_from_statements']}",
+        f"Filings read from companyfacts: {report['filings_from_companyfacts']}",
+        f"Filings errored: {report.get('filings_errored', 0)}",
+        f"Numbers MATCH: {report['sec_match']}",
+        f"Numbers WRONG: {report['sec_wrong']}",
+        f"Numbers NOT_COMPARABLE: {report['sec_not_comparable']}",
+        f"Review list: {len(rows)}",
+        "",
+        "## Review list",
+        "",
+        "Each row is a WRONG. The filing, the tag, the value White Cliff shows, and the SEC value.",
+        "",
+    ]
+    if not rows:
+        lines.append("None.")
+    else:
+        lines.append("filing | tag | White Cliff | SEC")
+        for row in rows:
+            lines.append(" | ".join([row["filing"], row["tag"], row["ours"], row["sec"]]))
+    lines.append("")
+    return "\n".join(lines)
 
 
 def check_percent_notes(page: str) -> dict[str, int]:
@@ -781,11 +1149,341 @@ def run(limit: int | None, tickers: list[str] | None = None) -> dict:
     return write_summary(scope)
 
 
+def statement_quarters() -> list[str]:
+    quarters = []
+    for year in range(2020, 2027):
+        for quarter in range(1, 5):
+            quarters.append(f"{year}q{quarter}")
+    return quarters
+
+
+def statement_url(quarter: str) -> str:
+    return f"https://www.sec.gov/files/dera/data/financial-statement-data-sets/{quarter}.zip"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _ensure_zip(client: EdgarClient, url: str, path: Path) -> str:
+    if path.is_file() and zipfile.is_zipfile(path):
+        return _sha256(path)
+    temporary = path.with_suffix(".zip.partial")
+    blob = client.get(url)
+    temporary.write_bytes(blob)
+    digest = hashlib.sha256(blob).hexdigest()
+    del blob
+    temporary.replace(path)
+    return digest
+
+
+def _write_tsv_gz(path: Path, header: list[str], rows: list[list[str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with gzip.open(temporary, "wt", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(header)
+        writer.writerows(rows)
+    temporary.replace(path)
+
+
+def _scope_rows(client: EdgarClient | None = None) -> list[dict[str, str]]:
+    path = CACHE / "scope.json"
+    if path.is_file():
+        payload = _load_json(path)
+        return list(payload["filings"])
+    if client is None:
+        client = _client()
+    return build_scope(client)
+
+
+def fetch_statement_sets(client: EdgarClient, downloaded: str | None = None) -> dict:
+    """Download each quarterly zip once and pin the in-scope rows."""
+    downloaded = downloaded or date.today().isoformat()
+    scope = _scope_rows(client)
+    allowed = {item["accession"] for item in scope}
+    zip_dir = CACHE / "sec-zips"
+    zip_dir.mkdir(parents=True, exist_ok=True)
+    STATEMENTS.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for quarter in statement_quarters():
+        _wait_for_load()
+        url = statement_url(quarter)
+        path = zip_dir / f"{quarter}.zip"
+        try:
+            digest = _ensure_zip(client, url, path)
+        except FetchError as exc:
+            if "404" in str(exc):
+                print(f"skip {quarter} unpublished", flush=True)
+                continue
+            raise
+        with zipfile.ZipFile(path) as archive:
+            with archive.open(_zip_member(archive, "num.txt")) as handle:
+                text = io.TextIOWrapper(handle, encoding="utf-8-sig", newline="")
+                header = text.readline().rstrip("\r\n")
+                text.detach()
+        print(f"{quarter} columns {header}", flush=True)
+        kept_adsh, numbers, submissions = _read_statement_zip(path, allowed)
+        num_name = f"{quarter}-num.tsv.gz"
+        sub_name = f"{quarter}-sub.tsv.gz"
+        _write_tsv_gz(
+            STATEMENTS / num_name,
+            ["adsh", "tag", "ddate", "qtrs", "uom", "segments", "coreg", "value"],
+            [
+                [
+                    row["adsh"],
+                    row["tag"],
+                    row["ddate"],
+                    row["qtrs"],
+                    row["uom"],
+                    row["segments"],
+                    row["coreg"],
+                    row["value"],
+                ]
+                for row in numbers
+            ],
+        )
+        _write_tsv_gz(
+            STATEMENTS / sub_name,
+            ["adsh", "form", "period", "filed"],
+            [[row["adsh"], row["form"], row["period"], row["filed"]] for row in submissions],
+        )
+        entry = manifest_entry(url, downloaded, digest)
+        entry["quarter"] = quarter
+        entry["num"] = num_name
+        entry["sub"] = sub_name
+        entries.append(entry)
+        print(f"{quarter} filings {len(kept_adsh)} rows {len(numbers)}", flush=True)
+    manifest = {
+        "source": "SEC Financial Statement Data Sets",
+        "snapshot": downloaded,
+        "files": entries,
+    }
+    _write_json(STATEMENTS / "manifest.json", manifest)
+    return manifest
+
+
+def classify_shown_sec(markdown: str, store, accession: str, rows_for_tag) -> tuple[dict[str, int], list[dict]]:
+    counts = {"MATCH": 0, "WRONG": 0, "NOT_COMPARABLE": 0, "unaligned": 0}
+    review: list[dict] = []
+    for kind, identifier in shown_ids(markdown):
+        if kind == "calc":
+            counts["NOT_COMPARABLE"] += 1
+            continue
+        fact = store.get(identifier)
+        absolute = fact.value * (Decimal(10) ** int(fact.scale))
+        if sec_period(fact.period.kind, fact.period.start, fact.period.end) is None:
+            counts["unaligned"] += 1
+        label, row = classify_sec_number(
+            accession=accession,
+            tag=fact.concept,
+            kind=fact.period.kind,
+            start=fact.period.start,
+            end=fact.period.end,
+            unit=fact.unit,
+            absolute=absolute,
+            decimals=fact.decimals,
+            rows=rows_for_tag(fact.concept),
+        )
+        counts[label] += 1
+        if row is not None:
+            review.append(row)
+    return counts, review
+
+
+def _sec_result_path(accession: str) -> Path:
+    return CACHE / "sec-results" / f"{accession}.json"
+
+
+def _saved_sec_results() -> list[dict]:
+    directory = CACHE / "sec-results"
+    if not directory.is_dir():
+        return []
+    return [_load_json(path) for path in sorted(directory.glob("*.json"))]
+
+
+def _statement_snapshot() -> str:
+    path = STATEMENTS / "manifest.json"
+    if not path.is_file():
+        return ""
+    return str(_load_json(path).get("snapshot") or "")
+
+
+def _aggregate_sec(scope: list[dict], results: list[dict]) -> dict:
+    by_accession = {row["accession"]: row for row in results}
+    report = {
+        "snapshot": _statement_snapshot(),
+        "filings_in_scope": len(scope),
+        "filings_from_statements": 0,
+        "filings_from_companyfacts": 0,
+        "filings_errored": 0,
+        "sec_match": 0,
+        "sec_wrong": 0,
+        "sec_not_comparable": 0,
+        "review_rows": [],
+    }
+    for item in scope:
+        row = by_accession.get(item["accession"])
+        if row is None:
+            continue
+        status = row.get("status")
+        if status == "error":
+            report["filings_errored"] += 1
+            continue
+        if status != "explained":
+            continue
+        if row.get("source") == "companyfacts":
+            report["filings_from_companyfacts"] += 1
+        else:
+            report["filings_from_statements"] += 1
+        report["sec_match"] += int(row.get("match") or 0)
+        report["sec_wrong"] += int(row.get("wrong") or 0)
+        report["sec_not_comparable"] += int(row.get("not_comparable") or 0)
+        for review in row.get("review_rows") or []:
+            report["review_rows"].append(review)
+    return report
+
+
+def write_sec_summary(scope: list[dict] | None = None) -> dict:
+    if scope is None:
+        scope = _scope_rows()
+    earlier = _aggregate(scope, _saved_results())
+    sec_report = _aggregate_sec(scope, _saved_sec_results())
+    text = render_summary(earlier).rstrip() + "\n\n" + render_sec_summary(sec_report)
+    _write_text(SEC_SUMMARY, text)
+    return sec_report
+
+
+def _sec_one(item: dict[str, str], present: set[str], index: dict, facts_index: dict | None) -> dict:
+    accession = item["accession"]
+    destination = CACHE / "filings" / accession
+    source = "statements" if accession in present else "companyfacts"
+    record = {
+        "accession": accession,
+        "status": "error",
+        "source": source,
+        "match": 0,
+        "wrong": 0,
+        "not_comparable": 0,
+        "unaligned": 0,
+        "review_rows": [],
+    }
+    if not (destination / "provenance.json").is_file():
+        record["status"] = "not_retrieved"
+        return record
+    try:
+        filing = load_directory(destination)
+        explained = explain_filing(filing)
+    except (OSError, UnicodeError, ValueError, KeyError, OutputRefused):
+        record["status"] = "refused"
+        return record
+    if REFUSAL_SENTENCE in explained.markdown or not shown_ids(explained.markdown):
+        record["status"] = "refused"
+        return record
+    if source == "statements":
+
+        def rows_for_tag(tag: str, accession: str = accession) -> list[dict]:
+            return rows_from_index(index, accession, tag)
+
+    else:
+        if facts_index is None:
+            record["status"] = "not_retrieved"
+            return record
+        built = rows_from_companyfacts(facts_index, accession)
+
+        def rows_for_tag(tag: str, built: list[dict] = built) -> list[dict]:
+            return [row for row in built if row["tag"] == tag]
+
+    counts, review = classify_shown_sec(explained.markdown, filing.store, accession, rows_for_tag)
+    record["status"] = "explained"
+    record["match"] = counts["MATCH"]
+    record["wrong"] = counts["WRONG"]
+    record["not_comparable"] = counts["NOT_COMPARABLE"]
+    record["unaligned"] = counts["unaligned"]
+    record["review_rows"] = review
+    return record
+
+
+def run_sec(limit: int | None, tickers: list[str] | None = None) -> dict:
+    scope = _scope_rows()
+    present, index = load_statements(STATEMENTS)
+    done_dir = CACHE / "sec-results"
+    done = {path.stem for path in done_dir.glob("*.json")} if done_dir.is_dir() else set()
+    pending = select_pending(
+        [item for item in scope if item["accession"] not in done],
+        tickers,
+        limit,
+    )
+    pending.sort(key=lambda item: (item["cik"], item["filing_date"], item["accession"]))
+    print(f"sec scope {len(scope)} pending {len(pending)} statements {len(present)}", flush=True)
+    client: EdgarClient | None = None
+    current = ""
+    facts_index: dict | None = None
+    covered = 0
+    for item in pending:
+        _wait_for_load()
+        facts_for_item = facts_index
+        if item["accession"] not in present:
+            if item["cik"] != current:
+                current = item["cik"]
+                if client is None:
+                    client = _client()
+                try:
+                    facts_index = _facts_index(_load_facts(client, item["cik"]))
+                except (FetchError, OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                    facts_index = None
+            facts_for_item = facts_index
+        try:
+            record = _sec_one(item, present, index, facts_for_item)
+        except Exception as exc:
+            record = {
+                "accession": item["accession"],
+                "status": "error",
+                "source": "",
+                "match": 0,
+                "wrong": 0,
+                "not_comparable": 0,
+                "unaligned": 0,
+                "review_rows": [],
+                "error": type(exc).__name__,
+            }
+        _write_json(_sec_result_path(item["accession"]), record)
+        covered += 1
+        if covered % 100 == 0:
+            write_sec_summary(scope)
+        print(
+            f"sec {covered} {item['ticker']} {item['accession']} {record['status']} "
+            f"{record['source']} MATCH {record['match']} WRONG {record['wrong']} "
+            f"NOT_COMPARABLE {record['not_comparable']}",
+            flush=True,
+        )
+    return write_sec_summary(scope)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=DISCLAIMER)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--ticker", action="append", default=None)
+    parser.add_argument("--fetch-statements", action="store_true")
+    parser.add_argument("--sec", action="store_true")
     args = parser.parse_args(argv)
+    if args.fetch_statements:
+        fetch_statement_sets(_client())
+    if args.sec:
+        report = run_sec(args.limit, args.ticker)
+        print(
+            f"sec MATCH {report['sec_match']} WRONG {report['sec_wrong']} "
+            f"NOT_COMPARABLE {report['sec_not_comparable']} "
+            f"REVIEW {len(report['review_rows'])}",
+            flush=True,
+        )
+        return 0
+    if args.fetch_statements:
+        return 0
     report = run(args.limit, args.ticker)
     print(
         f"scope {report['filings_in_scope']} covered {report['filings_covered']} "
