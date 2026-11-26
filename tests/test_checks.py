@@ -312,6 +312,35 @@ def test_banned_words_are_refused_on_a_rendered_page_and_the_required_lines_are_
         _shell("<p>This is a red flag.</p>")
 
 
+def test_a_filing_name_is_not_read_as_a_judgement():
+    named = (
+        "<h1>Alexandria Real Estate Equities</h1>"
+        "<p>For Alexandria Real Estate Equities, revenue was the filing figure.</p>"
+        '<a class="registrant-chip" href="https://www.sec.gov/Archives/edgar/data/1/a.htm">'
+        "ALEXANDRIA REAL ESTATE EQUITIES, INC.</a>"
+        "<h1>Best Buy</h1>"
+        "<p>Best Buy's filing states the figure.</p>"
+    )
+    assert page_terms(named) is None
+    assert page_terms(named + "<p>The change is real.</p>") == "real"
+    assert page_terms(named + "<p>Investors should buy.</p>") == "buy"
+
+
+def test_exact_duplicate_figures_compare_without_an_overflow():
+    from dataclasses import replace
+
+    from white_cliff.explain import _group_agrees
+
+    left = replace(make_fact("221460382", fact_id="factexactoneaaaaaa"), decimals=10**6)
+    right = replace(
+        make_fact("221460382", fact_id="factexacttwoaaaaaa", end="2024-12-31"),
+        decimals=10**6,
+    )
+    other = replace(make_fact("221460383", fact_id="factexactotheraaaa"), decimals=10**6)
+    assert _group_agrees([left, right]) is True
+    assert _group_agrees([left, other]) is False
+
+
 def test_the_disclaimer_comes_before_the_framing_line_and_there_is_no_heading():
     inner = quality_html([], form="10-K", period_end="2025-12-31")
     page = _shell(inner)

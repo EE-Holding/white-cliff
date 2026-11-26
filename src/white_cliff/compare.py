@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal, InvalidOperation
 
-from white_cliff.explain import _from_filing, _length, _prefer, _prior
+from white_cliff.explain import _from_filing, _length, _prefer, _prior, _rounding_quantum
 from white_cliff.facts import Fact
 from white_cliff.formulas import comparable_yoy
 from white_cliff.thresholds import (
@@ -179,9 +179,14 @@ def _revised(shown: Fact, earlier: Fact) -> bool:
     known = [item for item in (shown.decimals, earlier.decimals) if item is not None]
     if not known:
         return shown.value != earlier.value
-    quantum = Decimal(1).scaleb(-min(known))
-    left = shown.value.quantize(quantum, rounding=ROUND_HALF_EVEN)
-    right = earlier.value.quantize(quantum, rounding=ROUND_HALF_EVEN)
+    quantum = _rounding_quantum(min(known))
+    if quantum is None:
+        return shown.value != earlier.value
+    try:
+        left = shown.value.quantize(quantum, rounding=ROUND_HALF_EVEN)
+        right = earlier.value.quantize(quantum, rounding=ROUND_HALF_EVEN)
+    except InvalidOperation:
+        return shown.value != earlier.value
     return left != right
 
 

@@ -328,6 +328,31 @@ def test_registrant_chip_points_at_the_xbrl_fact(tmp_path) -> None:
     assert xml.rfind("Example Co", 0, start) > 0
 
 
+def test_best_buy_is_explained_and_a_buy_sentence_is_still_refused(tmp_path) -> None:
+    from white_cliff.present import result_page
+    from white_cliff.wording import page_terms
+
+    xml = _xbrl(
+        '<unit id="usd"><measure>iso4217:USD</measure></unit>',
+        '<us-gaap:Revenues contextRef="c-year" unitRef="usd" decimals="0">5000</us-gaap:Revenues>',
+    ).replace(
+        '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">Example Co</ix:nonNumeric>',
+        '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-year">BEST BUY CO., INC.</ix:nonNumeric>',
+    )
+    filing = _load(tmp_path, xml)
+    explained = explain_filing(filing)
+    page = result_page(
+        explained,
+        form=filing.form or "10-K",
+        period=filing.period_end or "",
+        filed="2026-03-01",
+        url=filing.url,
+        company=filing.filer,
+    )
+    assert "BEST BUY CO., INC." in page
+    assert page_terms(page + "<p>Investors should buy.</p>") == "buy"
+
+
 def test_registrant_shape_rule_still_chooses_the_chip_or_the_filer(tmp_path) -> None:
     def rendered(name: str) -> str:
         xml = _xbrl(

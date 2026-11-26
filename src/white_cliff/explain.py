@@ -6,7 +6,7 @@ import html
 import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
 from white_cliff.facts import Fact, FactStore
 from white_cliff.formulas import FormulaError, comparable_yoy, margin, net_debt, yoy_change
@@ -284,6 +284,16 @@ def _base_unit(fact: Fact) -> str:
     return fact.unit.split(" ", 1)[0]
 
 
+def _rounding_quantum(places: int) -> Decimal | None:
+    """The last accurate place. An exact (INF) figure has no rounding step."""
+    if places > 28 or places < -28:
+        return None
+    try:
+        return Decimal(1).scaleb(-places)
+    except InvalidOperation:
+        return None
+
+
 def _group_agrees(group: list[Fact]) -> bool:
     if len(group) < 2:
         return True
@@ -291,8 +301,13 @@ def _group_agrees(group: list[Fact]) -> bool:
     known = [fact.decimals for fact in group if fact.decimals is not None]
     if len(known) != len(group):
         return len(set(absolutes)) == 1
-    quantum = Decimal(1).scaleb(-min(known))
-    rounded = [value.quantize(quantum, rounding=ROUND_HALF_EVEN) for value in absolutes]
+    quantum = _rounding_quantum(min(known))
+    if quantum is None:
+        return len(set(absolutes)) == 1
+    try:
+        rounded = [value.quantize(quantum, rounding=ROUND_HALF_EVEN) for value in absolutes]
+    except InvalidOperation:
+        return len(set(absolutes)) == 1
     return len(set(rounded)) == 1
 
 

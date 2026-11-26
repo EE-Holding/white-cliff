@@ -311,9 +311,10 @@ def _document_name(href: str, *, cik: str, accession: str) -> str:
         raise FetchError("unsafe file name")
     ix = _IX_DOC.fullmatch(href)
     if ix:
-        same_filer = int(ix.group(1)) == int(cik)
+        # The filing can be stored under an older CIK. The download uses the CIK
+        # that was requested, and only this accession.
         same_accession = ix.group(2) == accession.replace("-", "")
-        if not same_filer or not same_accession:
+        if not same_accession or not cik.strip():
             raise FetchError("unsafe file name")
         return _safe_file_name(ix.group(3))
     if href.startswith("/") and not href.startswith("/Archives/edgar/data/"):

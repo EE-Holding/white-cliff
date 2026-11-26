@@ -120,12 +120,43 @@ def test_the_real_microsoft_index_link_is_the_primary_document(tmp_path: Path) -
     assert provenance["files"][0]["document_type"] == "10-Q"
 
 
-def test_an_ix_doc_link_for_a_different_filer_is_refused() -> None:
-    from white_cliff.fetch import _primary_documents
+def test_an_ix_doc_link_under_an_older_cik_stays_on_the_known_filer(tmp_path: Path) -> None:
+    from white_cliff.fetch import EdgarClient
 
     html = INDEX.read_text(encoding="utf-8").replace(
         "/Archives/edgar/data/789019/000119312526436133/",
         "/Archives/edgar/data/320193/000119312526436133/",
+    )
+    accession = "0001193125-26-436133"
+    primary = "msft-20260930.htm"
+    seen: list[str] = []
+
+    def transport(url: str, _user_agent: str):
+        seen.append(url)
+        if url.endswith(f"/{accession}-index.html"):
+            return 200, html.encode("utf-8"), {}
+        if url.endswith("/" + primary) and "/Archives/edgar/data/789019/" in url:
+            return 200, b"<html><body>primary</body></html>", {}
+        raise AssertionError(url)
+
+    client = EdgarClient(
+        "Example Name name@example.com",
+        transport=transport,
+        sleep=lambda _seconds: None,
+    )
+    dest = tmp_path / "filing"
+    client.fetch_accession(accession, dest, cik="789019")
+    assert all("/Archives/edgar/data/789019/" in url for url in seen)
+    assert all("320193" not in url for url in seen)
+    assert (dest / primary).read_bytes() == b"<html><body>primary</body></html>"
+
+
+def test_an_ix_doc_link_for_a_different_accession_is_refused() -> None:
+    from white_cliff.fetch import _primary_documents
+
+    html = INDEX.read_text(encoding="utf-8").replace(
+        "000119312526436133",
+        "000032019326000026",
     )
     with pytest.raises(FetchError):
         _primary_documents(html, cik="789019", accession="0001193125-26-436133")
