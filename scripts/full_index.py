@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import gzip
 import hashlib
 import html
@@ -1420,6 +1421,17 @@ def run_sec(limit: int | None, tickers: list[str] | None = None) -> dict:
     )
     pending.sort(key=lambda item: (item["cik"], item["filing_date"], item["accession"]))
     print(f"sec scope {len(scope)} pending {len(pending)} statements {len(present)}", flush=True)
+    # The statement index is large. Leave it alone while a filing is parsed.
+    gc.disable()
+    try:
+        _run_sec_pending(pending, present, index, scope)
+    finally:
+        gc.enable()
+        gc.collect()
+    return write_sec_summary(scope)
+
+
+def _run_sec_pending(pending, present, index, scope) -> None:
     client: EdgarClient | None = None
     current = ""
     facts_index: dict | None = None
@@ -1453,6 +1465,8 @@ def run_sec(limit: int | None, tickers: list[str] | None = None) -> dict:
             }
         _write_json(_sec_result_path(item["accession"]), record)
         covered += 1
+        if covered % 50 == 0:
+            gc.collect()
         if covered % 100 == 0:
             write_sec_summary(scope)
         print(
@@ -1461,7 +1475,6 @@ def run_sec(limit: int | None, tickers: list[str] | None = None) -> dict:
             f"NOT_COMPARABLE {record['not_comparable']}",
             flush=True,
         )
-    return write_sec_summary(scope)
 
 
 def main(argv: list[str] | None = None) -> int:
