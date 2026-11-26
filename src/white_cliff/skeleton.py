@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -62,22 +63,30 @@ def skeleton(text: str) -> str:
     return "".join(kept)
 
 
+def _without_marks(text: str, table: dict[str, str] | None) -> str:
+    """Copy ASCII runs in one slice. Non-ASCII characters still map one by one."""
+    if text.isascii():
+        return text
+    parts: list[str] = []
+    pos = 0
+    for match in re.finditer(r"[^\x00-\x7f]", text):
+        if match.start() > pos:
+            parts.append(text[pos : match.start()])
+        char = match.group()
+        if unicodedata.category(char) not in {"Mn", "Cf"}:
+            parts.append(table.get(char, char) if table is not None else char)
+        pos = match.end()
+    if pos < len(text):
+        parts.append(text[pos:])
+    return "".join(parts)
+
+
 def fold_confusable(text: str) -> str:
     """NFKC, drop marks and format characters, map non-ASCII confusables, casefold."""
-    table = _table()
     folded = unicodedata.normalize("NFKC", text)
-    mapped: list[str] = []
-    for char in folded:
-        if unicodedata.category(char) in {"Mn", "Cf"}:
-            continue
-        if ord(char) > 127:
-            mapped.append(table.get(char, char))
-        else:
-            mapped.append(char)
-    flattened = unicodedata.normalize("NFD", "".join(mapped))
-    kept = []
-    for char in flattened:
-        if unicodedata.category(char) in {"Mn", "Cf"}:
-            continue
-        kept.append(char)
-    return "".join(kept).casefold()
+    if folded.isascii():
+        return folded.casefold()
+    flattened = unicodedata.normalize("NFD", _without_marks(folded, _table()))
+    if flattened.isascii():
+        return flattened.casefold()
+    return _without_marks(flattened, None).casefold()

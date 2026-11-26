@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from array import array
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -35,11 +36,22 @@ class Quote:
     text_end: int = 0
 
 
-def _fold_with_map(text: str) -> tuple[str, list[int]]:
+# ASCII letters that the confusable table rewrites, plus the uppercase range.
+_SLOW_CHAR = re.compile(r"[A-Z\"%01`m|]|[^\x00-\x7f]")
+
+
+def _fold_with_map(text: str) -> tuple[str, array]:
     table = _table()
     chars: list[str] = []
-    origins: list[int] = []
-    for index, char in enumerate(text):
+    origins: array = array("I")
+    pos = 0
+    for match in _SLOW_CHAR.finditer(text):
+        start = match.start()
+        if start > pos:
+            chars.append(text[pos:start])
+            origins.extend(range(pos, start))
+        index = start
+        char = match.group()
         if ord(char) < 128:
             if "A" <= char <= "Z":
                 char = char.lower()
@@ -47,22 +59,23 @@ def _fold_with_map(text: str) -> tuple[str, list[int]]:
             if mapped is None:
                 chars.append(char)
                 origins.append(index)
-                continue
-            for unit in mapped:
-                chars.append(unit)
-                origins.append(index)
-            continue
-        if unicodedata.category(char) == "Cf":
-            continue
-        for piece in unicodedata.normalize("NFKC", char).casefold():
-            if unicodedata.category(piece) in {"Mn", "Cf"}:
-                continue
-            mapped = table.get(piece, piece)
-            for unit in unicodedata.normalize("NFD", mapped):
-                if unicodedata.category(unit) in {"Mn", "Cf"}:
+            else:
+                chars.append(mapped)
+                origins.extend([index] * len(mapped))
+        elif unicodedata.category(char) != "Cf":
+            for piece in unicodedata.normalize("NFKC", char).casefold():
+                if unicodedata.category(piece) in {"Mn", "Cf"}:
                     continue
-                chars.append(_small_capital(unit))
-                origins.append(index)
+                mapped = table.get(piece, piece)
+                for unit in unicodedata.normalize("NFD", mapped):
+                    if unicodedata.category(unit) in {"Mn", "Cf"}:
+                        continue
+                    chars.append(_small_capital(unit))
+                    origins.append(index)
+        pos = match.end()
+    if pos < len(text):
+        chars.append(text[pos:])
+        origins.extend(range(pos, len(text)))
     return "".join(chars), origins
 
 
