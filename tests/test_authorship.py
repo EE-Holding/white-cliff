@@ -1,3 +1,4 @@
+import gzip
 import os
 import re
 import subprocess
@@ -32,7 +33,11 @@ def test_tracked_files_contain_no_email_address():
     listed = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True)
     offenders: list[str] = []
     for name in listed.splitlines():
-        text = (ROOT / name).read_text(encoding="utf-8", errors="replace")
+        data = (ROOT / name).read_bytes()
+        # A compressed fixture is text after inflation. The packed bytes are not an address.
+        if data.startswith(b"\x1f\x8b"):
+            data = gzip.decompress(data)
+        text = data.decode("utf-8", errors="replace")
         for match in _EMAIL.finditer(text):
             host = match.group(0).rsplit("@", 1)[1].lower()
             if host not in _ALLOWED_HOSTS:
